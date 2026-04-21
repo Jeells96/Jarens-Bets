@@ -1,0 +1,1342 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d10" />
+<title>Gridline — NFL Projections</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-2: #12161b;
+    --bg-3: #181d24;
+    --line: #242b34;
+    --line-2: #2e3641;
+    --ink: #e8ecf1;
+    --ink-dim: #9aa4b2;
+    --ink-faint: #5d6773;
+    --accent: #d4ff3a;       /* signal green */
+    --accent-2: #6fe0ff;     /* cool cyan for secondary */
+    --hot: #ff6b6b;          /* over */
+    --cold: #6fb7ff;         /* under */
+    --warn: #ffc85c;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+  body {
+    background:
+      radial-gradient(ellipse 100% 60% at 50% 0%, rgba(212,255,58,0.04), transparent 60%),
+      radial-gradient(ellipse 80% 40% at 90% 30%, rgba(111,224,255,0.03), transparent 60%),
+      var(--bg);
+    min-height: 100vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .serif { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+
+/* Header */
+header {
+padding: max(env(safe-area-inset-top), 14px) 16px 14px;
+border-bottom: 1px solid var(–line);
+background: linear-gradient(180deg, rgba(11,13,16,0.95) 0%, rgba(11,13,16,0.85) 100%);
+backdrop-filter: blur(10px);
+-webkit-backdrop-filter: blur(10px);
+position: sticky; top: 0; z-index: 10;
+}
+.brand {
+display: flex; align-items: baseline; gap: 10px;
+margin-bottom: 12px;
+}
+.brand .logo {
+font-family: ‘Fraunces’, serif;
+font-weight: 800;
+font-size: 26px;
+letter-spacing: -0.02em;
+color: var(–ink);
+}
+.brand .logo::first-letter {
+color: var(–accent);
+}
+.brand .tag {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 10px;
+color: var(–ink-faint);
+letter-spacing: 0.12em;
+text-transform: uppercase;
+}
+.controls {
+display: flex; gap: 8px; align-items: center;
+}
+.control {
+flex: 1;
+position: relative;
+}
+.control label {
+position: absolute;
+top: 6px; left: 12px;
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 9px;
+letter-spacing: 0.12em;
+text-transform: uppercase;
+color: var(–ink-faint);
+pointer-events: none;
+}
+.control select {
+width: 100%;
+appearance: none;
+-webkit-appearance: none;
+background: var(–bg-2);
+border: 1px solid var(–line);
+border-radius: 8px;
+color: var(–ink);
+padding: 22px 32px 8px 12px;
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 14px;
+font-weight: 500;
+}
+.control::after {
+content: ‘▾’;
+position: absolute;
+right: 12px; top: 50%;
+transform: translateY(-50%);
+color: var(–ink-dim);
+pointer-events: none;
+font-size: 10px;
+}
+
+/* Status bar */
+.status {
+padding: 8px 16px;
+background: var(–bg-2);
+border-bottom: 1px solid var(–line);
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 11px;
+color: var(–ink-dim);
+display: flex;
+justify-content: space-between;
+align-items: center;
+}
+.status .dot {
+display: inline-block;
+width: 6px; height: 6px;
+border-radius: 50%;
+background: var(–ink-faint);
+margin-right: 6px;
+}
+.status.live .dot { background: var(–accent); box-shadow: 0 0 8px var(–accent); }
+.status.err .dot { background: var(–hot); }
+.status.loading .dot {
+background: var(–warn);
+animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+0%, 100% { opacity: 0.4; }
+50% { opacity: 1; }
+}
+
+/* Tabs */
+.tabs {
+display: flex;
+background: var(–bg);
+border-bottom: 1px solid var(–line);
+position: sticky;
+top: 0;
+z-index: 5;
+}
+.tab {
+flex: 1;
+padding: 12px 8px;
+text-align: center;
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 11px;
+letter-spacing: 0.1em;
+text-transform: uppercase;
+color: var(–ink-faint);
+border: none;
+background: transparent;
+cursor: pointer;
+position: relative;
+font-weight: 500;
+}
+.tab.active { color: var(–ink); }
+.tab.active::after {
+content: ‘’;
+position: absolute;
+bottom: -1px; left: 20%; right: 20%;
+height: 2px;
+background: var(–accent);
+}
+
+/* Game cards */
+.games {
+padding: 12px;
+display: flex;
+flex-direction: column;
+gap: 12px;
+}
+.game {
+background: var(–bg-2);
+border: 1px solid var(–line);
+border-radius: 12px;
+overflow: hidden;
+}
+.game-head {
+padding: 14px 16px 12px;
+display: flex;
+align-items: center;
+justify-content: space-between;
+border-bottom: 1px solid var(–line);
+cursor: pointer;
+}
+.matchup {
+display: flex;
+flex-direction: column;
+gap: 2px;
+}
+.matchup .teams {
+font-family: ‘JetBrains Mono’, monospace;
+font-weight: 700;
+font-size: 15px;
+letter-spacing: 0.02em;
+}
+.matchup .teams .at {
+color: var(–ink-faint);
+font-weight: 400;
+padding: 0 6px;
+}
+.matchup .time {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 11px;
+color: var(–ink-dim);
+}
+.total-proj {
+text-align: right;
+}
+.total-proj .num {
+font-family: ‘Fraunces’, serif;
+font-weight: 800;
+font-size: 28px;
+line-height: 1;
+color: var(–accent);
+}
+.total-proj .lbl {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 9px;
+color: var(–ink-faint);
+letter-spacing: 0.12em;
+text-transform: uppercase;
+}
+
+/* Team totals row */
+.team-totals {
+display: grid;
+grid-template-columns: 1fr 1px 1fr;
+background: var(–bg-3);
+border-bottom: 1px solid var(–line);
+}
+.team-totals .divider {
+background: var(–line);
+}
+.tt {
+padding: 14px 16px;
+display: flex;
+flex-direction: column;
+gap: 4px;
+}
+.tt.away { text-align: left; }
+.tt.home { text-align: right; }
+.tt .team {
+font-family: ‘JetBrains Mono’, monospace;
+font-weight: 700;
+font-size: 12px;
+color: var(–ink-dim);
+letter-spacing: 0.05em;
+}
+.tt .pts {
+font-family: ‘Fraunces’, serif;
+font-weight: 600;
+font-size: 22px;
+line-height: 1;
+}
+.tt .yds {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 11px;
+color: var(–ink-faint);
+}
+
+/* Confidence */
+.conf-row {
+padding: 10px 16px;
+display: flex;
+align-items: center;
+gap: 10px;
+background: var(–bg-2);
+border-bottom: 1px solid var(–line);
+}
+.conf-label {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 10px;
+color: var(–ink-faint);
+letter-spacing: 0.1em;
+text-transform: uppercase;
+flex-shrink: 0;
+}
+.conf-bar {
+flex: 1;
+height: 4px;
+background: var(–bg);
+border-radius: 2px;
+overflow: hidden;
+}
+.conf-fill {
+height: 100%;
+background: linear-gradient(90deg, var(–accent-2), var(–accent));
+border-radius: 2px;
+transition: width 0.4s ease;
+}
+.conf-pct {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 12px;
+font-weight: 700;
+color: var(–ink);
+min-width: 34px;
+text-align: right;
+}
+
+/* Expandable details */
+.game-body {
+display: none;
+padding: 0;
+}
+.game.open .game-body { display: block; }
+.game-head .caret {
+color: var(–ink-faint);
+font-size: 12px;
+margin-left: 10px;
+transition: transform 0.2s;
+}
+.game.open .game-head .caret { transform: rotate(180deg); }
+
+.section {
+padding: 14px 16px;
+border-bottom: 1px solid var(–line);
+}
+.section:last-child { border-bottom: none; }
+.section h4 {
+margin: 0 0 10px;
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 10px;
+font-weight: 500;
+letter-spacing: 0.15em;
+text-transform: uppercase;
+color: var(–ink-faint);
+}
+
+/* Player rows */
+.players {
+display: flex;
+flex-direction: column;
+gap: 6px;
+}
+.player-row {
+display: grid;
+grid-template-columns: auto 1fr auto auto;
+gap: 10px;
+align-items: center;
+padding: 6px 0;
+}
+.pos-tag {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 9px;
+font-weight: 700;
+color: var(–bg);
+background: var(–ink-dim);
+padding: 2px 5px;
+border-radius: 3px;
+letter-spacing: 0.05em;
+min-width: 24px;
+text-align: center;
+}
+.pos-QB { background: var(–accent-2); }
+.pos-RB { background: var(–accent); }
+.pos-WR { background: #f5a623; color: var(–bg); }
+.pos-TE { background: #c87cff; }
+.player-name {
+font-size: 13px;
+font-weight: 500;
+overflow: hidden;
+text-overflow: ellipsis;
+white-space: nowrap;
+}
+.player-team {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 10px;
+color: var(–ink-faint);
+margin-left: 4px;
+}
+.player-proj {
+font-family: ‘JetBrains Mono’, monospace;
+font-weight: 700;
+font-size: 14px;
+color: var(–ink);
+min-width: 48px;
+text-align: right;
+}
+.player-proj .unit {
+font-size: 9px;
+color: var(–ink-faint);
+font-weight: 400;
+margin-left: 2px;
+}
+.player-actual {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 11px;
+min-width: 38px;
+text-align: right;
+padding: 2px 6px;
+border-radius: 3px;
+}
+.actual-hit { color: var(–accent); background: rgba(212,255,58,0.08); }
+.actual-miss { color: var(–hot); background: rgba(255,107,107,0.08); }
+.actual-na { color: var(–ink-faint); }
+
+/* TD section */
+.tds {
+display: flex;
+flex-direction: column;
+gap: 8px;
+}
+.td-row {
+display: grid;
+grid-template-columns: auto 1fr auto auto;
+gap: 10px;
+align-items: center;
+padding: 6px 8px;
+background: var(–bg-3);
+border-radius: 6px;
+}
+.td-conf {
+display: flex;
+align-items: center;
+gap: 4px;
+}
+.td-conf-dot {
+width: 6px; height: 6px;
+border-radius: 50%;
+}
+.td-conf-high { background: var(–accent); box-shadow: 0 0 6px var(–accent); }
+.td-conf-med { background: var(–warn); }
+.td-conf-low { background: var(–ink-faint); }
+.td-pct {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 12px;
+font-weight: 700;
+color: var(–ink);
+min-width: 38px;
+text-align: right;
+}
+.td-scored {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 10px;
+padding: 2px 6px;
+border-radius: 3px;
+}
+.td-scored.yes { color: var(–accent); background: rgba(212,255,58,0.12); }
+.td-scored.no { color: var(–ink-faint); }
+
+/* Model summary */
+.summary {
+margin: 12px;
+padding: 14px 16px;
+background: var(–bg-2);
+border: 1px solid var(–line);
+border-radius: 12px;
+}
+.summary h3 {
+margin: 0 0 10px;
+font-family: ‘Fraunces’, serif;
+font-weight: 600;
+font-size: 16px;
+}
+.summary-grid {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 10px;
+}
+.stat {
+padding: 10px;
+background: var(–bg-3);
+border-radius: 8px;
+}
+.stat .val {
+font-family: ‘JetBrains Mono’, monospace;
+font-weight: 700;
+font-size: 18px;
+color: var(–accent);
+}
+.stat .lbl {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 9px;
+color: var(–ink-faint);
+text-transform: uppercase;
+letter-spacing: 0.1em;
+margin-top: 2px;
+}
+
+/* Loader */
+.loader {
+padding: 60px 20px;
+text-align: center;
+color: var(–ink-dim);
+}
+.loader .spinner {
+display: inline-block;
+width: 28px; height: 28px;
+border: 2px solid var(–line);
+border-top-color: var(–accent);
+border-radius: 50%;
+animation: spin 0.7s linear infinite;
+margin-bottom: 14px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loader .step {
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 11px;
+color: var(–ink-faint);
+margin-top: 6px;
+}
+
+/* Error state */
+.error-panel {
+margin: 20px;
+padding: 16px;
+background: var(–bg-2);
+border: 1px solid var(–hot);
+border-radius: 10px;
+}
+.error-panel h4 {
+margin: 0 0 8px;
+color: var(–hot);
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 12px;
+letter-spacing: 0.1em;
+text-transform: uppercase;
+}
+.error-panel p {
+margin: 0 0 10px;
+font-size: 13px;
+color: var(–ink-dim);
+}
+.error-panel button {
+background: var(–accent);
+color: var(–bg);
+border: none;
+padding: 8px 14px;
+border-radius: 6px;
+font-family: ‘JetBrains Mono’, monospace;
+font-weight: 700;
+font-size: 12px;
+cursor: pointer;
+}
+
+/* Footer note */
+.foot {
+padding: 20px 16px 40px;
+text-align: center;
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 10px;
+color: var(–ink-faint);
+line-height: 1.6;
+}
+.foot .divider {
+display: block;
+width: 40px;
+height: 1px;
+background: var(–line);
+margin: 0 auto 12px;
+}
+</style>
+
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo">Gridline</div>
+    <div class="tag">NFL · Projection Engine</div>
+  </div>
+  <div class="controls">
+    <div class="control">
+      <label for="season">Season</label>
+      <select id="season">
+        <option value="2025">2025 (completed)</option>
+        <option value="2026">2026 (upcoming)</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="week">Week</label>
+      <select id="week"></select>
+    </div>
+  </div>
+</header>
+
+<div id="status" class="status loading">
+  <span><span class="dot"></span><span id="status-text">Initializing…</span></span>
+  <span id="status-meta"></span>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="games">Games</button>
+  <button class="tab" data-tab="summary">Model</button>
+</div>
+
+<main id="main">
+  <div class="loader">
+    <div class="spinner"></div>
+    <div>Loading NFL data</div>
+    <div class="step" id="load-step">Fetching schedules…</div>
+  </div>
+</main>
+
+<div class="foot">
+  <span class="divider"></span>
+  Projections are model estimates built from nflverse rolling averages.<br>
+  Backtest only — not betting advice. Past performance ≠ future results.
+</div>
+
+<script>
+// =============================================================================
+// DATA LAYER — nflverse release URLs
+// =============================================================================
+const NFLVERSE_BASE = 'https://github.com/nflverse/nflverse-data/releases/download';
+const URLS = {
+  schedules: `${NFLVERSE_BASE}/schedules/schedules.csv`,
+  playerWeek: (season) => `${NFLVERSE_BASE}/stats_player/stats_player_week_${season}.csv`,
+  teamWeek:   (season) => `${NFLVERSE_BASE}/stats_team/stats_team_week_${season}.csv`,
+};
+
+const CACHE_VERSION = 'v1';
+const CACHE_TTL_MS = 1000 * 60 * 60 * 6; // 6h
+
+// =============================================================================
+// CSV PARSING — streaming, handles quoted fields
+// =============================================================================
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, field = '', row = [], inQuotes = false;
+  const len = text.length;
+  while (i < len) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += c; i++;
+    } else {
+      if (c === '"') { inQuotes = true; i++; continue; }
+      if (c === ',') { row.push(field); field = ''; i++; continue; }
+      if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+      if (c === '\r') { i++; continue; }
+      field += c; i++;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  if (!rows.length) return [];
+  const headers = rows[0];
+  return rows.slice(1).filter(r => r.length === headers.length).map(r => {
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) obj[headers[j]] = r[j];
+    return obj;
+  });
+}
+
+function num(v) {
+  if (v === '' || v == null || v === 'NA') return 0;
+  const n = +v;
+  return isNaN(n) ? 0 : n;
+}
+
+// =============================================================================
+// CACHED FETCH — uses localStorage with TTL
+// =============================================================================
+async function cachedFetch(url, cacheKey, onProgress) {
+  const full = `gridline_${CACHE_VERSION}_${cacheKey}`;
+  try {
+    const cached = localStorage.getItem(full);
+    if (cached) {
+      const { ts, data } = JSON.parse(cached);
+      if (Date.now() - ts < CACHE_TTL_MS) {
+        onProgress && onProgress('cache hit');
+        return data;
+      }
+    }
+  } catch(e) {}
+
+  onProgress && onProgress('downloading…');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const text = await res.text();
+  onProgress && onProgress(`parsing ${(text.length/1024/1024).toFixed(1)}MB…`);
+  const data = parseCSV(text);
+
+  // only cache if small enough to fit (localStorage is ~5MB per origin)
+  try {
+    const serialized = JSON.stringify({ ts: Date.now(), data });
+    if (serialized.length < 4_500_000) localStorage.setItem(full, serialized);
+  } catch(e) {}
+  return data;
+}
+
+// =============================================================================
+// PROJECTION ENGINE
+// =============================================================================
+// Philosophy: we project what a player/team will do in a given week using:
+//  - Their rolling 4-week average before that week (recency)
+//  - Their season average (stability)
+//  - Opponent defensive yards-allowed rank (matchup)
+//  - Home/away split
+// Weighted blend. This is a simple, honest baseline — not a model with
+// magical hidden signal. We show projections vs. actuals so you can judge.
+
+function buildIndex(rows, keyFn) {
+  const idx = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    if (!idx.has(k)) idx.set(k, []);
+    idx.get(k).push(r);
+  }
+  return idx;
+}
+
+function projectPlayerWeek({ player, playerId, position, team, week, allPlayerWeeks, oppDefRankYds }) {
+  // Gather all rows for this player up to (but not including) this week
+  const prior = allPlayerWeeks.filter(r =>
+    r.player_id === playerId && +r.week < week && r.season_type === 'REG'
+  );
+  if (!prior.length) return null;
+
+  const sortedPrior = prior.sort((a,b) => +a.week - +b.week);
+  const last4 = sortedPrior.slice(-4);
+
+  const avg = (arr, fn) => arr.length ? arr.reduce((s,r) => s + fn(r), 0) / arr.length : 0;
+
+  let projYds = 0, projTd = 0;
+  const statMap = {
+    QB: { yds: r => num(r.passing_yards) + num(r.rushing_yards),
+          tds: r => num(r.passing_tds) + num(r.rushing_tds) },
+    RB: { yds: r => num(r.rushing_yards) + num(r.receiving_yards),
+          tds: r => num(r.rushing_tds) + num(r.receiving_tds) },
+    WR: { yds: r => num(r.receiving_yards) + num(r.rushing_yards),
+          tds: r => num(r.receiving_tds) + num(r.rushing_tds) },
+    TE: { yds: r => num(r.receiving_yards),
+          tds: r => num(r.receiving_tds) },
+  };
+  const s = statMap[position];
+  if (!s) return null;
+
+  const l4y = avg(last4, s.yds);
+  const sy = avg(sortedPrior, s.yds);
+  const l4t = avg(last4, s.tds);
+  const st = avg(sortedPrior, s.tds);
+
+  // Weighted blend (60% recent / 40% season)
+  projYds = 0.6 * l4y + 0.4 * sy;
+  projTd  = 0.6 * l4t + 0.4 * st;
+
+  // Matchup adjustment: if opponent is stingy (rank 1 = best D), reduce; weak D, bump
+  // rank 1-32, neutral = 16.5. Scale +/- 12% at extremes.
+  if (oppDefRankYds) {
+    const factor = 1 + ((oppDefRankYds - 16.5) / 16.5) * 0.12;
+    projYds *= factor;
+    projTd  *= factor;
+  }
+
+  // Confidence: based on sample size & consistency (stddev)
+  const stddev = (arr, fn, mean) => {
+    if (arr.length < 2) return 0;
+    const v = arr.reduce((s,r) => s + Math.pow(fn(r) - mean, 2), 0) / arr.length;
+    return Math.sqrt(v);
+  };
+  const sd = stddev(sortedPrior, s.yds, sy);
+  const cv = sy > 0 ? sd / sy : 1; // coefficient of variation
+  const sampleScore = Math.min(1, sortedPrior.length / 8);
+  const consistencyScore = Math.max(0, 1 - cv);
+  const confidence = Math.round(100 * (0.5 * sampleScore + 0.5 * consistencyScore));
+
+  return {
+    player, playerId, position, team,
+    projYds: Math.round(projYds),
+    projTd: +projTd.toFixed(2),
+    tdProbability: Math.min(99, Math.round(projTd * 100)), // crude: proj TDs ~ expected count, treat as probability of ≥1
+    confidence,
+    gamesPlayed: sortedPrior.length,
+  };
+}
+
+function projectTeamWeek({ team, week, season, allTeamWeeks }) {
+  const prior = allTeamWeeks.filter(r =>
+    r.team === team && +r.week < week && +r.season === season && r.season_type === 'REG'
+  );
+  if (!prior.length) return { points: 20, yards: 340, games: 0 };
+
+  const sortedPrior = prior.sort((a,b) => +a.week - +b.week);
+  const last4 = sortedPrior.slice(-4);
+  const avg = (arr, fn) => arr.length ? arr.reduce((s,r) => s + fn(r), 0) / arr.length : 0;
+
+  // team_stats has these roll-ups. Use points-for and total yards.
+  const ptsFn = r => num(r.passing_tds)*7 + num(r.rushing_tds)*7 + num(r.fg_made)*3
+                   - num(r.passing_interceptions)*0 /* we won't penalize */ ;
+  // Better: compute from passing_yards + rushing_yards + implied scoring rate.
+  // But team stats file may have direct score. Try multiple field names.
+  const scoreFn = r => {
+    if ('points_scored' in r) return num(r.points_scored);
+    // Approximate from TDs and FGs
+    const tds = num(r.passing_tds) + num(r.rushing_tds);
+    const fgs = num(r.fg_made);
+    return tds * 6.95 + fgs * 3 + tds * 0.95; // ~0.95 XP rate
+  };
+  const yardsFn = r => num(r.passing_yards) + num(r.rushing_yards);
+
+  const l4p = avg(last4, scoreFn);
+  const sp = avg(sortedPrior, scoreFn);
+  const l4y = avg(last4, yardsFn);
+  const sy = avg(sortedPrior, yardsFn);
+
+  return {
+    points: 0.6 * l4p + 0.4 * sp,
+    yards:  0.6 * l4y + 0.4 * sy,
+    games: sortedPrior.length,
+  };
+}
+
+function computeDefensiveRanks({ teamWeeks, season, beforeWeek }) {
+  // yards allowed per team through week (beforeWeek - 1)
+  const tallies = new Map();
+  for (const r of teamWeeks) {
+    if (+r.season !== season) continue;
+    if (+r.week >= beforeWeek) continue;
+    if (r.season_type !== 'REG') continue;
+    const team = r.opponent_team || r.opponent; // yards the team's opponent gained = yards this team ALLOWED
+    // Actually in stats_team each row is a team's offensive output. So yards allowed to team X = sum of yards
+    // from rows where opponent_team = X.
+    if (!team) continue;
+    const yds = num(r.passing_yards) + num(r.rushing_yards);
+    const t = tallies.get(team) || { yds: 0, games: 0 };
+    t.yds += yds; t.games++;
+    tallies.set(team, t);
+  }
+  const arr = Array.from(tallies.entries())
+    .map(([team, t]) => ({ team, ypg: t.games ? t.yds / t.games : 0 }))
+    .sort((a,b) => a.ypg - b.ypg); // lowest ypg allowed = best D = rank 1
+  const rankMap = new Map();
+  arr.forEach((x, i) => rankMap.set(x.team, i + 1));
+  return rankMap;
+}
+
+// =============================================================================
+// STATE & UI
+// =============================================================================
+const state = {
+  schedules: null,
+  playerWeeks: {}, // by season
+  teamWeeks: {},   // by season
+  season: 2025,
+  week: 1,
+  activeTab: 'games',
+};
+
+function setStatus(cls, text, meta='') {
+  const el = document.getElementById('status');
+  el.className = 'status ' + cls;
+  document.getElementById('status-text').textContent = text;
+  document.getElementById('status-meta').textContent = meta;
+}
+
+function setLoadStep(s) {
+  const el = document.getElementById('load-step');
+  if (el) el.textContent = s;
+}
+
+async function boot() {
+  try {
+    setStatus('loading', 'Loading schedule');
+    state.schedules = await cachedFetch(URLS.schedules, 'schedules', setLoadStep);
+    setLoadStep('Loading player stats…');
+    state.playerWeeks[2025] = await cachedFetch(URLS.playerWeek(2025), 'player_2025', setLoadStep);
+    setLoadStep('Loading team stats…');
+    state.teamWeeks[2025] = await cachedFetch(URLS.teamWeek(2025), 'team_2025', setLoadStep);
+
+    // Populate week dropdown
+    populateWeekDropdown();
+
+    setStatus('live', 'Data loaded', `${state.playerWeeks[2025].length.toLocaleString()} player-weeks · ${state.teamWeeks[2025].length.toLocaleString()} team-weeks`);
+    render();
+  } catch (err) {
+    console.error(err);
+    setStatus('err', 'Load failed');
+    document.getElementById('main').innerHTML = `
+      <div class="error-panel">
+        <h4>Could not load data</h4>
+        <p>${err.message}</p>
+        <p>nflverse CSVs are fetched from GitHub releases. If your connection is blocking github.com, try again or disable any blockers.</p>
+        <button onclick="location.reload()">Retry</button>
+      </div>`;
+  }
+}
+
+function populateWeekDropdown() {
+  const sel = document.getElementById('week');
+  sel.innerHTML = '';
+  const season = +state.season;
+  const games = state.schedules.filter(g => +g.season === season && g.game_type === 'REG');
+  const weeks = [...new Set(games.map(g => +g.week))].sort((a,b) => a - b);
+
+  // Default week: for completed seasons, start at 8 (enough data); for future, week 1
+  const defaultWeek = season === 2025 ? 8 : 1;
+  for (const w of weeks) {
+    const opt = document.createElement('option');
+    opt.value = w;
+    opt.textContent = `Week ${w}`;
+    if (w === defaultWeek) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  state.week = defaultWeek;
+
+  if (!weeks.length) {
+    const opt = document.createElement('option');
+    opt.textContent = 'No games yet';
+    opt.disabled = true;
+    sel.appendChild(opt);
+  }
+}
+
+function render() {
+  const main = document.getElementById('main');
+  if (state.activeTab === 'summary') {
+    renderSummary(main);
+  } else {
+    renderGames(main);
+  }
+}
+
+function renderGames(main) {
+  const season = +state.season;
+  const week = +state.week;
+
+  const games = state.schedules.filter(g =>
+    +g.season === season && +g.week === week && g.game_type === 'REG'
+  );
+
+  if (!games.length) {
+    main.innerHTML = `
+      <div class="error-panel">
+        <h4>No games for this week</h4>
+        <p>The ${season} Week ${week} schedule isn't available yet. If this is an upcoming season, games won't be in the feed until nflverse publishes the schedule.</p>
+      </div>`;
+    return;
+  }
+
+  // For season, compute defensive ranks once
+  const teamWeeks = state.teamWeeks[season] || [];
+  const playerWeeks = state.playerWeeks[season] || [];
+  const defRanks = computeDefensiveRanks({ teamWeeks, season, beforeWeek: week });
+
+  let html = '<div class="games">';
+  for (const g of games) {
+    html += renderGameCard(g, { week, season, teamWeeks, playerWeeks, defRanks });
+  }
+  html += '</div>';
+  main.innerHTML = html;
+
+  // Wire up expand toggles
+  main.querySelectorAll('.game-head').forEach(h => {
+    h.addEventListener('click', () => h.closest('.game').classList.toggle('open'));
+  });
+}
+
+function renderGameCard(g, ctx) {
+  const { week, season, teamWeeks, playerWeeks, defRanks } = ctx;
+  const away = g.away_team;
+  const home = g.home_team;
+
+  // Team projections
+  const awayProj = projectTeamWeek({ team: away, week, season, allTeamWeeks: teamWeeks });
+  const homeProj = projectTeamWeek({ team: home, week, season, allTeamWeeks: teamWeeks });
+
+  // Matchup adjust: home/away and opponent defense
+  // Away defense rank affects home offense, and vice versa
+  const awayDefRank = defRanks.get(away);
+  const homeDefRank = defRanks.get(home);
+
+  const adjustForD = (base, defRank) => {
+    if (!defRank) return base;
+    const factor = 1 + ((defRank - 16.5) / 16.5) * 0.10;
+    return base * factor;
+  };
+
+  const awayPts = adjustForD(awayProj.points, homeDefRank) * 0.97; // mild away penalty
+  const homePts = adjustForD(homeProj.points, awayDefRank) * 1.03; // home bump
+  const awayYds = adjustForD(awayProj.yards, homeDefRank) * 0.98;
+  const homeYds = adjustForD(homeProj.yards, awayDefRank) * 1.02;
+
+  const totalPts = awayPts + homePts;
+
+  // Confidence for game total: based on how many games of data we have
+  const minGames = Math.min(awayProj.games, homeProj.games);
+  const gameConf = Math.min(95, Math.round(40 + minGames * 6));
+
+  // Player projections — find key skill players for each team from recent weeks
+  const teamPlayers = (team) => {
+    const recent = playerWeeks.filter(r =>
+      r.team === team && +r.week < week && r.season_type === 'REG'
+    );
+    // Group by player_id, keep most recent team & position
+    const map = new Map();
+    for (const r of recent) {
+      const k = r.player_id;
+      if (!map.has(k) || +r.week > +map.get(k).week) map.set(k, r);
+    }
+    return Array.from(map.values());
+  };
+
+  const projectSkillPlayers = (team, oppDefRank) => {
+    const players = teamPlayers(team);
+    const results = { QB: [], RB: [], WR: [], TE: [] };
+    for (const p of players) {
+      const pos = p.position;
+      if (!['QB','RB','WR','TE'].includes(pos)) continue;
+      const proj = projectPlayerWeek({
+        player: p.player_display_name || p.player_name,
+        playerId: p.player_id,
+        position: pos,
+        team,
+        week, season,
+        allPlayerWeeks: playerWeeks,
+        oppDefRankYds: oppDefRank,
+      });
+      if (proj && proj.projYds > 5) results[pos].push(proj);
+    }
+    for (const pos of Object.keys(results)) {
+      results[pos].sort((a,b) => b.projYds - a.projYds);
+    }
+    return results;
+  };
+
+  const awayPlayers = projectSkillPlayers(away, homeDefRank);
+  const homePlayers = projectSkillPlayers(home, awayDefRank);
+
+  // Top TD candidates from both teams
+  const tdCandidates = [...Object.values(awayPlayers).flat(), ...Object.values(homePlayers).flat()]
+    .filter(p => p.projTd > 0.15)
+    .sort((a,b) => b.projTd - a.projTd)
+    .slice(0, 6);
+
+  // Actual results (if this week has been played)
+  const gameFinal = g.away_score !== '' && g.away_score != null && !isNaN(+g.away_score);
+  const actualTotal = gameFinal ? (+g.away_score + +g.home_score) : null;
+
+  const kickoff = formatKickoff(g);
+
+  let html = `
+    <div class="game" data-gameid="${g.game_id}">
+      <div class="game-head">
+        <div class="matchup">
+          <div class="teams">${away}<span class="at">@</span>${home}</div>
+          <div class="time">${kickoff}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="total-proj">
+            <div class="num">${totalPts.toFixed(1)}</div>
+            <div class="lbl">Proj Total ${actualTotal != null ? `· Actual ${actualTotal}` : ''}</div>
+          </div>
+          <span class="caret">▾</span>
+        </div>
+      </div>
+
+      <div class="team-totals">
+        <div class="tt away">
+          <div class="team">${away}</div>
+          <div class="pts">${awayPts.toFixed(1)}${gameFinal ? `<span style="color:var(--ink-faint);font-size:14px"> · ${g.away_score}</span>` : ''}</div>
+          <div class="yds">${Math.round(awayYds)} yds</div>
+        </div>
+        <div class="divider"></div>
+        <div class="tt home">
+          <div class="team">${home}</div>
+          <div class="pts">${homePts.toFixed(1)}${gameFinal ? `<span style="color:var(--ink-faint);font-size:14px"> · ${g.home_score}</span>` : ''}</div>
+          <div class="yds">${Math.round(homeYds)} yds</div>
+        </div>
+      </div>
+
+      <div class="conf-row">
+        <span class="conf-label">Model Conf.</span>
+        <div class="conf-bar"><div class="conf-fill" style="width:${gameConf}%"></div></div>
+        <span class="conf-pct">${gameConf}%</span>
+      </div>
+
+      <div class="game-body">
+        ${renderPlayerSection('QB', awayPlayers.QB.slice(0,1), homePlayers.QB.slice(0,1), g, playerWeeks, week)}
+        ${renderPlayerSection('RB', awayPlayers.RB.slice(0,2), homePlayers.RB.slice(0,2), g, playerWeeks, week)}
+        ${renderPlayerSection('WR', awayPlayers.WR.slice(0,3), homePlayers.WR.slice(0,3), g, playerWeeks, week)}
+        ${renderPlayerSection('TE', awayPlayers.TE.slice(0,1), homePlayers.TE.slice(0,1), g, playerWeeks, week)}
+        ${renderTDSection(tdCandidates, g, playerWeeks, week)}
+      </div>
+    </div>`;
+  return html;
+}
+
+function renderPlayerSection(pos, awayPlayers, homePlayers, game, playerWeeks, week) {
+  const all = [...awayPlayers, ...homePlayers];
+  if (!all.length) return '';
+  const rows = all.map(p => {
+    const actual = getPlayerActual(p.playerId, +game.season, week, playerWeeks, pos);
+    const actualCls = actual != null ? (actual >= p.projYds ? 'actual-hit' : 'actual-miss') : 'actual-na';
+    const actualTxt = actual != null ? `${actual}` : '—';
+    return `
+      <div class="player-row">
+        <span class="pos-tag pos-${pos}">${pos}</span>
+        <div class="player-name">${p.player}<span class="player-team">${p.team}</span></div>
+        <div class="player-proj">${p.projYds}<span class="unit">yd</span></div>
+        <div class="player-actual ${actualCls}">${actualTxt}</div>
+      </div>`;
+  }).join('');
+  const title = { QB: 'Passing+Rush Yds', RB: 'Rush+Rec Yds', WR: 'Rec+Rush Yds', TE: 'Receiving Yds' }[pos];
+  return `
+    <div class="section">
+      <h4>${pos} · ${title} · Proj vs Actual</h4>
+      <div class="players">${rows}</div>
+    </div>`;
+}
+
+function renderTDSection(candidates, game, playerWeeks, week) {
+  if (!candidates.length) return '';
+  const rows = candidates.map(c => {
+    const scored = didPlayerScoreTD(c.playerId, +game.season, week, playerWeeks);
+    const tier = c.tdProbability >= 50 ? 'high' : c.tdProbability >= 30 ? 'med' : 'low';
+    const scoredHTML = scored == null
+      ? ''
+      : scored
+        ? `<span class="td-scored yes">✓ Scored</span>`
+        : `<span class="td-scored no">— None</span>`;
+    return `
+      <div class="td-row">
+        <span class="pos-tag pos-${c.position}">${c.position}</span>
+        <div class="player-name">${c.player}<span class="player-team">${c.team}</span></div>
+        <div class="td-conf">
+          <span class="td-conf-dot td-conf-${tier}"></span>
+        </div>
+        <div class="td-pct">${c.tdProbability}%</div>
+      </div>
+      ${scored != null ? `<div style="padding-left:42px;margin-top:-4px;margin-bottom:4px">${scoredHTML}</div>` : ''}`;
+  }).join('');
+  return `
+    <div class="section">
+      <h4>TD Likelihood</h4>
+      <div class="tds">${rows}</div>
+    </div>`;
+}
+
+function getPlayerActual(playerId, season, week, playerWeeks, pos) {
+  const row = playerWeeks.find(r =>
+    r.player_id === playerId && +r.season === season && +r.week === week && r.season_type === 'REG'
+  );
+  if (!row) return null;
+  switch (pos) {
+    case 'QB': return num(row.passing_yards) + num(row.rushing_yards);
+    case 'RB': return num(row.rushing_yards) + num(row.receiving_yards);
+    case 'WR': return num(row.receiving_yards) + num(row.rushing_yards);
+    case 'TE': return num(row.receiving_yards);
+    default: return null;
+  }
+}
+
+function didPlayerScoreTD(playerId, season, week, playerWeeks) {
+  const row = playerWeeks.find(r =>
+    r.player_id === playerId && +r.season === season && +r.week === week && r.season_type === 'REG'
+  );
+  if (!row) return null;
+  const tds = num(row.passing_tds) + num(row.rushing_tds) + num(row.receiving_tds);
+  return tds > 0;
+}
+
+function formatKickoff(g) {
+  // nflverse schedule has gameday + gametime
+  if (g.gameday && g.gametime) {
+    const d = new Date(g.gameday + 'T' + g.gametime + ':00');
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) +
+             ' · ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+    }
+  }
+  return g.gameday || '';
+}
+
+// =============================================================================
+// MODEL SUMMARY — evaluate how the projections did vs actuals
+// =============================================================================
+function renderSummary(main) {
+  const season = +state.season;
+  const weekCap = +state.week;
+
+  const schedules = state.schedules.filter(g =>
+    +g.season === season && g.game_type === 'REG' && +g.week <= weekCap
+    && g.away_score !== '' && g.away_score != null && !isNaN(+g.away_score)
+  );
+
+  if (!schedules.length) {
+    main.innerHTML = `
+      <div class="summary">
+        <h3>Model Performance</h3>
+        <p style="color:var(--ink-dim);font-size:13px;margin:0">
+          No completed games to evaluate yet. Pick a later week with finished games.
+        </p>
+      </div>`;
+    return;
+  }
+
+  const teamWeeks = state.teamWeeks[season];
+
+  // Simulate projections for each past game and compare
+  let totalsErr = 0, totalsN = 0, totalsHit = 0;
+  let spreadErr = 0;
+  const sampleGames = [];
+
+  for (const g of schedules) {
+    const w = +g.week;
+    const defRanks = computeDefensiveRanks({ teamWeeks, season, beforeWeek: w });
+    const awayP = projectTeamWeek({ team: g.away_team, week: w, season, allTeamWeeks: teamWeeks });
+    const homeP = projectTeamWeek({ team: g.home_team, week: w, season, allTeamWeeks: teamWeeks });
+    if (awayP.games < 2 || homeP.games < 2) continue; // skip early weeks
+
+    const adj = (base, defRank) => base * (1 + ((defRank ? defRank : 16.5) - 16.5) / 16.5 * 0.10);
+    const aP = adj(awayP.points, defRanks.get(g.home_team)) * 0.97;
+    const hP = adj(homeP.points, defRanks.get(g.away_team)) * 1.03;
+    const projTotal = aP + hP;
+    const actualTotal = +g.away_score + +g.home_score;
+
+    totalsErr += Math.abs(projTotal - actualTotal);
+    totalsN++;
+    if (Math.abs(projTotal - actualTotal) <= 7) totalsHit++;
+
+    const projMargin = hP - aP;
+    const actualMargin = +g.home_score - +g.away_score;
+    spreadErr += Math.abs(projMargin - actualMargin);
+
+    if (sampleGames.length < 8) sampleGames.push({
+      away: g.away_team, home: g.home_team, week: w,
+      proj: projTotal.toFixed(1),
+      actual: actualTotal,
+      delta: (projTotal - actualTotal).toFixed(1),
+    });
+  }
+
+  const mae = totalsN ? (totalsErr / totalsN).toFixed(1) : '—';
+  const spreadMae = totalsN ? (spreadErr / totalsN).toFixed(1) : '—';
+  const hitRate = totalsN ? Math.round(100 * totalsHit / totalsN) : 0;
+
+  const sampleRows = sampleGames.map(s => `
+    <div class="player-row">
+      <div class="player-name">${s.away} @ ${s.home} <span class="player-team">W${s.week}</span></div>
+      <div class="player-proj">${s.proj}</div>
+      <div class="player-actual ${Math.abs(+s.delta) <= 7 ? 'actual-hit' : 'actual-miss'}">${s.actual}</div>
+    </div>`).join('');
+
+  main.innerHTML = `
+    <div class="summary">
+      <h3>Model Performance · ${season} thru W${weekCap}</h3>
+      <div class="summary-grid">
+        <div class="stat">
+          <div class="val">${mae}</div>
+          <div class="lbl">Game Total MAE</div>
+        </div>
+        <div class="stat">
+          <div class="val">${spreadMae}</div>
+          <div class="lbl">Margin MAE</div>
+        </div>
+        <div class="stat">
+          <div class="val">${hitRate}%</div>
+          <div class="lbl">Within 7 pts</div>
+        </div>
+        <div class="stat">
+          <div class="val">${totalsN}</div>
+          <div class="lbl">Games scored</div>
+        </div>
+      </div>
+    </div>
+    <div class="summary">
+      <h3>Sample Games</h3>
+      <div class="players">
+        <div class="player-row" style="color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase">
+          <div class="player-name">Matchup</div>
+          <div class="player-proj">Proj</div>
+          <div class="player-actual">Actual</div>
+        </div>
+        ${sampleRows}
+      </div>
+    </div>
+    <div class="summary">
+      <h3>How the model works</h3>
+      <p style="color:var(--ink-dim);font-size:13px;line-height:1.6;margin:0">
+        Every projection blends a team/player's <b style="color:var(--ink)">last-4-week average</b> (60%)
+        with their <b style="color:var(--ink)">season average</b> (40%), then adjusts by
+        opponent defensive rank (up to ±12%) and home/away (±3%). Confidence scales
+        with sample size and consistency. It's a deliberately simple baseline — the
+        honest question is whether it beats random, not whether it beats Vegas.
+      </p>
+    </div>`;
+}
+
+// =============================================================================
+// EVENTS
+// =============================================================================
+document.getElementById('season').addEventListener('change', async (e) => {
+  state.season = +e.target.value;
+  const s = state.season;
+  if (!state.playerWeeks[s] || !state.teamWeeks[s]) {
+    setStatus('loading', `Loading ${s} data`);
+    try {
+      if (!state.playerWeeks[s]) state.playerWeeks[s] = await cachedFetch(URLS.playerWeek(s), `player_${s}`);
+      if (!state.teamWeeks[s]) state.teamWeeks[s] = await cachedFetch(URLS.teamWeek(s), `team_${s}`);
+      setStatus('live', 'Data loaded');
+    } catch (err) {
+      setStatus('err', `No ${s} data yet`);
+      state.playerWeeks[s] = [];
+      state.teamWeeks[s] = [];
+    }
+  }
+  populateWeekDropdown();
+  render();
+});
+
+document.getElementById('week').addEventListener('change', (e) => {
+  state.week = +e.target.value;
+  render();
+});
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.activeTab = tab.dataset.tab;
+    render();
+  });
+});
+
+boot();
+</script>
+
+</body>
+</html>
