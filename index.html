@@ -644,7 +644,7 @@ const ESPN = {
     `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/schedule?season=${season}`,
 };
 
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12h
 
 // ============================================================================
@@ -795,49 +795,47 @@ async function loadWeek() {
       return { event: ev, summary };
     });
 
-    // 3. Team prior-week scoring history (for projections)
-    showLoader(70, 'Building projection inputs', 'Team form');
-    const teams = new Set();
-    for (const ev of events) {
-      const comp = ev.competitions && ev.competitions[0];
-      if (!comp) continue;
-      for (const c of comp.competitors) teams.add(c.team.id);
-    }
-    const teamList = Array.from(teams);
-
-    const schedules = await mapLimit(teamList, 4, async (teamId, idx) => {
-      let sched = null;
-      try {
-        sched = await cachedJSON(ESPN.teamSchedule(teamId, state.season));
-      } catch (e) {
-        console.warn('schedule fail', teamId, e.message);
-      }
-      const pct = 70 + Math.round(25 * (idx + 1) / teamList.length);
-      showLoader(pct, 'Team form', `${idx + 1} of ${teamList.length}`);
-      return { teamId, sched };
-    });
-
+    // 3. Prior-week scoreboards — fetch each prior week and pull team scores out
+    //    Same endpoint we already used for the current week, so we know it works.
     state.priorWeeks = {};
-    for (const { teamId, sched } of schedules) {
-      if (!sched) continue;
-      const evs = sched.events || [];
-      const weeks = [];
-      for (const e of evs) {
-        const w = e.week && e.week.number;
-        if (!w || w >= state.week) continue;
-        const seasonType = e.seasonType && e.seasonType.id;
-        if (seasonType && +seasonType !== 2) continue;
-        const comps = e.competitions && e.competitions[0];
-        if (!comps) continue;
-        const me = comps.competitors.find(c => c.team.id === teamId);
-        const opp = comps.competitors.find(c => c.team.id !== teamId);
-        if (!me || !opp) continue;
-        const myScore = me.score != null ? +me.score : NaN;
-        const oppScore = opp.score != null ? +opp.score : NaN;
-        if (isNaN(myScore) || isNaN(oppScore)) continue;
-        weeks.push({ week: w, ptsFor: myScore, ptsAgainst: oppScore });
+    if (state.week > 1) {
+      const priorWeekNums = [];
+      for (let w = 1; w < state.week; w++) priorWeekNums.push(w);
+
+      showLoader(70, 'Loading prior weeks', `0 of ${priorWeekNums.length}`);
+      const priorScoreboards = await mapLimit(priorWeekNums, 4, async (w, idx) => {
+        let data = null;
+        try {
+          data = await cachedJSON(ESPN.scoreboard(state.season, w));
+        } catch (e) {
+          console.warn('prior week fail', w, e.message);
+        }
+        const pct = 70 + Math.round(25 * (idx + 1) / priorWeekNums.length);
+        showLoader(pct, 'Prior weeks', `Week ${w} · ${idx + 1} of ${priorWeekNums.length}`);
+        return { week: w, data };
+      });
+
+      for (const { week: w, data } of priorScoreboards) {
+        if (!data || !data.events) continue;
+        for (const ev of data.events) {
+          const comp = ev.competitions && ev.competitions[0];
+          if (!comp) continue;
+          const status = comp.status && comp.status.type;
+          if (!status || !status.completed) continue;
+          const cs = comp.competitors || [];
+          const home = cs.find(c => c.homeAway === 'home');
+          const away = cs.find(c => c.homeAway === 'away');
+          if (!home || !away) continue;
+          const homeScore = home.score != null ? +home.score : NaN;
+          const awayScore = away.score != null ? +away.score : NaN;
+          if (isNaN(homeScore) || isNaN(awayScore)) continue;
+
+          if (!state.priorWeeks[home.team.id]) state.priorWeeks[home.team.id] = [];
+          if (!state.priorWeeks[away.team.id]) state.priorWeeks[away.team.id] = [];
+          state.priorWeeks[home.team.id].push({ week: w, ptsFor: homeScore, ptsAgainst: awayScore });
+          state.priorWeeks[away.team.id].push({ week: w, ptsFor: awayScore, ptsAgainst: homeScore });
+        }
       }
-      state.priorWeeks[teamId] = weeks;
     }
 
     // 4. Combine
