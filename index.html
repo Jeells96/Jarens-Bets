@@ -496,25 +496,112 @@ margin-top: 2px;
 
 /* Loader */
 .loader {
-padding: 60px 20px;
-text-align: center;
+padding: 40px 20px;
 color: var(–ink-dim);
+max-width: 480px;
+margin: 0 auto;
 }
 .loader .spinner {
-display: inline-block;
+display: block;
 width: 28px; height: 28px;
 border: 2px solid var(–line);
 border-top-color: var(–accent);
 border-radius: 50%;
 animation: spin 0.7s linear infinite;
-margin-bottom: 14px;
+margin: 0 auto 18px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.loader .step {
+
+.loader-title {
+text-align: center;
+font-family: ui-serif, Georgia, serif;
+font-weight: 600;
+font-size: 16px;
+color: var(–ink);
+margin-bottom: 4px;
+}
+.loader-pct {
+text-align: center;
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 28px;
+font-weight: 700;
+color: var(–accent);
+margin-bottom: 18px;
+line-height: 1;
+}
+.loader-bar {
+height: 4px;
+background: var(–bg-2);
+border-radius: 2px;
+overflow: hidden;
+margin-bottom: 20px;
+}
+.loader-bar-fill {
+height: 100%;
+background: linear-gradient(90deg, var(–accent-2), var(–accent));
+border-radius: 2px;
+transition: width 0.25s ease-out;
+width: 0%;
+}
+.loader-steps {
+display: flex;
+flex-direction: column;
+gap: 10px;
+}
+.loader-step {
+display: flex;
+align-items: center;
+gap: 10px;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 12px;
+}
+.loader-step .icon {
+width: 18px; height: 18px;
+flex-shrink: 0;
+border-radius: 50%;
+display: flex;
+align-items: center;
+justify-content: center;
 font-size: 11px;
+font-weight: 700;
+border: 1px solid var(–line);
 color: var(–ink-faint);
-margin-top: 6px;
+}
+.loader-step.done .icon {
+background: var(–accent);
+color: var(–bg);
+border-color: var(–accent);
+}
+.loader-step.active .icon {
+border-color: var(–accent);
+color: var(–accent);
+animation: pulse-icon 1.2s ease-in-out infinite;
+}
+@keyframes pulse-icon {
+0%, 100% { opacity: 1; }
+50% { opacity: 0.5; }
+}
+.loader-step .label {
+flex: 1;
+color: var(–ink);
+}
+.loader-step.pending .label { color: var(–ink-faint); }
+.loader-step .meta {
+font-size: 10px;
+color: var(–ink-faint);
+}
+.loader-step .bar {
+width: 60px;
+height: 3px;
+background: var(–bg-2);
+border-radius: 2px;
+overflow: hidden;
+}
+.loader-step .bar .fill {
+height: 100%;
+background: var(–accent);
+transition: width 0.2s ease-out;
+width: 0%;
 }
 
 /* Error state */
@@ -602,10 +689,31 @@ margin: 0 auto 12px;
 </div>
 
 <main id="main">
-  <div class="loader">
+  <div class="loader" id="loader">
     <div class="spinner"></div>
-    <div>Loading NFL data</div>
-    <div class="step" id="load-step">Fetching schedules…</div>
+    <div class="loader-title">Loading NFL Data</div>
+    <div class="loader-pct" id="loader-pct">0%</div>
+    <div class="loader-bar"><div class="loader-bar-fill" id="loader-bar"></div></div>
+    <div class="loader-steps" id="loader-steps">
+      <div class="loader-step pending" data-step="schedules">
+        <div class="icon">1</div>
+        <div class="label">Schedule</div>
+        <div class="meta" data-meta>queued</div>
+        <div class="bar"><div class="fill" data-fill></div></div>
+      </div>
+      <div class="loader-step pending" data-step="player">
+        <div class="icon">2</div>
+        <div class="label">Player stats</div>
+        <div class="meta" data-meta>queued</div>
+        <div class="bar"><div class="fill" data-fill></div></div>
+      </div>
+      <div class="loader-step pending" data-step="team">
+        <div class="icon">3</div>
+        <div class="label">Team stats</div>
+        <div class="meta" data-meta>queued</div>
+        <div class="bar"><div class="fill" data-fill></div></div>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -669,39 +777,82 @@ function num(v) {
 }
 
 // =============================================================================
-// CACHED FETCH — tries direct, falls back to CORS proxies
+// FETCH LAYER — streaming progress, hard timeouts, multiple fallbacks
 // =============================================================================
-// GitHub release downloads redirect to objects.githubusercontent.com which
-// doesn't always send CORS headers. We try direct first (works in many envs),
-// then fall back to read-through proxies that do handle CORS properly.
+// nflverse files redirect through objects.githubusercontent.com which is hit
+// or miss for CORS. We try several routes and stream bytes so the user sees
+// real progress instead of a hung "loading" state.
 
 const FETCH_STRATEGIES = [
-  { name: 'direct', wrap: (url) => url },
-  { name: 'jina',   wrap: (url) => 'https://r.jina.ai/' + url },
-  { name: 'corsproxy', wrap: (url) => 'https://corsproxy.io/?url=' + encodeURIComponent(url) },
+  // Direct GitHub release URL — works on many networks, fails on some Safari
+  { name: 'github',   wrap: (url) => url },
+  // corsproxy.io — well-maintained free CORS proxy that streams bytes
+  { name: 'corsproxy',  wrap: (url) => 'https://corsproxy.io/?url=' + encodeURIComponent(url) },
+  // allorigins — alternative free proxy
+  { name: 'allorigins', wrap: (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url) },
 ];
+
+const FETCH_TIMEOUT_MS = 45_000; // 45s per strategy
+
+// Stream a fetch, reporting bytes received via onProgress(bytes, totalOrNull)
+async function streamFetch(url, onProgress, signal) {
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const total = +res.headers.get('content-length') || null;
+
+  // If no body reader (older browsers), fall back to text()
+  if (!res.body || !res.body.getReader) {
+    const text = await res.text();
+    onProgress && onProgress(text.length, text.length);
+    return text;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let received = 0;
+  let chunks = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.length;
+    chunks += decoder.decode(value, { stream: true });
+    onProgress && onProgress(received, total);
+  }
+  chunks += decoder.decode();
+  return chunks;
+}
 
 async function fetchWithFallback(url, onProgress) {
   let lastErr;
   for (const strat of FETCH_STRATEGIES) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
-      onProgress && onProgress(`downloading via ${strat.name}…`);
-      const res = await fetch(strat.wrap(url), {
-        headers: strat.name === 'jina' ? { 'Accept': 'text/plain' } : {},
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      // sanity: the CSV must start with a header row, not HTML
-      if (text.startsWith('<') || text.length < 100) {
-        throw new Error('got HTML or empty response');
+      onProgress && onProgress({ phase: 'connect', via: strat.name, bytes: 0, total: null });
+      const text = await streamFetch(
+        strat.wrap(url),
+        (bytes, total) => onProgress && onProgress({ phase: 'download', via: strat.name, bytes, total }),
+        ctrl.signal
+      );
+      clearTimeout(timer);
+      // Sanity: must look like a CSV (starts with letters, has commas, has newlines)
+      const head = text.slice(0, 500);
+      if (head.startsWith('<') || !head.includes(',') || !head.includes('\n')) {
+        throw new Error('response does not look like CSV');
       }
+      onProgress && onProgress({ phase: 'parse', via: strat.name, bytes: text.length, total: text.length });
       return text;
     } catch (e) {
+      clearTimeout(timer);
       lastErr = e;
-      console.warn(`[fetch] ${strat.name} failed for ${url}:`, e.message);
+      const reason = e.name === 'AbortError' ? 'timeout' : e.message;
+      console.warn(`[fetch] ${strat.name} failed for ${url}: ${reason}`);
+      onProgress && onProgress({ phase: 'failed', via: strat.name, error: reason });
     }
   }
-  throw new Error(`All fetch strategies failed. Last: ${lastErr.message}`);
+  throw new Error(`All fetch routes failed. Last: ${lastErr ? lastErr.message : 'unknown'}`);
 }
 
 async function cachedFetch(url, cacheKey, onProgress) {
@@ -711,17 +862,16 @@ async function cachedFetch(url, cacheKey, onProgress) {
     if (cached) {
       const { ts, data } = JSON.parse(cached);
       if (Date.now() - ts < CACHE_TTL_MS) {
-        onProgress && onProgress('cache hit');
+        onProgress && onProgress({ phase: 'cached', bytes: 0, total: 0 });
         return data;
       }
     }
   } catch(e) {}
 
   const text = await fetchWithFallback(url, onProgress);
-  onProgress && onProgress(`parsing ${(text.length/1024/1024).toFixed(1)}MB…`);
+  onProgress && onProgress({ phase: 'parsing', bytes: text.length, total: text.length });
   const data = parseCSV(text);
 
-  // only cache if small enough to fit (localStorage is ~5MB per origin)
   try {
     const serialized = JSON.stringify({ ts: Date.now(), data });
     if (serialized.length < 4_500_000) localStorage.setItem(full, serialized);
@@ -894,23 +1044,98 @@ function setStatus(cls, text, meta='') {
   document.getElementById('status-meta').textContent = meta;
 }
 
-function setLoadStep(s) {
-  const el = document.getElementById('load-step');
-  if (el) el.textContent = s;
+// Loader UI helpers
+const LOADER_STEPS = ['schedules', 'player', 'team'];
+// Approximate weights for overall % (schedules small, others bigger)
+const STEP_WEIGHTS = { schedules: 0.05, player: 0.50, team: 0.45 };
+const STEP_PROGRESS = { schedules: 0, player: 0, team: 0 };
+
+function fmtBytes(n) {
+  if (!n) return '0 KB';
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function setStepState(stepId, stateName, meta, progressPct) {
+  const el = document.querySelector(`.loader-step[data-step="${stepId}"]`);
+  if (!el) return;
+  el.classList.remove('pending', 'active', 'done', 'error');
+  el.classList.add(stateName);
+  if (meta != null) el.querySelector('[data-meta]').textContent = meta;
+  if (progressPct != null) el.querySelector('[data-fill]').style.width = `${progressPct}%`;
+}
+
+function updateOverall() {
+  let total = 0;
+  for (const k of LOADER_STEPS) total += (STEP_PROGRESS[k] || 0) * STEP_WEIGHTS[k];
+  const pct = Math.min(100, Math.round(total * 100));
+  const pctEl = document.getElementById('loader-pct');
+  const barEl = document.getElementById('loader-bar');
+  if (pctEl) pctEl.textContent = pct + '%';
+  if (barEl) barEl.style.width = pct + '%';
+}
+
+// Approximate sizes when content-length isn't reported
+const APPROX_SIZE = {
+  schedules: 1_000_000,
+  player: 12_000_000,
+  team: 1_500_000,
+};
+
+function makeProgressHandler(stepId) {
+  setStepState(stepId, 'active', 'connecting…', 0);
+  return (info) => {
+    if (info.phase === 'cached') {
+      setStepState(stepId, 'done', 'cached', 100);
+      STEP_PROGRESS[stepId] = 1; updateOverall(); return;
+    }
+    if (info.phase === 'connect') {
+      setStepState(stepId, 'active', `connect via ${info.via}…`, 2);
+      return;
+    }
+    if (info.phase === 'download') {
+      const total = info.total || APPROX_SIZE[stepId] || 5_000_000;
+      const pct = Math.min(99, Math.round(info.bytes / total * 100));
+      const meta = info.total
+        ? `${fmtBytes(info.bytes)} / ${fmtBytes(info.total)}`
+        : `${fmtBytes(info.bytes)}`;
+      setStepState(stepId, 'active', meta, pct);
+      STEP_PROGRESS[stepId] = pct / 100; updateOverall();
+      return;
+    }
+    if (info.phase === 'parse' || info.phase === 'parsing') {
+      setStepState(stepId, 'active', 'parsing CSV…', 99);
+      STEP_PROGRESS[stepId] = 0.99; updateOverall();
+      return;
+    }
+    if (info.phase === 'failed') {
+      setStepState(stepId, 'active', `${info.via} failed → next…`, null);
+      return;
+    }
+  };
 }
 
 async function boot() {
   try {
-    setStatus('loading', 'Loading schedule');
-    state.schedules = await cachedFetch(URLS.schedules, 'schedules', setLoadStep);
-    setLoadStep('Loading player stats…');
-    state.playerWeeks[2025] = await cachedFetch(URLS.playerWeek(2025), 'player_2025', setLoadStep);
-    setLoadStep('Loading team stats…');
-    state.teamWeeks[2025] = await cachedFetch(URLS.teamWeek(2025), 'team_2025', setLoadStep);
+    setStatus('loading', 'Loading data');
 
-    // Populate week dropdown
+    setStepState('schedules', 'active', 'starting…', 0);
+    state.schedules = await cachedFetch(URLS.schedules, 'schedules', makeProgressHandler('schedules'));
+    setStepState('schedules', 'done', `${state.schedules.length.toLocaleString()} games`, 100);
+    STEP_PROGRESS.schedules = 1; updateOverall();
+
+    setStepState('player', 'active', 'starting…', 0);
+    state.playerWeeks[2025] = await cachedFetch(URLS.playerWeek(2025), 'player_2025', makeProgressHandler('player'));
+    setStepState('player', 'done', `${state.playerWeeks[2025].length.toLocaleString()} rows`, 100);
+    STEP_PROGRESS.player = 1; updateOverall();
+
+    setStepState('team', 'active', 'starting…', 0);
+    state.teamWeeks[2025] = await cachedFetch(URLS.teamWeek(2025), 'team_2025', makeProgressHandler('team'));
+    setStepState('team', 'done', `${state.teamWeeks[2025].length.toLocaleString()} rows`, 100);
+    STEP_PROGRESS.team = 1; updateOverall();
+
     populateWeekDropdown();
-
     setStatus('live', 'Data loaded', `${state.playerWeeks[2025].length.toLocaleString()} player-weeks · ${state.teamWeeks[2025].length.toLocaleString()} team-weeks`);
     render();
   } catch (err) {
@@ -920,20 +1145,14 @@ async function boot() {
       <div class="error-panel">
         <h4>Could not load data</h4>
         <p><b>Error:</b> ${err.message}</p>
-        <p>The app tries three different ways to fetch nflverse CSVs (direct GitHub, then proxies). All three failed, which usually means:</p>
+        <p>The app tried three different ways to fetch nflverse CSVs (direct GitHub, corsproxy.io, allorigins). All three failed.</p>
         <p style="font-size:12px;color:var(--ink-faint);line-height:1.7">
-          • A content blocker / VPN is blocking github.com or the proxies<br>
-          • You're offline or on a captive WiFi<br>
-          • Safari Private Relay is interfering — try without it<br>
-          • The proxies are temporarily down
-        </p>
-        <p style="font-size:12px;color:var(--ink-faint)">
-          Open Safari DevTools (or remote-inspect from a Mac) and check the Console tab — you'll see which URL failed and why.
+          • A content blocker / VPN may be blocking the proxies<br>
+          • Captive WiFi or no internet<br>
+          • Safari Private Relay can interfere — try toggling it off<br>
+          • Free proxies sometimes go down — try again in a minute
         </p>
         <button onclick="localStorage.clear();location.reload()">Clear cache & retry</button>
-      </div>`;
-  }
-}
       </div>`;
   }
 }
