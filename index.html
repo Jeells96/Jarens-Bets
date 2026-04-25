@@ -6,7 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0d10" />
 <title>Gridline — NFL Projections</title>
-<!-- Using iOS system fonts — no external font dependency -->
 <style>
   :root {
     --bg: #0b0d10;
@@ -17,10 +16,10 @@
     --ink: #e8ecf1;
     --ink-dim: #9aa4b2;
     --ink-faint: #5d6773;
-    --accent: #d4ff3a;       /* signal green */
-    --accent-2: #6fe0ff;     /* cool cyan for secondary */
-    --hot: #ff6b6b;          /* over */
-    --cold: #6fb7ff;         /* under */
+    --accent: #d4ff3a;
+    --accent-2: #6fe0ff;
+    --hot: #ff6b6b;
+    --cold: #6fb7ff;
     --warn: #ffc85c;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -42,10 +41,7 @@
     min-height: 100vh;
     padding-bottom: env(safe-area-inset-bottom);
   }
-  .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
-  .serif { font-family: ui-serif, Georgia, 'Cochin', serif; font-optical-sizing: auto; }
 
-/* Header */
 header {
 padding: max(env(safe-area-inset-top), 14px) 16px 14px;
 border-bottom: 1px solid var(–line);
@@ -59,15 +55,13 @@ display: flex; align-items: baseline; gap: 10px;
 margin-bottom: 12px;
 }
 .brand .logo {
-font-family: ui-serif, Georgia, ‘Cochin’, serif;
-font-weight: 800;
+font-family: ui-serif, Georgia, serif;
+font-weight: 700;
 font-size: 26px;
 letter-spacing: -0.02em;
 color: var(–ink);
 }
-.brand .logo::first-letter {
-color: var(–accent);
-}
+.brand .logo::first-letter { color: var(–accent); }
 .brand .tag {
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
@@ -75,13 +69,8 @@ color: var(–ink-faint);
 letter-spacing: 0.12em;
 text-transform: uppercase;
 }
-.controls {
-display: flex; gap: 8px; align-items: center;
-}
-.control {
-flex: 1;
-position: relative;
-}
+.controls { display: flex; gap: 8px; }
+.control { flex: 1; position: relative; }
 .control label {
 position: absolute;
 top: 6px; left: 12px;
@@ -114,8 +103,24 @@ color: var(–ink-dim);
 pointer-events: none;
 font-size: 10px;
 }
+.load-btn {
+margin-top: 10px;
+width: 100%;
+background: var(–accent);
+color: var(–bg);
+border: none;
+padding: 14px;
+border-radius: 8px;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-weight: 700;
+font-size: 13px;
+letter-spacing: 0.06em;
+text-transform: uppercase;
+cursor: pointer;
+}
+.load-btn:active { transform: scale(0.98); }
+.load-btn:disabled { opacity: 0.4; }
 
-/* Status bar */
 .status {
 padding: 8px 16px;
 background: var(–bg-2);
@@ -140,19 +145,12 @@ margin-right: 6px;
 background: var(–warn);
 animation: pulse 1.2s ease-in-out infinite;
 }
-@keyframes pulse {
-0%, 100% { opacity: 0.4; }
-50% { opacity: 1; }
-}
+@keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
 
-/* Tabs */
 .tabs {
 display: flex;
 background: var(–bg);
 border-bottom: 1px solid var(–line);
-position: sticky;
-top: 0;
-z-index: 5;
 }
 .tab {
 flex: 1;
@@ -165,7 +163,6 @@ text-transform: uppercase;
 color: var(–ink-faint);
 border: none;
 background: transparent;
-cursor: pointer;
 position: relative;
 font-weight: 500;
 }
@@ -178,7 +175,57 @@ height: 2px;
 background: var(–accent);
 }
 
-/* Game cards */
+.loader {
+padding: 40px 20px;
+color: var(–ink-dim);
+max-width: 480px;
+margin: 0 auto;
+}
+.loader-title {
+text-align: center;
+font-family: ui-serif, Georgia, serif;
+font-weight: 600;
+font-size: 16px;
+color: var(–ink);
+margin-bottom: 6px;
+}
+.loader-pct {
+text-align: center;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 42px;
+font-weight: 700;
+color: var(–accent);
+margin-bottom: 18px;
+line-height: 1;
+}
+.loader-bar {
+height: 4px;
+background: var(–bg-2);
+border-radius: 2px;
+overflow: hidden;
+margin-bottom: 22px;
+}
+.loader-bar-fill {
+height: 100%;
+background: linear-gradient(90deg, var(–accent-2), var(–accent));
+border-radius: 2px;
+transition: width 0.25s ease-out;
+width: 0%;
+}
+.loader-msg {
+text-align: center;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 12px;
+color: var(–ink);
+margin-bottom: 4px;
+}
+.loader-detail {
+text-align: center;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 10px;
+color: var(–ink-faint);
+}
+
 .games {
 padding: 12px;
 display: flex;
@@ -199,11 +246,7 @@ justify-content: space-between;
 border-bottom: 1px solid var(–line);
 cursor: pointer;
 }
-.matchup {
-display: flex;
-flex-direction: column;
-gap: 2px;
-}
+.matchup { display: flex; flex-direction: column; gap: 2px; }
 .matchup .teams {
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
@@ -220,12 +263,10 @@ font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 color: var(–ink-dim);
 }
-.total-proj {
-text-align: right;
-}
+.total-proj { text-align: right; }
 .total-proj .num {
-font-family: ui-serif, Georgia, ‘Cochin’, serif;
-font-weight: 800;
+font-family: ui-serif, Georgia, serif;
+font-weight: 700;
 font-size: 28px;
 line-height: 1;
 color: var(–accent);
@@ -236,24 +277,17 @@ font-size: 9px;
 color: var(–ink-faint);
 letter-spacing: 0.12em;
 text-transform: uppercase;
+margin-top: 4px;
 }
 
-/* Team totals row */
 .team-totals {
 display: grid;
 grid-template-columns: 1fr 1px 1fr;
 background: var(–bg-3);
 border-bottom: 1px solid var(–line);
 }
-.team-totals .divider {
-background: var(–line);
-}
-.tt {
-padding: 14px 16px;
-display: flex;
-flex-direction: column;
-gap: 4px;
-}
+.team-totals .divider { background: var(–line); }
+.tt { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
 .tt.away { text-align: left; }
 .tt.home { text-align: right; }
 .tt .team {
@@ -264,10 +298,15 @@ color: var(–ink-dim);
 letter-spacing: 0.05em;
 }
 .tt .pts {
-font-family: ui-serif, Georgia, ‘Cochin’, serif;
+font-family: ui-serif, Georgia, serif;
 font-weight: 600;
 font-size: 22px;
 line-height: 1;
+}
+.tt .pts .actual {
+color: var(–ink-faint);
+font-size: 14px;
+font-weight: 400;
 }
 .tt .yds {
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
@@ -275,7 +314,6 @@ font-size: 11px;
 color: var(–ink-faint);
 }
 
-/* Confidence */
 .conf-row {
 padding: 10px 16px;
 display: flex;
@@ -303,7 +341,6 @@ overflow: hidden;
 height: 100%;
 background: linear-gradient(90deg, var(–accent-2), var(–accent));
 border-radius: 2px;
-transition: width 0.4s ease;
 }
 .conf-pct {
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
@@ -314,11 +351,7 @@ min-width: 34px;
 text-align: right;
 }
 
-/* Expandable details */
-.game-body {
-display: none;
-padding: 0;
-}
+.game-body { display: none; }
 .game.open .game-body { display: block; }
 .game-head .caret {
 color: var(–ink-faint);
@@ -343,12 +376,7 @@ text-transform: uppercase;
 color: var(–ink-faint);
 }
 
-/* Player rows */
-.players {
-display: flex;
-flex-direction: column;
-gap: 6px;
-}
+.players { display: flex; flex-direction: column; gap: 6px; }
 .player-row {
 display: grid;
 grid-template-columns: auto 1fr auto auto;
@@ -411,25 +439,15 @@ border-radius: 3px;
 .actual-miss { color: var(–hot); background: rgba(255,107,107,0.08); }
 .actual-na { color: var(–ink-faint); }
 
-/* TD section */
-.tds {
-display: flex;
-flex-direction: column;
-gap: 8px;
-}
+.tds { display: flex; flex-direction: column; gap: 6px; }
 .td-row {
 display: grid;
-grid-template-columns: auto 1fr auto auto;
+grid-template-columns: auto 1fr auto auto auto;
 gap: 10px;
 align-items: center;
 padding: 6px 8px;
 background: var(–bg-3);
 border-radius: 6px;
-}
-.td-conf {
-display: flex;
-align-items: center;
-gap: 4px;
 }
 .td-conf-dot {
 width: 6px; height: 6px;
@@ -451,11 +469,58 @@ font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 padding: 2px 6px;
 border-radius: 3px;
+white-space: nowrap;
 }
 .td-scored.yes { color: var(–accent); background: rgba(212,255,58,0.12); }
 .td-scored.no { color: var(–ink-faint); }
 
-/* Model summary */
+.hint {
+padding: 60px 24px;
+text-align: center;
+color: var(–ink-faint);
+}
+.hint .icon { font-size: 36px; margin-bottom: 14px; opacity: 0.7; }
+.hint .title {
+font-family: ui-serif, Georgia, serif;
+font-size: 18px;
+color: var(–ink);
+margin-bottom: 8px;
+}
+.hint .sub {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 12px;
+line-height: 1.6;
+max-width: 320px;
+margin: 0 auto;
+}
+
+.error-panel {
+margin: 20px;
+padding: 16px;
+background: var(–bg-2);
+border: 1px solid var(–hot);
+border-radius: 10px;
+}
+.error-panel h4 {
+margin: 0 0 8px;
+color: var(–hot);
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 12px;
+letter-spacing: 0.1em;
+text-transform: uppercase;
+}
+.error-panel p { margin: 0 0 10px; font-size: 13px; color: var(–ink-dim); }
+.error-panel button {
+background: var(–accent);
+color: var(–bg);
+border: none;
+padding: 8px 14px;
+border-radius: 6px;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-weight: 700;
+font-size: 12px;
+}
+
 .summary {
 margin: 12px;
 padding: 14px 16px;
@@ -465,7 +530,7 @@ border-radius: 12px;
 }
 .summary h3 {
 margin: 0 0 10px;
-font-family: ui-serif, Georgia, ‘Cochin’, serif;
+font-family: ui-serif, Georgia, serif;
 font-weight: 600;
 font-size: 16px;
 }
@@ -494,150 +559,6 @@ letter-spacing: 0.1em;
 margin-top: 2px;
 }
 
-/* Loader */
-.loader {
-padding: 40px 20px;
-color: var(–ink-dim);
-max-width: 480px;
-margin: 0 auto;
-}
-.loader .spinner {
-display: block;
-width: 28px; height: 28px;
-border: 2px solid var(–line);
-border-top-color: var(–accent);
-border-radius: 50%;
-animation: spin 0.7s linear infinite;
-margin: 0 auto 18px;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.loader-title {
-text-align: center;
-font-family: ui-serif, Georgia, serif;
-font-weight: 600;
-font-size: 16px;
-color: var(–ink);
-margin-bottom: 4px;
-}
-.loader-pct {
-text-align: center;
-font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
-font-size: 28px;
-font-weight: 700;
-color: var(–accent);
-margin-bottom: 18px;
-line-height: 1;
-}
-.loader-bar {
-height: 4px;
-background: var(–bg-2);
-border-radius: 2px;
-overflow: hidden;
-margin-bottom: 20px;
-}
-.loader-bar-fill {
-height: 100%;
-background: linear-gradient(90deg, var(–accent-2), var(–accent));
-border-radius: 2px;
-transition: width 0.25s ease-out;
-width: 0%;
-}
-.loader-steps {
-display: flex;
-flex-direction: column;
-gap: 10px;
-}
-.loader-step {
-display: flex;
-align-items: center;
-gap: 10px;
-font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
-font-size: 12px;
-}
-.loader-step .icon {
-width: 18px; height: 18px;
-flex-shrink: 0;
-border-radius: 50%;
-display: flex;
-align-items: center;
-justify-content: center;
-font-size: 11px;
-font-weight: 700;
-border: 1px solid var(–line);
-color: var(–ink-faint);
-}
-.loader-step.done .icon {
-background: var(–accent);
-color: var(–bg);
-border-color: var(–accent);
-}
-.loader-step.active .icon {
-border-color: var(–accent);
-color: var(–accent);
-animation: pulse-icon 1.2s ease-in-out infinite;
-}
-@keyframes pulse-icon {
-0%, 100% { opacity: 1; }
-50% { opacity: 0.5; }
-}
-.loader-step .label {
-flex: 1;
-color: var(–ink);
-}
-.loader-step.pending .label { color: var(–ink-faint); }
-.loader-step .meta {
-font-size: 10px;
-color: var(–ink-faint);
-}
-.loader-step .bar {
-width: 60px;
-height: 3px;
-background: var(–bg-2);
-border-radius: 2px;
-overflow: hidden;
-}
-.loader-step .bar .fill {
-height: 100%;
-background: var(–accent);
-transition: width 0.2s ease-out;
-width: 0%;
-}
-
-/* Error state */
-.error-panel {
-margin: 20px;
-padding: 16px;
-background: var(–bg-2);
-border: 1px solid var(–hot);
-border-radius: 10px;
-}
-.error-panel h4 {
-margin: 0 0 8px;
-color: var(–hot);
-font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
-font-size: 12px;
-letter-spacing: 0.1em;
-text-transform: uppercase;
-}
-.error-panel p {
-margin: 0 0 10px;
-font-size: 13px;
-color: var(–ink-dim);
-}
-.error-panel button {
-background: var(–accent);
-color: var(–bg);
-border: none;
-padding: 8px 14px;
-border-radius: 6px;
-font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
-font-weight: 700;
-font-size: 12px;
-cursor: pointer;
-}
-
-/* Footer note */
 .foot {
 padding: 20px 16px 40px;
 text-align: center;
@@ -667,8 +588,9 @@ margin: 0 auto 12px;
     <div class="control">
       <label for="season">Season</label>
       <select id="season">
-        <option value="2025">2025 (completed)</option>
-        <option value="2026">2026 (upcoming)</option>
+        <option value="2024">2024 (last yr)</option>
+        <option value="2025" selected>2025 (current)</option>
+        <option value="2026">2026 (next)</option>
       </select>
     </div>
     <div class="control">
@@ -676,10 +598,11 @@ margin: 0 auto 12px;
       <select id="week"></select>
     </div>
   </div>
+  <button class="load-btn" id="load-btn">Load Week</button>
 </header>
 
-<div id="status" class="status loading">
-  <span><span class="dot"></span><span id="status-text">Initializing…</span></span>
+<div id="status" class="status">
+  <span><span class="dot"></span><span id="status-text">Pick a season &amp; week, then tap Load</span></span>
   <span id="status-meta"></span>
 </div>
 
@@ -689,502 +612,375 @@ margin: 0 auto 12px;
 </div>
 
 <main id="main">
-  <div class="loader" id="loader">
-    <div class="spinner"></div>
-    <div class="loader-title">Loading NFL Data</div>
-    <div class="loader-pct" id="loader-pct">0%</div>
-    <div class="loader-bar"><div class="loader-bar-fill" id="loader-bar"></div></div>
-    <div class="loader-steps" id="loader-steps">
-      <div class="loader-step pending" data-step="schedules">
-        <div class="icon">1</div>
-        <div class="label">Schedule</div>
-        <div class="meta" data-meta>queued</div>
-        <div class="bar"><div class="fill" data-fill></div></div>
-      </div>
-      <div class="loader-step pending" data-step="player">
-        <div class="icon">2</div>
-        <div class="label">Player stats</div>
-        <div class="meta" data-meta>queued</div>
-        <div class="bar"><div class="fill" data-fill></div></div>
-      </div>
-      <div class="loader-step pending" data-step="team">
-        <div class="icon">3</div>
-        <div class="label">Team stats</div>
-        <div class="meta" data-meta>queued</div>
-        <div class="bar"><div class="fill" data-fill></div></div>
-      </div>
+  <div class="hint">
+    <div class="icon">🏈</div>
+    <div class="title">Ready to project</div>
+    <div class="sub">
+      Choose a season and week above, then tap Load Week. Data comes from
+      ESPN's public API — only one week is fetched at a time, so it's fast
+      even on cellular.
     </div>
   </div>
 </main>
 
 <div class="foot">
   <span class="divider"></span>
-  Projections are model estimates built from nflverse rolling averages.<br>
-  Backtest only — not betting advice. Past performance ≠ future results.
+  Projections blend recent form &amp; season averages with opponent matchup.<br>
+  Backtest tool — not betting advice.
 </div>
 
 <script>
-// =============================================================================
-// DATA LAYER — nflverse release URLs
-// =============================================================================
-const NFLVERSE_BASE = 'https://github.com/nflverse/nflverse-data/releases/download';
-const URLS = {
-  schedules: `${NFLVERSE_BASE}/schedules/schedules.csv`,
-  playerWeek: (season) => `${NFLVERSE_BASE}/stats_player/stats_player_week_${season}.csv`,
-  teamWeek:   (season) => `${NFLVERSE_BASE}/stats_team/stats_team_week_${season}.csv`,
+'use strict';
+
+// ============================================================================
+// ESPN public API (no auth, CORS-enabled)
+// ============================================================================
+const ESPN = {
+  scoreboard: (season, week) =>
+    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&week=${week}`,
+  summary: (eventId) =>
+    `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
+  teamSchedule: (teamId, season) =>
+    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/schedule?season=${season}`,
 };
 
-const CACHE_VERSION = 'v1';
-const CACHE_TTL_MS = 1000 * 60 * 60 * 6; // 6h
+const CACHE_VERSION = 'v3';
+const CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12h
 
-// =============================================================================
-// CSV PARSING — streaming, handles quoted fields
-// =============================================================================
-function parseCSV(text) {
-  const rows = [];
-  let i = 0, field = '', row = [], inQuotes = false;
-  const len = text.length;
-  while (i < len) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i+1] === '"') { field += '"'; i += 2; continue; }
-        inQuotes = false; i++; continue;
-      }
-      field += c; i++;
-    } else {
-      if (c === '"') { inQuotes = true; i++; continue; }
-      if (c === ',') { row.push(field); field = ''; i++; continue; }
-      if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
-      if (c === '\r') { i++; continue; }
-      field += c; i++;
-    }
-  }
-  if (field.length || row.length) { row.push(field); rows.push(row); }
-  if (!rows.length) return [];
-  const headers = rows[0];
-  return rows.slice(1).filter(r => r.length === headers.length).map(r => {
-    const obj = {};
-    for (let j = 0; j < headers.length; j++) obj[headers[j]] = r[j];
-    return obj;
-  });
-}
-
-function num(v) {
-  if (v === '' || v == null || v === 'NA') return 0;
-  const n = +v;
-  return isNaN(n) ? 0 : n;
-}
-
-// =============================================================================
-// FETCH LAYER — streaming progress, hard timeouts, multiple fallbacks
-// =============================================================================
-// nflverse files redirect through objects.githubusercontent.com which is hit
-// or miss for CORS. We try several routes and stream bytes so the user sees
-// real progress instead of a hung "loading" state.
-
-const FETCH_STRATEGIES = [
-  // Direct GitHub release URL — works on many networks, fails on some Safari
-  { name: 'github',   wrap: (url) => url },
-  // corsproxy.io — well-maintained free CORS proxy that streams bytes
-  { name: 'corsproxy',  wrap: (url) => 'https://corsproxy.io/?url=' + encodeURIComponent(url) },
-  // allorigins — alternative free proxy
-  { name: 'allorigins', wrap: (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url) },
-];
-
-const FETCH_TIMEOUT_MS = 45_000; // 45s per strategy
-
-// Stream a fetch, reporting bytes received via onProgress(bytes, totalOrNull)
-async function streamFetch(url, onProgress, signal) {
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-  const total = +res.headers.get('content-length') || null;
-
-  // If no body reader (older browsers), fall back to text()
-  if (!res.body || !res.body.getReader) {
-    const text = await res.text();
-    onProgress && onProgress(text.length, text.length);
-    return text;
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let received = 0;
-  let chunks = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    chunks += decoder.decode(value, { stream: true });
-    onProgress && onProgress(received, total);
-  }
-  chunks += decoder.decode();
-  return chunks;
-}
-
-async function fetchWithFallback(url, onProgress) {
+// ============================================================================
+// Fetch helpers
+// ============================================================================
+async function fetchJSON(url, { timeout = 15000, retries = 2 } = {}) {
   let lastErr;
-  for (const strat of FETCH_STRATEGIES) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), timeout);
     try {
-      onProgress && onProgress({ phase: 'connect', via: strat.name, bytes: 0, total: null });
-      const text = await streamFetch(
-        strat.wrap(url),
-        (bytes, total) => onProgress && onProgress({ phase: 'download', via: strat.name, bytes, total }),
-        ctrl.signal
-      );
+      const res = await fetch(url, { signal: ctrl.signal });
       clearTimeout(timer);
-      // Sanity: must look like a CSV (starts with letters, has commas, has newlines)
-      const head = text.slice(0, 500);
-      if (head.startsWith('<') || !head.includes(',') || !head.includes('\n')) {
-        throw new Error('response does not look like CSV');
-      }
-      onProgress && onProgress({ phase: 'parse', via: strat.name, bytes: text.length, total: text.length });
-      return text;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
     } catch (e) {
       clearTimeout(timer);
       lastErr = e;
-      const reason = e.name === 'AbortError' ? 'timeout' : e.message;
-      console.warn(`[fetch] ${strat.name} failed for ${url}: ${reason}`);
-      onProgress && onProgress({ phase: 'failed', via: strat.name, error: reason });
+      if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
   }
-  throw new Error(`All fetch routes failed. Last: ${lastErr ? lastErr.message : 'unknown'}`);
+  throw lastErr;
 }
 
-async function cachedFetch(url, cacheKey, onProgress) {
-  const full = `gridline_${CACHE_VERSION}_${cacheKey}`;
+function cacheKey(url) {
+  return 'gl_' + CACHE_VERSION + '_' + btoa(unescape(encodeURIComponent(url))).slice(0, 80);
+}
+
+async function cachedJSON(url) {
+  const k = cacheKey(url);
   try {
-    const cached = localStorage.getItem(full);
-    if (cached) {
-      const { ts, data } = JSON.parse(cached);
-      if (Date.now() - ts < CACHE_TTL_MS) {
-        onProgress && onProgress({ phase: 'cached', bytes: 0, total: 0 });
-        return data;
-      }
+    const raw = localStorage.getItem(k);
+    if (raw) {
+      const { ts, data } = JSON.parse(raw);
+      if (Date.now() - ts < CACHE_TTL_MS) return data;
     }
-  } catch(e) {}
-
-  const text = await fetchWithFallback(url, onProgress);
-  onProgress && onProgress({ phase: 'parsing', bytes: text.length, total: text.length });
-  const data = parseCSV(text);
-
+  } catch (e) {}
+  const data = await fetchJSON(url);
   try {
-    const serialized = JSON.stringify({ ts: Date.now(), data });
-    if (serialized.length < 4_500_000) localStorage.setItem(full, serialized);
-  } catch(e) {}
+    const s = JSON.stringify({ ts: Date.now(), data });
+    if (s.length < 800_000) localStorage.setItem(k, s);
+  } catch (e) {}
   return data;
 }
 
-// =============================================================================
-// PROJECTION ENGINE
-// =============================================================================
-// Philosophy: we project what a player/team will do in a given week using:
-//  - Their rolling 4-week average before that week (recency)
-//  - Their season average (stability)
-//  - Opponent defensive yards-allowed rank (matchup)
-//  - Home/away split
-// Weighted blend. This is a simple, honest baseline — not a model with
-// magical hidden signal. We show projections vs. actuals so you can judge.
-
-function buildIndex(rows, keyFn) {
-  const idx = new Map();
-  for (const r of rows) {
-    const k = keyFn(r);
-    if (!idx.has(k)) idx.set(k, []);
-    idx.get(k).push(r);
-  }
-  return idx;
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const workers = new Array(Math.min(limit, items.length || 1)).fill(0).map(async () => {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
-function projectPlayerWeek({ player, playerId, position, team, week, allPlayerWeeks, oppDefRankYds }) {
-  // Gather all rows for this player up to (but not including) this week
-  const prior = allPlayerWeeks.filter(r =>
-    r.player_id === playerId && +r.week < week && r.season_type === 'REG'
-  );
-  if (!prior.length) return null;
-
-  const sortedPrior = prior.sort((a,b) => +a.week - +b.week);
-  const last4 = sortedPrior.slice(-4);
-
-  const avg = (arr, fn) => arr.length ? arr.reduce((s,r) => s + fn(r), 0) / arr.length : 0;
-
-  let projYds = 0, projTd = 0;
-  const statMap = {
-    QB: { yds: r => num(r.passing_yards) + num(r.rushing_yards),
-          tds: r => num(r.passing_tds) + num(r.rushing_tds) },
-    RB: { yds: r => num(r.rushing_yards) + num(r.receiving_yards),
-          tds: r => num(r.rushing_tds) + num(r.receiving_tds) },
-    WR: { yds: r => num(r.receiving_yards) + num(r.rushing_yards),
-          tds: r => num(r.receiving_tds) + num(r.rushing_tds) },
-    TE: { yds: r => num(r.receiving_yards),
-          tds: r => num(r.receiving_tds) },
-  };
-  const s = statMap[position];
-  if (!s) return null;
-
-  const l4y = avg(last4, s.yds);
-  const sy = avg(sortedPrior, s.yds);
-  const l4t = avg(last4, s.tds);
-  const st = avg(sortedPrior, s.tds);
-
-  // Weighted blend (60% recent / 40% season)
-  projYds = 0.6 * l4y + 0.4 * sy;
-  projTd  = 0.6 * l4t + 0.4 * st;
-
-  // Matchup adjustment: if opponent is stingy (rank 1 = best D), reduce; weak D, bump
-  // rank 1-32, neutral = 16.5. Scale +/- 12% at extremes.
-  if (oppDefRankYds) {
-    const factor = 1 + ((oppDefRankYds - 16.5) / 16.5) * 0.12;
-    projYds *= factor;
-    projTd  *= factor;
-  }
-
-  // Confidence: based on sample size & consistency (stddev)
-  const stddev = (arr, fn, mean) => {
-    if (arr.length < 2) return 0;
-    const v = arr.reduce((s,r) => s + Math.pow(fn(r) - mean, 2), 0) / arr.length;
-    return Math.sqrt(v);
-  };
-  const sd = stddev(sortedPrior, s.yds, sy);
-  const cv = sy > 0 ? sd / sy : 1; // coefficient of variation
-  const sampleScore = Math.min(1, sortedPrior.length / 8);
-  const consistencyScore = Math.max(0, 1 - cv);
-  const confidence = Math.round(100 * (0.5 * sampleScore + 0.5 * consistencyScore));
-
-  return {
-    player, playerId, position, team,
-    projYds: Math.round(projYds),
-    projTd: +projTd.toFixed(2),
-    tdProbability: Math.min(99, Math.round(projTd * 100)), // crude: proj TDs ~ expected count, treat as probability of ≥1
-    confidence,
-    gamesPlayed: sortedPrior.length,
-  };
-}
-
-function projectTeamWeek({ team, week, season, allTeamWeeks }) {
-  const prior = allTeamWeeks.filter(r =>
-    r.team === team && +r.week < week && +r.season === season && r.season_type === 'REG'
-  );
-  if (!prior.length) return { points: 20, yards: 340, games: 0 };
-
-  const sortedPrior = prior.sort((a,b) => +a.week - +b.week);
-  const last4 = sortedPrior.slice(-4);
-  const avg = (arr, fn) => arr.length ? arr.reduce((s,r) => s + fn(r), 0) / arr.length : 0;
-
-  // team_stats has these roll-ups. Use points-for and total yards.
-  const ptsFn = r => num(r.passing_tds)*7 + num(r.rushing_tds)*7 + num(r.fg_made)*3
-                   - num(r.passing_interceptions)*0 /* we won't penalize */ ;
-  // Better: compute from passing_yards + rushing_yards + implied scoring rate.
-  // But team stats file may have direct score. Try multiple field names.
-  const scoreFn = r => {
-    if ('points_scored' in r) return num(r.points_scored);
-    // Approximate from TDs and FGs
-    const tds = num(r.passing_tds) + num(r.rushing_tds);
-    const fgs = num(r.fg_made);
-    return tds * 6.95 + fgs * 3 + tds * 0.95; // ~0.95 XP rate
-  };
-  const yardsFn = r => num(r.passing_yards) + num(r.rushing_yards);
-
-  const l4p = avg(last4, scoreFn);
-  const sp = avg(sortedPrior, scoreFn);
-  const l4y = avg(last4, yardsFn);
-  const sy = avg(sortedPrior, yardsFn);
-
-  return {
-    points: 0.6 * l4p + 0.4 * sp,
-    yards:  0.6 * l4y + 0.4 * sy,
-    games: sortedPrior.length,
-  };
-}
-
-function computeDefensiveRanks({ teamWeeks, season, beforeWeek }) {
-  // yards allowed per team through week (beforeWeek - 1)
-  const tallies = new Map();
-  for (const r of teamWeeks) {
-    if (+r.season !== season) continue;
-    if (+r.week >= beforeWeek) continue;
-    if (r.season_type !== 'REG') continue;
-    const team = r.opponent_team || r.opponent; // yards the team's opponent gained = yards this team ALLOWED
-    // Actually in stats_team each row is a team's offensive output. So yards allowed to team X = sum of yards
-    // from rows where opponent_team = X.
-    if (!team) continue;
-    const yds = num(r.passing_yards) + num(r.rushing_yards);
-    const t = tallies.get(team) || { yds: 0, games: 0 };
-    t.yds += yds; t.games++;
-    tallies.set(team, t);
-  }
-  const arr = Array.from(tallies.entries())
-    .map(([team, t]) => ({ team, ypg: t.games ? t.yds / t.games : 0 }))
-    .sort((a,b) => a.ypg - b.ypg); // lowest ypg allowed = best D = rank 1
-  const rankMap = new Map();
-  arr.forEach((x, i) => rankMap.set(x.team, i + 1));
-  return rankMap;
-}
-
-// =============================================================================
-// STATE & UI
-// =============================================================================
+// ============================================================================
+// State
+// ============================================================================
 const state = {
-  schedules: null,
-  playerWeeks: {}, // by season
-  teamWeeks: {},   // by season
   season: 2025,
-  week: 1,
+  week: 8,
+  games: [],
+  priorWeeks: {}, // teamId -> [{week, ptsFor, ptsAgainst}]
+  loading: false,
+  loaded: false,
   activeTab: 'games',
 };
 
-function setStatus(cls, text, meta='') {
+// ============================================================================
+// UI helpers
+// ============================================================================
+function setStatus(cls, text, meta = '') {
   const el = document.getElementById('status');
   el.className = 'status ' + cls;
   document.getElementById('status-text').textContent = text;
   document.getElementById('status-meta').textContent = meta;
 }
 
-// Loader UI helpers
-const LOADER_STEPS = ['schedules', 'player', 'team'];
-// Approximate weights for overall % (schedules small, others bigger)
-const STEP_WEIGHTS = { schedules: 0.05, player: 0.50, team: 0.45 };
-const STEP_PROGRESS = { schedules: 0, player: 0, team: 0 };
-
-function fmtBytes(n) {
-  if (!n) return '0 KB';
-  if (n < 1024) return n + ' B';
-  if (n < 1024*1024) return (n / 1024).toFixed(0) + ' KB';
-  return (n / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-function setStepState(stepId, stateName, meta, progressPct) {
-  const el = document.querySelector(`.loader-step[data-step="${stepId}"]`);
-  if (!el) return;
-  el.classList.remove('pending', 'active', 'done', 'error');
-  el.classList.add(stateName);
-  if (meta != null) el.querySelector('[data-meta]').textContent = meta;
-  if (progressPct != null) el.querySelector('[data-fill]').style.width = `${progressPct}%`;
-}
-
-function updateOverall() {
-  let total = 0;
-  for (const k of LOADER_STEPS) total += (STEP_PROGRESS[k] || 0) * STEP_WEIGHTS[k];
-  const pct = Math.min(100, Math.round(total * 100));
-  const pctEl = document.getElementById('loader-pct');
-  const barEl = document.getElementById('loader-bar');
-  if (pctEl) pctEl.textContent = pct + '%';
-  if (barEl) barEl.style.width = pct + '%';
-}
-
-// Approximate sizes when content-length isn't reported
-const APPROX_SIZE = {
-  schedules: 1_000_000,
-  player: 12_000_000,
-  team: 1_500_000,
-};
-
-function makeProgressHandler(stepId) {
-  setStepState(stepId, 'active', 'connecting…', 0);
-  return (info) => {
-    if (info.phase === 'cached') {
-      setStepState(stepId, 'done', 'cached', 100);
-      STEP_PROGRESS[stepId] = 1; updateOverall(); return;
-    }
-    if (info.phase === 'connect') {
-      setStepState(stepId, 'active', `connect via ${info.via}…`, 2);
-      return;
-    }
-    if (info.phase === 'download') {
-      const total = info.total || APPROX_SIZE[stepId] || 5_000_000;
-      const pct = Math.min(99, Math.round(info.bytes / total * 100));
-      const meta = info.total
-        ? `${fmtBytes(info.bytes)} / ${fmtBytes(info.total)}`
-        : `${fmtBytes(info.bytes)}`;
-      setStepState(stepId, 'active', meta, pct);
-      STEP_PROGRESS[stepId] = pct / 100; updateOverall();
-      return;
-    }
-    if (info.phase === 'parse' || info.phase === 'parsing') {
-      setStepState(stepId, 'active', 'parsing CSV…', 99);
-      STEP_PROGRESS[stepId] = 0.99; updateOverall();
-      return;
-    }
-    if (info.phase === 'failed') {
-      setStepState(stepId, 'active', `${info.via} failed → next…`, null);
-      return;
-    }
-  };
-}
-
-async function boot() {
-  try {
-    setStatus('loading', 'Loading data');
-
-    setStepState('schedules', 'active', 'starting…', 0);
-    state.schedules = await cachedFetch(URLS.schedules, 'schedules', makeProgressHandler('schedules'));
-    setStepState('schedules', 'done', `${state.schedules.length.toLocaleString()} games`, 100);
-    STEP_PROGRESS.schedules = 1; updateOverall();
-
-    setStepState('player', 'active', 'starting…', 0);
-    state.playerWeeks[2025] = await cachedFetch(URLS.playerWeek(2025), 'player_2025', makeProgressHandler('player'));
-    setStepState('player', 'done', `${state.playerWeeks[2025].length.toLocaleString()} rows`, 100);
-    STEP_PROGRESS.player = 1; updateOverall();
-
-    setStepState('team', 'active', 'starting…', 0);
-    state.teamWeeks[2025] = await cachedFetch(URLS.teamWeek(2025), 'team_2025', makeProgressHandler('team'));
-    setStepState('team', 'done', `${state.teamWeeks[2025].length.toLocaleString()} rows`, 100);
-    STEP_PROGRESS.team = 1; updateOverall();
-
-    populateWeekDropdown();
-    setStatus('live', 'Data loaded', `${state.playerWeeks[2025].length.toLocaleString()} player-weeks · ${state.teamWeeks[2025].length.toLocaleString()} team-weeks`);
-    render();
-  } catch (err) {
-    console.error(err);
-    setStatus('err', 'Load failed');
-    document.getElementById('main').innerHTML = `
-      <div class="error-panel">
-        <h4>Could not load data</h4>
-        <p><b>Error:</b> ${err.message}</p>
-        <p>The app tried three different ways to fetch nflverse CSVs (direct GitHub, corsproxy.io, allorigins). All three failed.</p>
-        <p style="font-size:12px;color:var(--ink-faint);line-height:1.7">
-          • A content blocker / VPN may be blocking the proxies<br>
-          • Captive WiFi or no internet<br>
-          • Safari Private Relay can interfere — try toggling it off<br>
-          • Free proxies sometimes go down — try again in a minute
-        </p>
-        <button onclick="localStorage.clear();location.reload()">Clear cache & retry</button>
-      </div>`;
-  }
+function showLoader(pct, msg, detail = '') {
+  document.getElementById('main').innerHTML = `
+    <div class="loader">
+      <div class="loader-title">Loading ${state.season} · Week ${state.week}</div>
+      <div class="loader-pct">${pct}%</div>
+      <div class="loader-bar"><div class="loader-bar-fill" style="width:${pct}%"></div></div>
+      <div class="loader-msg">${msg}</div>
+      <div class="loader-detail">${detail}</div>
+    </div>`;
 }
 
 function populateWeekDropdown() {
   const sel = document.getElementById('week');
   sel.innerHTML = '';
-  const season = +state.season;
-  const games = state.schedules.filter(g => +g.season === season && g.game_type === 'REG');
-  const weeks = [...new Set(games.map(g => +g.week))].sort((a,b) => a - b);
-
-  // Default week: for completed seasons, start at 8 (enough data); for future, week 1
-  const defaultWeek = season === 2025 ? 8 : 1;
-  for (const w of weeks) {
+  for (let w = 1; w <= 18; w++) {
     const opt = document.createElement('option');
     opt.value = w;
     opt.textContent = `Week ${w}`;
-    if (w === defaultWeek) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  state.week = defaultWeek;
-
-  if (!weeks.length) {
-    const opt = document.createElement('option');
-    opt.textContent = 'No games yet';
-    opt.disabled = true;
+    if (w === state.week) opt.selected = true;
     sel.appendChild(opt);
   }
 }
 
+// ============================================================================
+// Main load
+// ============================================================================
+async function loadWeek() {
+  if (state.loading) return;
+  state.loading = true;
+  state.loaded = false;
+  document.getElementById('load-btn').disabled = true;
+  setStatus('loading', `Loading Week ${state.week}…`);
+
+  try {
+    // 1. Scoreboard for the week
+    showLoader(5, 'Fetching schedule', 'site.api.espn.com');
+    const scoreboard = await cachedJSON(ESPN.scoreboard(state.season, state.week));
+    const events = scoreboard.events || [];
+
+    if (!events.length) {
+      state.games = [];
+      state.loading = false;
+      state.loaded = true;
+      document.getElementById('load-btn').disabled = false;
+      setStatus('err', 'No games found');
+      document.getElementById('main').innerHTML = `
+        <div class="hint">
+          <div class="icon">🤔</div>
+          <div class="title">No games for ${state.season} W${state.week}</div>
+          <div class="sub">ESPN didn't return any events. The 2026 schedule may not be published yet, or this week is outside the regular season.</div>
+        </div>`;
+      return;
+    }
+
+    showLoader(15, `Found ${events.length} games`, 'Pulling box scores');
+
+    // 2. Per-game box scores (parallel, limited)
+    const gamesData = await mapLimit(events, 3, async (ev, idx) => {
+      let summary = null;
+      try {
+        summary = await cachedJSON(ESPN.summary(ev.id));
+      } catch (e) {
+        console.warn('summary fail', ev.id, e.message);
+      }
+      const pct = 15 + Math.round(50 * (idx + 1) / events.length);
+      showLoader(pct, 'Box scores', `${idx + 1} of ${events.length}`);
+      return { event: ev, summary };
+    });
+
+    // 3. Team prior-week scoring history (for projections)
+    showLoader(70, 'Building projection inputs', 'Team form');
+    const teams = new Set();
+    for (const ev of events) {
+      const comp = ev.competitions && ev.competitions[0];
+      if (!comp) continue;
+      for (const c of comp.competitors) teams.add(c.team.id);
+    }
+    const teamList = Array.from(teams);
+
+    const schedules = await mapLimit(teamList, 4, async (teamId, idx) => {
+      let sched = null;
+      try {
+        sched = await cachedJSON(ESPN.teamSchedule(teamId, state.season));
+      } catch (e) {
+        console.warn('schedule fail', teamId, e.message);
+      }
+      const pct = 70 + Math.round(25 * (idx + 1) / teamList.length);
+      showLoader(pct, 'Team form', `${idx + 1} of ${teamList.length}`);
+      return { teamId, sched };
+    });
+
+    state.priorWeeks = {};
+    for (const { teamId, sched } of schedules) {
+      if (!sched) continue;
+      const evs = sched.events || [];
+      const weeks = [];
+      for (const e of evs) {
+        const w = e.week && e.week.number;
+        if (!w || w >= state.week) continue;
+        const seasonType = e.seasonType && e.seasonType.id;
+        if (seasonType && +seasonType !== 2) continue;
+        const comps = e.competitions && e.competitions[0];
+        if (!comps) continue;
+        const me = comps.competitors.find(c => c.team.id === teamId);
+        const opp = comps.competitors.find(c => c.team.id !== teamId);
+        if (!me || !opp) continue;
+        const myScore = me.score != null ? +me.score : NaN;
+        const oppScore = opp.score != null ? +opp.score : NaN;
+        if (isNaN(myScore) || isNaN(oppScore)) continue;
+        weeks.push({ week: w, ptsFor: myScore, ptsAgainst: oppScore });
+      }
+      state.priorWeeks[teamId] = weeks;
+    }
+
+    // 4. Combine
+    showLoader(95, 'Computing projections', '');
+    state.games = gamesData.map(g => buildGame(g.event, g.summary)).filter(Boolean);
+
+    showLoader(100, 'Done', '');
+    setStatus('live', `Week ${state.week} loaded`, `${state.games.length} games`);
+    state.loading = false;
+    state.loaded = true;
+    document.getElementById('load-btn').disabled = false;
+    render();
+
+  } catch (err) {
+    console.error('Load error:', err);
+    state.loading = false;
+    document.getElementById('load-btn').disabled = false;
+    setStatus('err', 'Load failed');
+    document.getElementById('main').innerHTML = `
+      <div class="error-panel">
+        <h4>Could not load data</h4>
+        <p><b>Error:</b> ${(err && err.message) || err || 'unknown'}</p>
+        <p>This app uses ESPN's public API. Common causes:</p>
+        <ul style="font-size:12px;color:var(--ink-faint);line-height:1.7;margin:0 0 10px 18px;padding:0">
+          <li>Captive WiFi / no internet</li>
+          <li>Safari Private Relay blocking the request</li>
+          <li>Content blocker rule for site.api.espn.com</li>
+          <li>ESPN API briefly down (rare)</li>
+        </ul>
+        <button onclick="localStorage.clear();location.reload()">Clear cache &amp; retry</button>
+      </div>`;
+  }
+}
+
+// ============================================================================
+// Build game object
+// ============================================================================
+function buildGame(event, summary) {
+  const comp = event.competitions && event.competitions[0];
+  if (!comp) return null;
+  const competitors = comp.competitors || [];
+  const away = competitors.find(c => c.homeAway === 'away');
+  const home = competitors.find(c => c.homeAway === 'home');
+  if (!away || !home) return null;
+
+  const game = {
+    id: event.id,
+    date: event.date,
+    away: {
+      id: away.team.id,
+      abbr: away.team.abbreviation,
+      name: away.team.displayName,
+      score: away.score != null && away.score !== '' ? +away.score : null,
+    },
+    home: {
+      id: home.team.id,
+      abbr: home.team.abbreviation,
+      name: home.team.displayName,
+      score: home.score != null && home.score !== '' ? +home.score : null,
+    },
+    completed: !!(comp.status && comp.status.type && comp.status.type.completed),
+    players: [],
+    teamYards: {},
+  };
+
+  if (summary && summary.boxscore && summary.boxscore.players) {
+    for (const teamBlock of summary.boxscore.players) {
+      const teamId = teamBlock.team && teamBlock.team.id;
+      const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
+      let teamPassYds = 0, teamRushYds = 0;
+      for (const grp of (teamBlock.statistics || [])) {
+        const cat = grp.name; // passing|rushing|receiving
+        const labels = grp.labels || [];
+        const ydsIdx = labels.findIndex(l => l === 'YDS');
+        const tdIdx = labels.findIndex(l => l === 'TD');
+        for (const ath of (grp.athletes || [])) {
+          const a = ath.athlete || {};
+          const stats = ath.stats || [];
+          const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
+          const tds = tdIdx >= 0 ? +stats[tdIdx] || 0 : 0;
+          let p = game.players.find(pl => pl.id === a.id);
+          if (!p) {
+            p = {
+              id: a.id, name: a.displayName || a.shortName || '',
+              team: teamId, abbr: teamAbbr,
+              position: (a.position && a.position.abbreviation) || '',
+              passYds: 0, rushYds: 0, recYds: 0,
+              passTds: 0, rushTds: 0, recTds: 0,
+            };
+            game.players.push(p);
+          }
+          if (cat === 'passing')   { p.passYds += yds; p.passTds += tds; teamPassYds += yds; }
+          else if (cat === 'rushing')   { p.rushYds += yds; p.rushTds += tds; teamRushYds += yds; }
+          else if (cat === 'receiving') { p.recYds += yds; p.recTds += tds; }
+        }
+      }
+      if (teamId) game.teamYards[teamId] = teamPassYds + teamRushYds;
+    }
+  }
+  return game;
+}
+
+// ============================================================================
+// Projection
+// ============================================================================
+function projectTeam(teamId) {
+  const prior = state.priorWeeks[teamId] || [];
+  if (!prior.length) {
+    return { points: 21, ptsAllowed: 21, games: 0 };
+  }
+  const sorted = prior.slice().sort((a, b) => a.week - b.week);
+  const last4 = sorted.slice(-4);
+  const avg = (arr, fn) => arr.length ? arr.reduce((s, r) => s + fn(r), 0) / arr.length : 0;
+  return {
+    points: 0.6 * avg(last4, r => r.ptsFor) + 0.4 * avg(sorted, r => r.ptsFor),
+    ptsAllowed: 0.6 * avg(last4, r => r.ptsAgainst) + 0.4 * avg(sorted, r => r.ptsAgainst),
+    games: sorted.length,
+  };
+}
+
+function projectGame(g) {
+  if (!g.away || !g.home) return null;
+  const a = projectTeam(g.away.id);
+  const h = projectTeam(g.home.id);
+  const awayPts = (a.points * 0.55 + h.ptsAllowed * 0.45) * 0.97;
+  const homePts = (h.points * 0.55 + a.ptsAllowed * 0.45) * 1.03;
+  const minGames = Math.min(a.games, h.games);
+  const conf = Math.min(95, Math.round(40 + minGames * 6));
+  return {
+    awayPts, homePts,
+    total: awayPts + homePts,
+    awayYds: Math.round(awayPts * 16),
+    homeYds: Math.round(homePts * 16),
+    conf,
+  };
+}
+
+// ============================================================================
+// Render
+// ============================================================================
 function render() {
   const main = document.getElementById('main');
+  if (!state.loaded) return;
   if (state.activeTab === 'summary') {
     renderSummary(main);
   } else {
@@ -1193,134 +989,41 @@ function render() {
 }
 
 function renderGames(main) {
-  const season = +state.season;
-  const week = +state.week;
-
-  const games = state.schedules.filter(g =>
-    +g.season === season && +g.week === week && g.game_type === 'REG'
-  );
-
-  if (!games.length) {
-    main.innerHTML = `
-      <div class="error-panel">
-        <h4>No games for this week</h4>
-        <p>The ${season} Week ${week} schedule isn't available yet. If this is an upcoming season, games won't be in the feed until nflverse publishes the schedule.</p>
-      </div>`;
+  if (!state.games.length) {
+    main.innerHTML = `<div class="hint"><div class="title">No games</div></div>`;
     return;
   }
-
-  // For season, compute defensive ranks once
-  const teamWeeks = state.teamWeeks[season] || [];
-  const playerWeeks = state.playerWeeks[season] || [];
-  const defRanks = computeDefensiveRanks({ teamWeeks, season, beforeWeek: week });
-
   let html = '<div class="games">';
-  for (const g of games) {
-    html += renderGameCard(g, { week, season, teamWeeks, playerWeeks, defRanks });
-  }
+  for (const g of state.games) html += renderGameCard(g);
   html += '</div>';
   main.innerHTML = html;
-
-  // Wire up expand toggles
   main.querySelectorAll('.game-head').forEach(h => {
     h.addEventListener('click', () => h.closest('.game').classList.toggle('open'));
   });
 }
 
-function renderGameCard(g, ctx) {
-  const { week, season, teamWeeks, playerWeeks, defRanks } = ctx;
-  const away = g.away_team;
-  const home = g.home_team;
+function renderGameCard(g) {
+  const proj = projectGame(g);
+  if (!proj) return '';
 
-  // Team projections
-  const awayProj = projectTeamWeek({ team: away, week, season, allTeamWeeks: teamWeeks });
-  const homeProj = projectTeamWeek({ team: home, week, season, allTeamWeeks: teamWeeks });
+  const actualTotal = g.completed ? (g.away.score + g.home.score) : null;
+  const date = g.date ? new Date(g.date) : null;
+  const kickoff = date && !isNaN(date) ?
+    date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) +
+    ' · ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : '';
 
-  // Matchup adjust: home/away and opponent defense
-  // Away defense rank affects home offense, and vice versa
-  const awayDefRank = defRanks.get(away);
-  const homeDefRank = defRanks.get(home);
-
-  const adjustForD = (base, defRank) => {
-    if (!defRank) return base;
-    const factor = 1 + ((defRank - 16.5) / 16.5) * 0.10;
-    return base * factor;
-  };
-
-  const awayPts = adjustForD(awayProj.points, homeDefRank) * 0.97; // mild away penalty
-  const homePts = adjustForD(homeProj.points, awayDefRank) * 1.03; // home bump
-  const awayYds = adjustForD(awayProj.yards, homeDefRank) * 0.98;
-  const homeYds = adjustForD(homeProj.yards, awayDefRank) * 1.02;
-
-  const totalPts = awayPts + homePts;
-
-  // Confidence for game total: based on how many games of data we have
-  const minGames = Math.min(awayProj.games, homeProj.games);
-  const gameConf = Math.min(95, Math.round(40 + minGames * 6));
-
-  // Player projections — find key skill players for each team from recent weeks
-  const teamPlayers = (team) => {
-    const recent = playerWeeks.filter(r =>
-      r.team === team && +r.week < week && r.season_type === 'REG'
-    );
-    // Group by player_id, keep most recent team & position
-    const map = new Map();
-    for (const r of recent) {
-      const k = r.player_id;
-      if (!map.has(k) || +r.week > +map.get(k).week) map.set(k, r);
-    }
-    return Array.from(map.values());
-  };
-
-  const projectSkillPlayers = (team, oppDefRank) => {
-    const players = teamPlayers(team);
-    const results = { QB: [], RB: [], WR: [], TE: [] };
-    for (const p of players) {
-      const pos = p.position;
-      if (!['QB','RB','WR','TE'].includes(pos)) continue;
-      const proj = projectPlayerWeek({
-        player: p.player_display_name || p.player_name,
-        playerId: p.player_id,
-        position: pos,
-        team,
-        week, season,
-        allPlayerWeeks: playerWeeks,
-        oppDefRankYds: oppDefRank,
-      });
-      if (proj && proj.projYds > 5) results[pos].push(proj);
-    }
-    for (const pos of Object.keys(results)) {
-      results[pos].sort((a,b) => b.projYds - a.projYds);
-    }
-    return results;
-  };
-
-  const awayPlayers = projectSkillPlayers(away, homeDefRank);
-  const homePlayers = projectSkillPlayers(home, awayDefRank);
-
-  // Top TD candidates from both teams
-  const tdCandidates = [...Object.values(awayPlayers).flat(), ...Object.values(homePlayers).flat()]
-    .filter(p => p.projTd > 0.15)
-    .sort((a,b) => b.projTd - a.projTd)
-    .slice(0, 6);
-
-  // Actual results (if this week has been played)
-  const gameFinal = g.away_score !== '' && g.away_score != null && !isNaN(+g.away_score);
-  const actualTotal = gameFinal ? (+g.away_score + +g.home_score) : null;
-
-  const kickoff = formatKickoff(g);
-
-  let html = `
-    <div class="game" data-gameid="${g.game_id}">
+  return `
+    <div class="game" data-id="${g.id}">
       <div class="game-head">
         <div class="matchup">
-          <div class="teams">${away}<span class="at">@</span>${home}</div>
+          <div class="teams">${g.away.abbr}<span class="at">@</span>${g.home.abbr}</div>
           <div class="time">${kickoff}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <div class="total-proj">
-            <div class="num">${totalPts.toFixed(1)}</div>
-            <div class="lbl">Proj Total ${actualTotal != null ? `· Actual ${actualTotal}` : ''}</div>
+            <div class="num">${proj.total.toFixed(1)}</div>
+            <div class="lbl">Proj ${actualTotal != null ? `· Act ${actualTotal}` : ''}</div>
           </div>
           <span class="caret">▾</span>
         </div>
@@ -1328,78 +1031,105 @@ function renderGameCard(g, ctx) {
 
       <div class="team-totals">
         <div class="tt away">
-          <div class="team">${away}</div>
-          <div class="pts">${awayPts.toFixed(1)}${gameFinal ? `<span style="color:var(--ink-faint);font-size:14px"> · ${g.away_score}</span>` : ''}</div>
-          <div class="yds">${Math.round(awayYds)} yds</div>
+          <div class="team">${g.away.abbr}</div>
+          <div class="pts">${proj.awayPts.toFixed(1)}${g.completed ? `<span class="actual"> · ${g.away.score}</span>` : ''}</div>
+          <div class="yds">${proj.awayYds} proj${g.teamYards[g.away.id] ? ` · ${g.teamYards[g.away.id]} actual` : ''} yds</div>
         </div>
         <div class="divider"></div>
         <div class="tt home">
-          <div class="team">${home}</div>
-          <div class="pts">${homePts.toFixed(1)}${gameFinal ? `<span style="color:var(--ink-faint);font-size:14px"> · ${g.home_score}</span>` : ''}</div>
-          <div class="yds">${Math.round(homeYds)} yds</div>
+          <div class="team">${g.home.abbr}</div>
+          <div class="pts">${proj.homePts.toFixed(1)}${g.completed ? `<span class="actual"> · ${g.home.score}</span>` : ''}</div>
+          <div class="yds">${proj.homeYds} proj${g.teamYards[g.home.id] ? ` · ${g.teamYards[g.home.id]} actual` : ''} yds</div>
         </div>
       </div>
 
       <div class="conf-row">
         <span class="conf-label">Model Conf.</span>
-        <div class="conf-bar"><div class="conf-fill" style="width:${gameConf}%"></div></div>
-        <span class="conf-pct">${gameConf}%</span>
+        <div class="conf-bar"><div class="conf-fill" style="width:${proj.conf}%"></div></div>
+        <span class="conf-pct">${proj.conf}%</span>
       </div>
 
       <div class="game-body">
-        ${renderPlayerSection('QB', awayPlayers.QB.slice(0,1), homePlayers.QB.slice(0,1), g, playerWeeks, week)}
-        ${renderPlayerSection('RB', awayPlayers.RB.slice(0,2), homePlayers.RB.slice(0,2), g, playerWeeks, week)}
-        ${renderPlayerSection('WR', awayPlayers.WR.slice(0,3), homePlayers.WR.slice(0,3), g, playerWeeks, week)}
-        ${renderPlayerSection('TE', awayPlayers.TE.slice(0,1), homePlayers.TE.slice(0,1), g, playerWeeks, week)}
-        ${renderTDSection(tdCandidates, g, playerWeeks, week)}
+        ${renderPlayerSections(g, proj)}
+        ${renderTDSection(g)}
       </div>
     </div>`;
-  return html;
 }
 
-function renderPlayerSection(pos, awayPlayers, homePlayers, game, playerWeeks, week) {
-  const all = [...awayPlayers, ...homePlayers];
-  if (!all.length) return '';
-  const rows = all.map(p => {
-    const actual = getPlayerActual(p.playerId, +game.season, week, playerWeeks, pos);
-    const actualCls = actual != null ? (actual >= p.projYds ? 'actual-hit' : 'actual-miss') : 'actual-na';
-    const actualTxt = actual != null ? `${actual}` : '—';
-    return `
-      <div class="player-row">
-        <span class="pos-tag pos-${pos}">${pos}</span>
-        <div class="player-name">${p.player}<span class="player-team">${p.team}</span></div>
-        <div class="player-proj">${p.projYds}<span class="unit">yd</span></div>
-        <div class="player-actual ${actualCls}">${actualTxt}</div>
-      </div>`;
-  }).join('');
-  const title = { QB: 'Passing+Rush Yds', RB: 'Rush+Rec Yds', WR: 'Rec+Rush Yds', TE: 'Receiving Yds' }[pos];
-  return `
-    <div class="section">
-      <h4>${pos} · ${title} · Proj vs Actual</h4>
-      <div class="players">${rows}</div>
-    </div>`;
+function getPlayerYds(p, pos) {
+  if (pos === 'QB') return p.passYds + p.rushYds;
+  if (pos === 'RB') return p.rushYds + p.recYds;
+  if (pos === 'WR') return p.recYds + p.rushYds;
+  if (pos === 'TE') return p.recYds;
+  return 0;
 }
 
-function renderTDSection(candidates, game, playerWeeks, week) {
+function renderPlayerSections(g, proj) {
+  const out = [];
+  for (const pos of ['QB','RB','WR','TE']) {
+    const rows = [];
+    for (const side of ['away','home']) {
+      const team = g[side];
+      const teamProjYds = side === 'away' ? proj.awayYds : proj.homeYds;
+      const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos);
+      teamPlayers.sort((a, b) => getPlayerYds(b, pos) - getPlayerYds(a, pos));
+      const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
+      const tops = teamPlayers.slice(0, limit);
+      for (const p of tops) {
+        const actual = getPlayerYds(p, pos);
+        const share = pos === 'QB' ? 0.65 : pos === 'RB' ? 0.30 : pos === 'WR' ? 0.20 : 0.12;
+        const projYds = Math.round(teamProjYds * share);
+        const cls = !g.completed ? 'actual-na' : (actual >= projYds ? 'actual-hit' : 'actual-miss');
+        rows.push(`
+          <div class="player-row">
+            <span class="pos-tag pos-${pos}">${pos}</span>
+            <div class="player-name">${p.name}<span class="player-team">${p.abbr}</span></div>
+            <div class="player-proj">${projYds}<span class="unit">yd</span></div>
+            <div class="player-actual ${cls}">${g.completed ? actual : '—'}</div>
+          </div>`);
+      }
+    }
+    if (rows.length) {
+      const title = { QB: 'Pass+Rush Yds', RB: 'Rush+Rec Yds', WR: 'Rec+Rush Yds', TE: 'Receiving Yds' }[pos];
+      out.push(`
+        <div class="section">
+          <h4>${pos} · ${title}</h4>
+          <div class="players">${rows.join('')}</div>
+        </div>`);
+    }
+  }
+  return out.join('');
+}
+
+function renderTDSection(g) {
+  const candidates = g.players
+    .filter(p => ['QB','RB','WR','TE'].includes(p.position))
+    .map(p => {
+      const tds = p.passTds + p.rushTds + p.recTds;
+      let prob = 0;
+      if (p.position === 'QB') prob = Math.min(85, 30 + p.passYds / 8);
+      else if (p.position === 'RB') prob = Math.min(70, 15 + (p.rushYds + p.recYds) / 4);
+      else if (p.position === 'WR') prob = Math.min(60, 10 + p.recYds / 3);
+      else if (p.position === 'TE') prob = Math.min(55, 8 + p.recYds / 3);
+      return { ...p, _prob: Math.round(prob), _scored: tds > 0 };
+    })
+    .filter(p => p._prob >= 25)
+    .sort((a, b) => b._prob - a._prob)
+    .slice(0, 8);
+
   if (!candidates.length) return '';
   const rows = candidates.map(c => {
-    const scored = didPlayerScoreTD(c.playerId, +game.season, week, playerWeeks);
-    const tier = c.tdProbability >= 50 ? 'high' : c.tdProbability >= 30 ? 'med' : 'low';
-    const scoredHTML = scored == null
-      ? ''
-      : scored
-        ? `<span class="td-scored yes">✓ Scored</span>`
-        : `<span class="td-scored no">— None</span>`;
+    const tier = c._prob >= 50 ? 'high' : c._prob >= 35 ? 'med' : 'low';
+    const scoredHTML = !g.completed ? '' :
+      c._scored ? `<span class="td-scored yes">✓</span>` : `<span class="td-scored no">—</span>`;
     return `
       <div class="td-row">
         <span class="pos-tag pos-${c.position}">${c.position}</span>
-        <div class="player-name">${c.player}<span class="player-team">${c.team}</span></div>
-        <div class="td-conf">
-          <span class="td-conf-dot td-conf-${tier}"></span>
-        </div>
-        <div class="td-pct">${c.tdProbability}%</div>
-      </div>
-      ${scored != null ? `<div style="padding-left:42px;margin-top:-4px;margin-bottom:4px">${scoredHTML}</div>` : ''}`;
+        <div class="player-name">${c.name}<span class="player-team">${c.abbr}</span></div>
+        <span class="td-conf-dot td-conf-${tier}"></span>
+        <div class="td-pct">${c._prob}%</div>
+        ${scoredHTML}
+      </div>`;
   }).join('');
   return `
     <div class="section">
@@ -1408,183 +1138,84 @@ function renderTDSection(candidates, game, playerWeeks, week) {
     </div>`;
 }
 
-function getPlayerActual(playerId, season, week, playerWeeks, pos) {
-  const row = playerWeeks.find(r =>
-    r.player_id === playerId && +r.season === season && +r.week === week && r.season_type === 'REG'
-  );
-  if (!row) return null;
-  switch (pos) {
-    case 'QB': return num(row.passing_yards) + num(row.rushing_yards);
-    case 'RB': return num(row.rushing_yards) + num(row.receiving_yards);
-    case 'WR': return num(row.receiving_yards) + num(row.rushing_yards);
-    case 'TE': return num(row.receiving_yards);
-    default: return null;
-  }
-}
-
-function didPlayerScoreTD(playerId, season, week, playerWeeks) {
-  const row = playerWeeks.find(r =>
-    r.player_id === playerId && +r.season === season && +r.week === week && r.season_type === 'REG'
-  );
-  if (!row) return null;
-  const tds = num(row.passing_tds) + num(row.rushing_tds) + num(row.receiving_tds);
-  return tds > 0;
-}
-
-function formatKickoff(g) {
-  // nflverse schedule has gameday + gametime
-  if (g.gameday && g.gametime) {
-    const d = new Date(g.gameday + 'T' + g.gametime + ':00');
-    if (!isNaN(d.getTime())) {
-      return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) +
-             ' · ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
-    }
-  }
-  return g.gameday || '';
-}
-
-// =============================================================================
-// MODEL SUMMARY — evaluate how the projections did vs actuals
-// =============================================================================
 function renderSummary(main) {
-  const season = +state.season;
-  const weekCap = +state.week;
-
-  const schedules = state.schedules.filter(g =>
-    +g.season === season && g.game_type === 'REG' && +g.week <= weekCap
-    && g.away_score !== '' && g.away_score != null && !isNaN(+g.away_score)
-  );
-
-  if (!schedules.length) {
+  const completed = state.games.filter(g => g.completed);
+  if (!completed.length) {
     main.innerHTML = `
       <div class="summary">
         <h3>Model Performance</h3>
         <p style="color:var(--ink-dim);font-size:13px;margin:0">
-          No completed games to evaluate yet. Pick a later week with finished games.
+          No completed games this week. Pick a past week.
         </p>
       </div>`;
     return;
   }
-
-  const teamWeeks = state.teamWeeks[season];
-
-  // Simulate projections for each past game and compare
-  let totalsErr = 0, totalsN = 0, totalsHit = 0;
-  let spreadErr = 0;
-  const sampleGames = [];
-
-  for (const g of schedules) {
-    const w = +g.week;
-    const defRanks = computeDefensiveRanks({ teamWeeks, season, beforeWeek: w });
-    const awayP = projectTeamWeek({ team: g.away_team, week: w, season, allTeamWeeks: teamWeeks });
-    const homeP = projectTeamWeek({ team: g.home_team, week: w, season, allTeamWeeks: teamWeeks });
-    if (awayP.games < 2 || homeP.games < 2) continue; // skip early weeks
-
-    const adj = (base, defRank) => base * (1 + ((defRank ? defRank : 16.5) - 16.5) / 16.5 * 0.10);
-    const aP = adj(awayP.points, defRanks.get(g.home_team)) * 0.97;
-    const hP = adj(homeP.points, defRanks.get(g.away_team)) * 1.03;
-    const projTotal = aP + hP;
-    const actualTotal = +g.away_score + +g.home_score;
-
-    totalsErr += Math.abs(projTotal - actualTotal);
-    totalsN++;
-    if (Math.abs(projTotal - actualTotal) <= 7) totalsHit++;
-
-    const projMargin = hP - aP;
-    const actualMargin = +g.home_score - +g.away_score;
-    spreadErr += Math.abs(projMargin - actualMargin);
-
-    if (sampleGames.length < 8) sampleGames.push({
-      away: g.away_team, home: g.home_team, week: w,
-      proj: projTotal.toFixed(1),
+  let totalsErr = 0, totalsHit = 0, marginErr = 0;
+  const samples = [];
+  for (const g of completed) {
+    const proj = projectGame(g);
+    if (!proj) continue;
+    const actualTotal = g.away.score + g.home.score;
+    const actualMargin = g.home.score - g.away.score;
+    const projMargin = proj.homePts - proj.awayPts;
+    totalsErr += Math.abs(proj.total - actualTotal);
+    if (Math.abs(proj.total - actualTotal) <= 7) totalsHit++;
+    marginErr += Math.abs(projMargin - actualMargin);
+    samples.push({
+      a: g.away.abbr, h: g.home.abbr,
+      proj: proj.total.toFixed(1),
       actual: actualTotal,
-      delta: (projTotal - actualTotal).toFixed(1),
+      delta: (proj.total - actualTotal).toFixed(1),
     });
   }
+  const n = samples.length;
+  const mae = n ? (totalsErr / n).toFixed(1) : '—';
+  const spreadMae = n ? (marginErr / n).toFixed(1) : '—';
+  const hitRate = n ? Math.round(100 * totalsHit / n) : 0;
 
-  const mae = totalsN ? (totalsErr / totalsN).toFixed(1) : '—';
-  const spreadMae = totalsN ? (spreadErr / totalsN).toFixed(1) : '—';
-  const hitRate = totalsN ? Math.round(100 * totalsHit / totalsN) : 0;
-
-  const sampleRows = sampleGames.map(s => `
+  const sampleRows = samples.map(s => `
     <div class="player-row">
-      <div class="player-name">${s.away} @ ${s.home} <span class="player-team">W${s.week}</span></div>
+      <div class="player-name">${s.a} @ ${s.h}</div>
       <div class="player-proj">${s.proj}</div>
       <div class="player-actual ${Math.abs(+s.delta) <= 7 ? 'actual-hit' : 'actual-miss'}">${s.actual}</div>
     </div>`).join('');
 
   main.innerHTML = `
     <div class="summary">
-      <h3>Model Performance · ${season} thru W${weekCap}</h3>
+      <h3>Model · ${state.season} W${state.week}</h3>
       <div class="summary-grid">
-        <div class="stat">
-          <div class="val">${mae}</div>
-          <div class="lbl">Game Total MAE</div>
-        </div>
-        <div class="stat">
-          <div class="val">${spreadMae}</div>
-          <div class="lbl">Margin MAE</div>
-        </div>
-        <div class="stat">
-          <div class="val">${hitRate}%</div>
-          <div class="lbl">Within 7 pts</div>
-        </div>
-        <div class="stat">
-          <div class="val">${totalsN}</div>
-          <div class="lbl">Games scored</div>
-        </div>
+        <div class="stat"><div class="val">${mae}</div><div class="lbl">Total MAE</div></div>
+        <div class="stat"><div class="val">${spreadMae}</div><div class="lbl">Margin MAE</div></div>
+        <div class="stat"><div class="val">${hitRate}%</div><div class="lbl">Within 7 pts</div></div>
+        <div class="stat"><div class="val">${n}</div><div class="lbl">Games</div></div>
       </div>
     </div>
     <div class="summary">
-      <h3>Sample Games</h3>
-      <div class="players">
-        <div class="player-row" style="color:var(--ink-faint);font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase">
-          <div class="player-name">Matchup</div>
-          <div class="player-proj">Proj</div>
-          <div class="player-actual">Actual</div>
-        </div>
-        ${sampleRows}
-      </div>
+      <h3>Game-by-game</h3>
+      <div class="players">${sampleRows}</div>
     </div>
     <div class="summary">
-      <h3>How the model works</h3>
+      <h3>How it works</h3>
       <p style="color:var(--ink-dim);font-size:13px;line-height:1.6;margin:0">
-        Every projection blends a team/player's <b style="color:var(--ink)">last-4-week average</b> (60%)
-        with their <b style="color:var(--ink)">season average</b> (40%), then adjusts by
-        opponent defensive rank (up to ±12%) and home/away (±3%). Confidence scales
-        with sample size and consistency. It's a deliberately simple baseline — the
-        honest question is whether it beats random, not whether it beats Vegas.
+        Each team's projected points blend their <b style="color:var(--ink)">last-4-week scoring</b> (60%)
+        with their <b style="color:var(--ink)">season average</b> (40%), mixed with the opponent's
+        points-allowed history. Home +3%, away -3%. Confidence scales with sample size.
       </p>
     </div>`;
 }
 
-// =============================================================================
-// EVENTS
-// =============================================================================
-document.getElementById('season').addEventListener('change', async (e) => {
+// ============================================================================
+// Wire up
+// ============================================================================
+populateWeekDropdown();
+
+document.getElementById('season').addEventListener('change', e => {
   state.season = +e.target.value;
-  const s = state.season;
-  if (!state.playerWeeks[s] || !state.teamWeeks[s]) {
-    setStatus('loading', `Loading ${s} data`);
-    try {
-      if (!state.playerWeeks[s]) state.playerWeeks[s] = await cachedFetch(URLS.playerWeek(s), `player_${s}`);
-      if (!state.teamWeeks[s]) state.teamWeeks[s] = await cachedFetch(URLS.teamWeek(s), `team_${s}`);
-      setStatus('live', 'Data loaded');
-    } catch (err) {
-      setStatus('err', `No ${s} data yet`);
-      state.playerWeeks[s] = [];
-      state.teamWeeks[s] = [];
-    }
-  }
-  populateWeekDropdown();
-  render();
 });
-
-document.getElementById('week').addEventListener('change', (e) => {
+document.getElementById('week').addEventListener('change', e => {
   state.week = +e.target.value;
-  render();
 });
-
+document.getElementById('load-btn').addEventListener('click', loadWeek);
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1593,8 +1224,6 @@ document.querySelectorAll('.tab').forEach(tab => {
     render();
   });
 });
-
-boot();
 </script>
 
 </body>
