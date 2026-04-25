@@ -6,9 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0d10" />
 <title>Gridline — NFL Projections</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Using iOS system fonts — no external font dependency -->
 <style>
   :root {
     --bg: #0b0d10;
@@ -30,7 +28,7 @@
     margin: 0; padding: 0;
     background: var(--bg);
     color: var(--ink);
-    font-family: 'Inter', -apple-system, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     font-size: 15px;
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
@@ -44,8 +42,8 @@
     min-height: 100vh;
     padding-bottom: env(safe-area-inset-bottom);
   }
-  .mono { font-family: 'JetBrains Mono', monospace; }
-  .serif { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+  .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+  .serif { font-family: ui-serif, Georgia, 'Cochin', serif; font-optical-sizing: auto; }
 
 /* Header */
 header {
@@ -61,7 +59,7 @@ display: flex; align-items: baseline; gap: 10px;
 margin-bottom: 12px;
 }
 .brand .logo {
-font-family: ‘Fraunces’, serif;
+font-family: ui-serif, Georgia, ‘Cochin’, serif;
 font-weight: 800;
 font-size: 26px;
 letter-spacing: -0.02em;
@@ -71,7 +69,7 @@ color: var(–ink);
 color: var(–accent);
 }
 .brand .tag {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 color: var(–ink-faint);
 letter-spacing: 0.12em;
@@ -87,7 +85,7 @@ position: relative;
 .control label {
 position: absolute;
 top: 6px; left: 12px;
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 9px;
 letter-spacing: 0.12em;
 text-transform: uppercase;
@@ -103,7 +101,7 @@ border: 1px solid var(–line);
 border-radius: 8px;
 color: var(–ink);
 padding: 22px 32px 8px 12px;
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 14px;
 font-weight: 500;
 }
@@ -122,7 +120,7 @@ font-size: 10px;
 padding: 8px 16px;
 background: var(–bg-2);
 border-bottom: 1px solid var(–line);
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 color: var(–ink-dim);
 display: flex;
@@ -160,7 +158,7 @@ z-index: 5;
 flex: 1;
 padding: 12px 8px;
 text-align: center;
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 letter-spacing: 0.1em;
 text-transform: uppercase;
@@ -207,7 +205,7 @@ flex-direction: column;
 gap: 2px;
 }
 .matchup .teams {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
 font-size: 15px;
 letter-spacing: 0.02em;
@@ -218,7 +216,7 @@ font-weight: 400;
 padding: 0 6px;
 }
 .matchup .time {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 color: var(–ink-dim);
 }
@@ -226,14 +224,14 @@ color: var(–ink-dim);
 text-align: right;
 }
 .total-proj .num {
-font-family: ‘Fraunces’, serif;
+font-family: ui-serif, Georgia, ‘Cochin’, serif;
 font-weight: 800;
 font-size: 28px;
 line-height: 1;
 color: var(–accent);
 }
 .total-proj .lbl {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 9px;
 color: var(–ink-faint);
 letter-spacing: 0.12em;
@@ -259,20 +257,20 @@ gap: 4px;
 .tt.away { text-align: left; }
 .tt.home { text-align: right; }
 .tt .team {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
 font-size: 12px;
 color: var(–ink-dim);
 letter-spacing: 0.05em;
 }
 .tt .pts {
-font-family: ‘Fraunces’, serif;
+font-family: ui-serif, Georgia, ‘Cochin’, serif;
 font-weight: 600;
 font-size: 22px;
 line-height: 1;
 }
 .tt .yds {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 color: var(–ink-faint);
 }
@@ -287,7 +285,7 @@ background: var(–bg-2);
 border-bottom: 1px solid var(–line);
 }
 .conf-label {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 color: var(–ink-faint);
 letter-spacing: 0.1em;
@@ -308,7 +306,7 @@ border-radius: 2px;
 transition: width 0.4s ease;
 }
 .conf-pct {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 12px;
 font-weight: 700;
 color: var(–ink);
@@ -337,7 +335,7 @@ border-bottom: 1px solid var(–line);
 .section:last-child { border-bottom: none; }
 .section h4 {
 margin: 0 0 10px;
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 font-weight: 500;
 letter-spacing: 0.15em;
@@ -359,7 +357,7 @@ align-items: center;
 padding: 6px 0;
 }
 .pos-tag {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 9px;
 font-weight: 700;
 color: var(–bg);
@@ -382,13 +380,13 @@ text-overflow: ellipsis;
 white-space: nowrap;
 }
 .player-team {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 color: var(–ink-faint);
 margin-left: 4px;
 }
 .player-proj {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
 font-size: 14px;
 color: var(–ink);
@@ -402,7 +400,7 @@ font-weight: 400;
 margin-left: 2px;
 }
 .player-actual {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 min-width: 38px;
 text-align: right;
@@ -441,7 +439,7 @@ border-radius: 50%;
 .td-conf-med { background: var(–warn); }
 .td-conf-low { background: var(–ink-faint); }
 .td-pct {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 12px;
 font-weight: 700;
 color: var(–ink);
@@ -449,7 +447,7 @@ min-width: 38px;
 text-align: right;
 }
 .td-scored {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 padding: 2px 6px;
 border-radius: 3px;
@@ -467,7 +465,7 @@ border-radius: 12px;
 }
 .summary h3 {
 margin: 0 0 10px;
-font-family: ‘Fraunces’, serif;
+font-family: ui-serif, Georgia, ‘Cochin’, serif;
 font-weight: 600;
 font-size: 16px;
 }
@@ -482,13 +480,13 @@ background: var(–bg-3);
 border-radius: 8px;
 }
 .stat .val {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
 font-size: 18px;
 color: var(–accent);
 }
 .stat .lbl {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 9px;
 color: var(–ink-faint);
 text-transform: uppercase;
@@ -513,7 +511,7 @@ margin-bottom: 14px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loader .step {
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 color: var(–ink-faint);
 margin-top: 6px;
@@ -530,7 +528,7 @@ border-radius: 10px;
 .error-panel h4 {
 margin: 0 0 8px;
 color: var(–hot);
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 12px;
 letter-spacing: 0.1em;
 text-transform: uppercase;
@@ -546,7 +544,7 @@ color: var(–bg);
 border: none;
 padding: 8px 14px;
 border-radius: 6px;
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
 font-size: 12px;
 cursor: pointer;
@@ -556,7 +554,7 @@ cursor: pointer;
 .foot {
 padding: 20px 16px 40px;
 text-align: center;
-font-family: ‘JetBrains Mono’, monospace;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
 color: var(–ink-faint);
 line-height: 1.6;
@@ -671,8 +669,41 @@ function num(v) {
 }
 
 // =============================================================================
-// CACHED FETCH — uses localStorage with TTL
+// CACHED FETCH — tries direct, falls back to CORS proxies
 // =============================================================================
+// GitHub release downloads redirect to objects.githubusercontent.com which
+// doesn't always send CORS headers. We try direct first (works in many envs),
+// then fall back to read-through proxies that do handle CORS properly.
+
+const FETCH_STRATEGIES = [
+  { name: 'direct', wrap: (url) => url },
+  { name: 'jina',   wrap: (url) => 'https://r.jina.ai/' + url },
+  { name: 'corsproxy', wrap: (url) => 'https://corsproxy.io/?url=' + encodeURIComponent(url) },
+];
+
+async function fetchWithFallback(url, onProgress) {
+  let lastErr;
+  for (const strat of FETCH_STRATEGIES) {
+    try {
+      onProgress && onProgress(`downloading via ${strat.name}…`);
+      const res = await fetch(strat.wrap(url), {
+        headers: strat.name === 'jina' ? { 'Accept': 'text/plain' } : {},
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      // sanity: the CSV must start with a header row, not HTML
+      if (text.startsWith('<') || text.length < 100) {
+        throw new Error('got HTML or empty response');
+      }
+      return text;
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[fetch] ${strat.name} failed for ${url}:`, e.message);
+    }
+  }
+  throw new Error(`All fetch strategies failed. Last: ${lastErr.message}`);
+}
+
 async function cachedFetch(url, cacheKey, onProgress) {
   const full = `gridline_${CACHE_VERSION}_${cacheKey}`;
   try {
@@ -686,10 +717,7 @@ async function cachedFetch(url, cacheKey, onProgress) {
     }
   } catch(e) {}
 
-  onProgress && onProgress('downloading…');
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const text = await res.text();
+  const text = await fetchWithFallback(url, onProgress);
   onProgress && onProgress(`parsing ${(text.length/1024/1024).toFixed(1)}MB…`);
   const data = parseCSV(text);
 
@@ -891,9 +919,21 @@ async function boot() {
     document.getElementById('main').innerHTML = `
       <div class="error-panel">
         <h4>Could not load data</h4>
-        <p>${err.message}</p>
-        <p>nflverse CSVs are fetched from GitHub releases. If your connection is blocking github.com, try again or disable any blockers.</p>
-        <button onclick="location.reload()">Retry</button>
+        <p><b>Error:</b> ${err.message}</p>
+        <p>The app tries three different ways to fetch nflverse CSVs (direct GitHub, then proxies). All three failed, which usually means:</p>
+        <p style="font-size:12px;color:var(--ink-faint);line-height:1.7">
+          • A content blocker / VPN is blocking github.com or the proxies<br>
+          • You're offline or on a captive WiFi<br>
+          • Safari Private Relay is interfering — try without it<br>
+          • The proxies are temporarily down
+        </p>
+        <p style="font-size:12px;color:var(--ink-faint)">
+          Open Safari DevTools (or remote-inspect from a Mac) and check the Console tab — you'll see which URL failed and why.
+        </p>
+        <button onclick="localStorage.clear();location.reload()">Clear cache & retry</button>
+      </div>`;
+  }
+}
       </div>`;
   }
 }
@@ -1279,7 +1319,7 @@ function renderSummary(main) {
     <div class="summary">
       <h3>Sample Games</h3>
       <div class="players">
-        <div class="player-row" style="color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase">
+        <div class="player-row" style="color:var(--ink-faint);font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase">
           <div class="player-name">Matchup</div>
           <div class="player-proj">Proj</div>
           <div class="player-actual">Actual</div>
