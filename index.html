@@ -939,19 +939,37 @@ function buildGame(event, summary) {
 }
 
 // ============================================================================
-// Projection
+// Projection — anchored to league averages so extreme matchups regress properly
 // ============================================================================
+const LEAGUE_AVG_PTS = 22.5;   // approx league average points per team per game
+const LEAGUE_AVG_YDS = 340;    // approx league average yards per team per game
+
+// Compute league averages from this season's actual prior-week data
+// so we self-calibrate to whatever pace the season is at.
+function getLeagueAvgPts() {
+  const all = [];
+  for (const teamId in state.priorWeeks) {
+    for (const w of state.priorWeeks[teamId]) all.push(w.ptsFor);
+  }
+  if (all.length < 8) return LEAGUE_AVG_PTS;
+  return all.reduce((s, x) => s + x, 0) / all.length;
+}
+
 function projectTeam(teamId) {
   const prior = state.priorWeeks[teamId] || [];
-  if (!prior.length) {
-    return { points: 21, ptsAllowed: 21, games: 0 };
-  }
+  if (!prior.length) return { offRating: 0, defRating: 0, games: 0 };
   const sorted = prior.slice().sort((a, b) => a.week - b.week);
   const last4 = sorted.slice(-4);
   const avg = (arr, fn) => arr.length ? arr.reduce((s, r) => s + fn(r), 0) / arr.length : 0;
+  // Blend last-4 (60%) with full season (40%)
+  const ptsFor = 0.6 * avg(last4, r => r.ptsFor) + 0.4 * avg(sorted, r => r.ptsFor);
+  const ptsAg  = 0.6 * avg(last4, r => r.ptsAgainst) + 0.4 * avg(sorted, r => r.ptsAgainst);
+  const lg = getLeagueAvgPts();
   return {
-    points: 0.6 * avg(last4, r => r.ptsFor) + 0.4 * avg(sorted, r => r.ptsFor),
-    ptsAllowed: 0.6 * avg(last4, r => r.ptsAgainst) + 0.4 * avg(sorted, r => r.ptsAgainst),
+    offRating: ptsFor - lg,    // +N means scores N more than avg
+    defRating: ptsAg - lg,     // +N means allows N more than avg (i.e. worse defense)
+    rawPtsFor: ptsFor,
+    rawPtsAg: ptsAg,
     games: sorted.length,
   };
 }
@@ -960,15 +978,38 @@ function projectGame(g) {
   if (!g.away || !g.home) return null;
   const a = projectTeam(g.away.id);
   const h = projectTeam(g.home.id);
-  const awayPts = (a.points * 0.55 + h.ptsAllowed * 0.45) * 0.97;
-  const homePts = (h.points * 0.55 + a.ptsAllowed * 0.45) * 1.03;
+  const lg = getLeagueAvgPts();
+
+  // No prior data → just use league average
+  if (!a.games || !h.games) {
+    return {
+      awayPts: lg * 0.97, homePts: lg * 1.03,
+      total: lg * 2,
+      awayYds: Math.round(LEAGUE_AVG_YDS * 0.97),
+      homeYds: Math.round(LEAGUE_AVG_YDS * 1.03),
+      conf: 30,
+    };
+  }
+
+  // Each team's expected points = league avg + (their offense vs avg) + (opp's defense vs avg)
+  // Damped at 0.5 each so a great offense vs bad defense doesn't double-count.
+  const awayPts = (lg + 0.5 * a.offRating + 0.5 * h.defRating) * 0.97;
+  const homePts = (lg + 0.5 * h.offRating + 0.5 * a.defRating) * 1.03;
+
+  // Yards: scale league avg yards by points-vs-avg ratio (with damping)
+  const ydsFromPts = (pts) => {
+    const ratio = 1 + 0.7 * (pts / lg - 1); // 70% of the points-delta translates to yards
+    return Math.round(LEAGUE_AVG_YDS * Math.max(0.6, Math.min(1.5, ratio)));
+  };
+
   const minGames = Math.min(a.games, h.games);
   const conf = Math.min(95, Math.round(40 + minGames * 6));
+
   return {
     awayPts, homePts,
     total: awayPts + homePts,
-    awayYds: Math.round(awayPts * 16),
-    homeYds: Math.round(homePts * 16),
+    awayYds: ydsFromPts(awayPts),
+    homeYds: ydsFromPts(homePts),
     conf,
   };
 }
