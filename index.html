@@ -761,6 +761,7 @@ const state = {
   week: 1,
   games: [],
   priorWeeks: {},
+  priorPlayerStats: {},
   loading: false,
   loaded: false,
   activeTab: 'games',
@@ -805,7 +806,6 @@ function populateWeekDropdown() {
 async function loadWeek() {
   if (state.loading) return;
 
-  // Read dropdowns at click time — this is the source of truth
   state.season = +document.getElementById('season').value;
   state.week   = +document.getElementById('week').value;
 
@@ -815,9 +815,8 @@ async function loadWeek() {
   setStatus('loading', `Loading Week ${state.week}…`);
 
   try {
-    // 1. Scoreboard for the week
+    // 1. Scoreboard for the target week (to get matchups + actual scores if completed)
     showLoader(5, 'Fetching schedule', 'site.api.espn.com');
-    // Scoreboard itself: not yet known if completed, use short TTL to be safe
     const scoreboard = await cachedJSON(ESPN.scoreboard(state.season, state.week), state.season, state.week, false);
     const events = scoreboard.events || [];
 
@@ -836,15 +835,14 @@ async function loadWeek() {
       return;
     }
 
-    // Determine if ALL games in this week are completed (safe to cache long)
     const weekCompleted = events.every(ev => {
       const comp = ev.competitions && ev.competitions[0];
       return comp && comp.status && comp.status.type && comp.status.type.completed;
     });
 
+    // 2. Fetch current week box scores — used ONLY for actual final scores/yards after the game.
+    //    Player stats from this week are NEVER used for projections.
     showLoader(15, `Found ${events.length} games`, 'Pulling box scores');
-
-    // 2. Per-game box scores (parallel, limited)
     const gamesData = await mapLimit(events, 3, async (ev, idx) => {
       let summary = null;
       try {
@@ -852,33 +850,41 @@ async function loadWeek() {
       } catch (e) {
         console.warn('summary fail', ev.id, e.message);
       }
-      const pct = 15 + Math.round(50 * (idx + 1) / events.length);
+      const pct = 15 + Math.round(20 * (idx + 1) / events.length);
       showLoader(pct, 'Box scores', `${idx + 1} of ${events.length}`);
       return { event: ev, summary };
     });
 
-    // 3. Prior-week scoreboards
-    state.priorWeeks = {};
+    // 3. Prior weeks: fetch scoreboards AND individual game summaries.
+    //    Scoreboards → team score history for team-level projections.
+    //    Game summaries → player stat history for player-level projections.
+    //    Both are strictly from weeks 1..N-1, so the model is blind to week N.
+    state.priorWeeks = {};        // teamId -> [{week, ptsFor, ptsAgainst}]
+    state.priorPlayerStats = {};  // playerId -> { name, team, abbr, position, games:[] }
+
     if (state.week > 1) {
       const priorWeekNums = [];
       for (let w = 1; w < state.week; w++) priorWeekNums.push(w);
 
-      showLoader(70, 'Loading prior weeks', `0 of ${priorWeekNums.length}`);
+      // 3a. Scoreboards (lightweight — just need final scores)
+      showLoader(38, 'Loading prior scoreboards', `0 of ${priorWeekNums.length}`);
       const priorScoreboards = await mapLimit(priorWeekNums, 4, async (w, idx) => {
         let data = null;
         try {
-          // Prior weeks are always completed — use long TTL
           data = await cachedJSON(ESPN.scoreboard(state.season, w), state.season, w, true);
         } catch (e) {
-          console.warn('prior week fail', w, e.message);
+          console.warn('prior scoreboard fail', w, e.message);
         }
-        const pct = 70 + Math.round(25 * (idx + 1) / priorWeekNums.length);
-        showLoader(pct, 'Prior weeks', `Week ${w} · ${idx + 1} of ${priorWeekNums.length}`);
+        const pct = 38 + Math.round(12 * (idx + 1) / priorWeekNums.length);
+        showLoader(pct, 'Prior scoreboards', `Week ${w}`);
         return { week: w, data };
       });
 
+      // Collect prior event IDs per week for game summary fetching
+      const priorEventsByWeek = {}; // week -> [eventId, ...]
       for (const { week: w, data } of priorScoreboards) {
         if (!data || !data.events) continue;
+        priorEventsByWeek[w] = [];
         for (const ev of data.events) {
           const comp = ev.competitions && ev.competitions[0];
           if (!comp) continue;
@@ -888,20 +894,76 @@ async function loadWeek() {
           const home = cs.find(c => c.homeAway === 'home');
           const away = cs.find(c => c.homeAway === 'away');
           if (!home || !away) continue;
-          const homeScore = home.score != null ? +home.score : NaN;
-          const awayScore = away.score != null ? +away.score : NaN;
-          if (isNaN(homeScore) || isNaN(awayScore)) continue;
-
+          const homeScore = +home.score || 0;
+          const awayScore = +away.score || 0;
           if (!state.priorWeeks[home.team.id]) state.priorWeeks[home.team.id] = [];
           if (!state.priorWeeks[away.team.id]) state.priorWeeks[away.team.id] = [];
           state.priorWeeks[home.team.id].push({ week: w, ptsFor: homeScore, ptsAgainst: awayScore });
           state.priorWeeks[away.team.id].push({ week: w, ptsFor: awayScore, ptsAgainst: homeScore });
+          priorEventsByWeek[w].push(ev.id);
         }
       }
+
+      // 3b. Game summaries for all prior events — player stat history
+      const allPriorEventIds = Object.values(priorEventsByWeek).flat();
+      showLoader(50, 'Loading prior player stats', `0 of ${allPriorEventIds.length} games`);
+      await mapLimit(allPriorEventIds, 4, async (evId, idx) => {
+        let summary = null;
+        try {
+          // Find which week this event belongs to so we can pass correct cache params
+          const evWeek = +Object.entries(priorEventsByWeek).find(([, ids]) => ids.includes(evId))?.[0] || 1;
+          summary = await cachedJSON(ESPN.summary(evId), state.season, evWeek, true);
+        } catch (e) {
+          console.warn('prior summary fail', evId, e.message);
+        }
+        const pct = 50 + Math.round(40 * (idx + 1) / allPriorEventIds.length);
+        showLoader(pct, 'Prior player stats', `${idx + 1} of ${allPriorEventIds.length}`);
+        if (!summary || !summary.boxscore || !summary.boxscore.players) return;
+
+        for (const teamBlock of summary.boxscore.players) {
+          const teamId = teamBlock.team && teamBlock.team.id;
+          const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
+          for (const grp of (teamBlock.statistics || [])) {
+            const cat = grp.name;
+            if (!['passing','rushing','receiving'].includes(cat)) continue;
+            const labels = grp.labels || [];
+            const ydsIdx = labels.findIndex(l => l === 'YDS');
+            const tdIdx  = labels.findIndex(l => l === 'TD');
+            for (const ath of (grp.athletes || [])) {
+              const a = ath.athlete || {};
+              if (!a.id) continue;
+              const stats = ath.stats || [];
+              const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
+              const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
+              if (!state.priorPlayerStats[a.id]) {
+                state.priorPlayerStats[a.id] = {
+                  id: a.id,
+                  name: a.displayName || a.shortName || '',
+                  team: teamId,
+                  abbr: teamAbbr,
+                  position: (a.position && a.position.abbreviation) || '',
+                  games: 0,
+                  passYds: 0, rushYds: 0, recYds: 0,
+                  passTds: 0, rushTds: 0, recTds: 0,
+                };
+              }
+              const ps = state.priorPlayerStats[a.id];
+              // Update team in case player moved or abbr changed
+              ps.team = teamId;
+              ps.abbr = teamAbbr;
+              if (cat === 'passing')   { ps.passYds += yds; ps.passTds += tds; }
+              else if (cat === 'rushing')   { ps.rushYds += yds; ps.rushTds += tds; }
+              else if (cat === 'receiving') { ps.recYds  += yds; ps.recTds  += tds; }
+              // Count games only once per player per game (use passing for QBs, rushing for others)
+              if (cat === 'passing' || (cat === 'rushing' && ps.position !== 'QB')) ps.games++;
+            }
+          }
+        }
+      });
     }
 
-    // 4. Combine
-    showLoader(95, 'Computing projections', '');
+    // 4. Build game objects (actual scores from current week, projections from prior data)
+    showLoader(92, 'Computing projections', '');
     state.games = gamesData.map(g => buildGame(g.event, g.summary)).filter(Boolean);
 
     showLoader(100, 'Done', '');
@@ -934,6 +996,8 @@ async function loadWeek() {
 
 // ============================================================================
 // Build game object
+// actual scores/yards come from current week box score (shown post-game)
+// player projections come from state.priorPlayerStats (weeks 1..N-1 only)
 // ============================================================================
 function buildGame(event, summary) {
   const comp = event.competitions && event.competitions[0];
@@ -959,39 +1023,34 @@ function buildGame(event, summary) {
       score: home.score != null && home.score !== '' ? +home.score : null,
     },
     completed: !!(comp.status && comp.status.type && comp.status.type.completed),
-    players: [],
+    // actualPlayers: what actually happened this week (for comparison display only)
+    actualPlayers: {},  // playerId -> { passYds, rushYds, recYds, passTds, rushTds, recTds }
     teamYards: {},
   };
 
+  // Extract actual stats from current week box score
   if (summary && summary.boxscore && summary.boxscore.players) {
     for (const teamBlock of summary.boxscore.players) {
       const teamId = teamBlock.team && teamBlock.team.id;
-      const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
       let teamPassYds = 0, teamRushYds = 0;
       for (const grp of (teamBlock.statistics || [])) {
         const cat = grp.name;
         const labels = grp.labels || [];
         const ydsIdx = labels.findIndex(l => l === 'YDS');
-        const tdIdx = labels.findIndex(l => l === 'TD');
+        const tdIdx  = labels.findIndex(l => l === 'TD');
         for (const ath of (grp.athletes || [])) {
           const a = ath.athlete || {};
+          if (!a.id) continue;
           const stats = ath.stats || [];
           const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
-          const tds = tdIdx >= 0 ? +stats[tdIdx] || 0 : 0;
-          let p = game.players.find(pl => pl.id === a.id);
-          if (!p) {
-            p = {
-              id: a.id, name: a.displayName || a.shortName || '',
-              team: teamId, abbr: teamAbbr,
-              position: (a.position && a.position.abbreviation) || '',
-              passYds: 0, rushYds: 0, recYds: 0,
-              passTds: 0, rushTds: 0, recTds: 0,
-            };
-            game.players.push(p);
+          const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
+          if (!game.actualPlayers[a.id]) {
+            game.actualPlayers[a.id] = { passYds:0, rushYds:0, recYds:0, passTds:0, rushTds:0, recTds:0 };
           }
-          if (cat === 'passing')   { p.passYds += yds; p.passTds += tds; teamPassYds += yds; }
-          else if (cat === 'rushing')   { p.rushYds += yds; p.rushTds += tds; teamRushYds += yds; }
-          else if (cat === 'receiving') { p.recYds += yds; p.recTds += tds; }
+          const ap = game.actualPlayers[a.id];
+          if (cat === 'passing')        { ap.passYds += yds; ap.passTds += tds; teamPassYds += yds; }
+          else if (cat === 'rushing')   { ap.rushYds += yds; ap.rushTds += tds; teamRushYds += yds; }
+          else if (cat === 'receiving') { ap.recYds  += yds; ap.recTds  += tds; }
         }
       }
       if (teamId) game.teamYards[teamId] = teamPassYds + teamRushYds;
@@ -1171,72 +1230,128 @@ function renderGameCard(g) {
     </div>`;
 }
 
-function getPlayerYds(p, pos) {
-  if (pos === 'QB') return p.passYds + p.rushYds;
-  if (pos === 'RB') return p.rushYds + p.recYds;
-  if (pos === 'WR') return p.recYds + p.rushYds;
-  if (pos === 'TE') return p.recYds;
+function getPriorYds(ps, pos) {
+  if (!ps || !ps.games) return 0;
+  if (pos === 'QB') return (ps.passYds + ps.rushYds) / ps.games;
+  if (pos === 'RB') return (ps.rushYds + ps.recYds) / ps.games;
+  if (pos === 'WR') return (ps.recYds + ps.rushYds) / ps.games;
+  if (pos === 'TE') return ps.recYds / ps.games;
   return 0;
 }
 
+function getPriorTds(ps) {
+  if (!ps || !ps.games) return 0;
+  return (ps.passTds + ps.rushTds + ps.recTds) / ps.games;
+}
+
+function getActualYds(ap, pos) {
+  if (!ap) return null;
+  if (pos === 'QB') return ap.passYds + ap.rushYds;
+  if (pos === 'RB') return ap.rushYds + ap.recYds;
+  if (pos === 'WR') return ap.recYds + ap.rushYds;
+  if (pos === 'TE') return ap.recYds;
+  return null;
+}
+
 function renderPlayerSections(g, proj) {
+  // Get all prior-stats players who played for either team in prior weeks
+  const teamIds = [g.away.id, g.home.id];
+  const relevantPlayers = Object.values(state.priorPlayerStats)
+    .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position));
+
   const out = [];
   for (const pos of ['QB','RB','WR','TE']) {
     const rows = [];
     for (const side of ['away','home']) {
       const team = g[side];
       const teamProjYds = side === 'away' ? proj.awayYds : proj.homeYds;
-      const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos);
-      teamPlayers.sort((a, b) => getPlayerYds(b, pos) - getPlayerYds(a, pos));
+      const teamPlayers = relevantPlayers
+        .filter(ps => ps.team === team.id && ps.position === pos)
+        .sort((a, b) => getPriorYds(b, pos) - getPriorYds(a, pos));
+
       const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
       const tops = teamPlayers.slice(0, limit);
-      for (const p of tops) {
-        const actual = getPlayerYds(p, pos);
+
+      // If no prior data, fall back to league-average share projection (no name)
+      if (!tops.length && state.week === 1) {
         const share = pos === 'QB' ? 0.65 : pos === 'RB' ? 0.30 : pos === 'WR' ? 0.20 : 0.12;
         const projYds = Math.round(teamProjYds * share);
-        const cls = !g.completed ? 'actual-na' : (actual >= projYds ? 'actual-hit' : 'actual-miss');
         rows.push(`
           <div class="player-row">
             <span class="pos-tag pos-${pos}">${pos}</span>
-            <div class="player-name">${p.name}<span class="player-team">${p.abbr}</span></div>
+            <div class="player-name" style="color:var(--ink-faint)">${team.abbr} starter<span class="player-team">no prior data</span></div>
             <div class="player-proj">${projYds}<span class="unit">yd</span></div>
-            <div class="player-actual ${cls}">${g.completed ? actual : '—'}</div>
+            <div class="player-actual actual-na">—</div>
+          </div>`);
+        continue;
+      }
+
+      for (const ps of tops) {
+        // Projection: player's prior avg yds, scaled by how this team's proj compares to their prior avg
+        const priorAvgYds = getPriorYds(ps, pos);
+        const share = pos === 'QB' ? 0.65 : pos === 'RB' ? 0.30 : pos === 'WR' ? 0.20 : 0.12;
+        // Blend player history with team-level projection
+        const teamBaseline = teamProjYds * share;
+        const projYds = Math.round(0.6 * priorAvgYds + 0.4 * teamBaseline);
+
+        // Actual: from current week box score (only shown if game completed)
+        const ap = g.actualPlayers[ps.id];
+        const actualYds = g.completed ? (getActualYds(ap, pos) ?? '?') : null;
+        const cls = !g.completed ? 'actual-na'
+          : (actualYds !== '?' && actualYds >= projYds ? 'actual-hit' : 'actual-miss');
+
+        rows.push(`
+          <div class="player-row">
+            <span class="pos-tag pos-${pos}">${pos}</span>
+            <div class="player-name">${ps.name}<span class="player-team">${ps.abbr}</span></div>
+            <div class="player-proj">${projYds}<span class="unit">yd</span></div>
+            <div class="player-actual ${cls}">${g.completed ? actualYds : '—'}</div>
           </div>`);
       }
     }
     if (rows.length) {
       const title = { QB: 'Pass+Rush Yds', RB: 'Rush+Rec Yds', WR: 'Rec+Rush Yds', TE: 'Receiving Yds' }[pos];
+      const note = state.week === 1 ? ' · no prior data' : ` · avg from wk 1–${state.week - 1}`;
       out.push(`
         <div class="section">
-          <h4>${pos} · ${title}</h4>
+          <h4>${pos} · ${title}<span style="font-weight:400;opacity:0.5">${note}</span></h4>
           <div class="players">${rows.join('')}</div>
         </div>`);
     }
   }
-  return out.join('');
+  return out.join('') || `<div class="section"><h4>Player projections</h4><p style="color:var(--ink-faint);font-size:12px;margin:0">No prior week data available${state.week === 1 ? ' — Week 1 has no history to draw from' : ''}.</p></div>`;
 }
 
 function renderTDSection(g) {
-  const candidates = g.players
-    .filter(p => ['QB','RB','WR','TE'].includes(p.position))
-    .map(p => {
-      const tds = p.passTds + p.rushTds + p.recTds;
+  if (state.week === 1) return ''; // No prior data for TD likelihood in week 1
+
+  const teamIds = [g.away.id, g.home.id];
+  const candidates = Object.values(state.priorPlayerStats)
+    .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position) && ps.games > 0)
+    .map(ps => {
+      const tdPerGame = getPriorTds(ps);
+      // Convert avg TDs per game to a probability (capped)
       let prob = 0;
-      if (p.position === 'QB') prob = Math.min(85, 30 + p.passYds / 8);
-      else if (p.position === 'RB') prob = Math.min(70, 15 + (p.rushYds + p.recYds) / 4);
-      else if (p.position === 'WR') prob = Math.min(60, 10 + p.recYds / 3);
-      else if (p.position === 'TE') prob = Math.min(55, 8 + p.recYds / 3);
-      return { ...p, _prob: Math.round(prob), _scored: tds > 0 };
+      if (ps.position === 'QB') prob = Math.min(85, Math.round(30 + tdPerGame * 35));
+      else if (ps.position === 'RB') prob = Math.min(70, Math.round(10 + tdPerGame * 50));
+      else if (ps.position === 'WR') prob = Math.min(60, Math.round(5  + tdPerGame * 55));
+      else if (ps.position === 'TE') prob = Math.min(55, Math.round(5  + tdPerGame * 55));
+
+      // Did they actually score this week?
+      const ap = g.actualPlayers[ps.id];
+      const actualTds = ap ? (ap.passTds + ap.rushTds + ap.recTds) : 0;
+      return { ...ps, _prob: prob, _scored: actualTds > 0 };
     })
-    .filter(p => p._prob >= 25)
+    .filter(p => p._prob >= 20)
     .sort((a, b) => b._prob - a._prob)
     .slice(0, 8);
 
   if (!candidates.length) return '';
+
   const rows = candidates.map(c => {
     const tier = c._prob >= 50 ? 'high' : c._prob >= 35 ? 'med' : 'low';
     const scoredHTML = !g.completed ? '' :
-      c._scored ? `<span class="td-scored yes">✓</span>` : `<span class="td-scored no">—</span>`;
+      c._scored ? `<span class="td-scored yes">✓ scored</span>` : `<span class="td-scored no">✗ no TD</span>`;
     return `
       <div class="td-row">
         <span class="pos-tag pos-${c.position}">${c.position}</span>
@@ -1246,9 +1361,10 @@ function renderTDSection(g) {
         ${scoredHTML}
       </div>`;
   }).join('');
+
   return `
     <div class="section">
-      <h4>TD Likelihood</h4>
+      <h4>TD Likelihood <span style="font-weight:400;opacity:0.5">· based on wk 1–${state.week - 1} avg</span></h4>
       <div class="tds">${rows}</div>
     </div>`;
 }
