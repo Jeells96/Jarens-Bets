@@ -644,8 +644,9 @@ const ESPN = {
     `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/schedule?season=${season}`,
 };
 
-const CACHE_VERSION = 'v4';
-const CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12h
+const CACHE_VERSION = 'v5'; // bumped — forces all old v4 cache entries to be ignored
+const CACHE_TTL_COMPLETED_MS = 1000 * 60 * 60 * 12; // 12h for completed weeks (scores won't change)
+const CACHE_TTL_ACTIVE_MS    = 1000 * 60 * 5;        // 5 min for current/future weeks
 
 // ============================================================================
 // Fetch helpers
@@ -669,17 +670,24 @@ async function fetchJSON(url, { timeout = 15000, retries = 2 } = {}) {
   throw lastErr;
 }
 
-function cacheKey(url) {
-  return 'gl_' + CACHE_VERSION + '_' + btoa(unescape(encodeURIComponent(url))).slice(0, 80);
+// Cache key now includes season+week so different weeks never share a cache entry.
+// The URL already contains season+week, but being explicit makes collisions impossible.
+function cacheKey(url, season, week) {
+  const tag = `s${season}w${String(week).padStart(2,'0')}_`;
+  return 'gl_' + CACHE_VERSION + '_' + tag + btoa(unescape(encodeURIComponent(url))).slice(0, 60);
 }
 
-async function cachedJSON(url) {
-  const k = cacheKey(url);
+// Pass season+week so we can choose the right TTL and build the right key.
+async function cachedJSON(url, season, week, isCompleted = false) {
+  const k = cacheKey(url, season, week);
+  const ttl = isCompleted ? CACHE_TTL_COMPLETED_MS : CACHE_TTL_ACTIVE_MS;
   try {
     const raw = localStorage.getItem(k);
     if (raw) {
       const { ts, data } = JSON.parse(raw);
-      if (Date.now() - ts < CACHE_TTL_MS) return data;
+      if (Date.now() - ts < ttl) return data;
+      // Stale — remove it so we don't fill up storage with dead entries
+      localStorage.removeItem(k);
     }
   } catch (e) {}
   const data = await fetchJSON(url);
@@ -704,13 +712,13 @@ async function mapLimit(items, limit, fn) {
 }
 
 // ============================================================================
-// State
+// State — default week is 1 (not 8) so fresh loads don't look stuck
 // ============================================================================
 const state = {
   season: 2025,
-  week: 8,
+  week: 1,
   games: [],
-  priorWeeks: {}, // teamId -> [{week, ptsFor, ptsAgainst}]
+  priorWeeks: {},
   loading: false,
   loaded: false,
   activeTab: 'games',
@@ -754,6 +762,11 @@ function populateWeekDropdown() {
 // ============================================================================
 async function loadWeek() {
   if (state.loading) return;
+
+  // Read dropdowns at click time — this is the source of truth
+  state.season = +document.getElementById('season').value;
+  state.week   = +document.getElementById('week').value;
+
   state.loading = true;
   state.loaded = false;
   document.getElementById('load-btn').disabled = true;
@@ -762,7 +775,8 @@ async function loadWeek() {
   try {
     // 1. Scoreboard for the week
     showLoader(5, 'Fetching schedule', 'site.api.espn.com');
-    const scoreboard = await cachedJSON(ESPN.scoreboard(state.season, state.week));
+    // Scoreboard itself: not yet known if completed, use short TTL to be safe
+    const scoreboard = await cachedJSON(ESPN.scoreboard(state.season, state.week), state.season, state.week, false);
     const events = scoreboard.events || [];
 
     if (!events.length) {
@@ -780,13 +794,19 @@ async function loadWeek() {
       return;
     }
 
+    // Determine if ALL games in this week are completed (safe to cache long)
+    const weekCompleted = events.every(ev => {
+      const comp = ev.competitions && ev.competitions[0];
+      return comp && comp.status && comp.status.type && comp.status.type.completed;
+    });
+
     showLoader(15, `Found ${events.length} games`, 'Pulling box scores');
 
     // 2. Per-game box scores (parallel, limited)
     const gamesData = await mapLimit(events, 3, async (ev, idx) => {
       let summary = null;
       try {
-        summary = await cachedJSON(ESPN.summary(ev.id));
+        summary = await cachedJSON(ESPN.summary(ev.id), state.season, state.week, weekCompleted);
       } catch (e) {
         console.warn('summary fail', ev.id, e.message);
       }
@@ -795,8 +815,7 @@ async function loadWeek() {
       return { event: ev, summary };
     });
 
-    // 3. Prior-week scoreboards — fetch each prior week and pull team scores out
-    //    Same endpoint we already used for the current week, so we know it works.
+    // 3. Prior-week scoreboards
     state.priorWeeks = {};
     if (state.week > 1) {
       const priorWeekNums = [];
@@ -806,7 +825,8 @@ async function loadWeek() {
       const priorScoreboards = await mapLimit(priorWeekNums, 4, async (w, idx) => {
         let data = null;
         try {
-          data = await cachedJSON(ESPN.scoreboard(state.season, w));
+          // Prior weeks are always completed — use long TTL
+          data = await cachedJSON(ESPN.scoreboard(state.season, w), state.season, w, true);
         } catch (e) {
           console.warn('prior week fail', w, e.message);
         }
@@ -907,7 +927,7 @@ function buildGame(event, summary) {
       const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
       let teamPassYds = 0, teamRushYds = 0;
       for (const grp of (teamBlock.statistics || [])) {
-        const cat = grp.name; // passing|rushing|receiving
+        const cat = grp.name;
         const labels = grp.labels || [];
         const ydsIdx = labels.findIndex(l => l === 'YDS');
         const tdIdx = labels.findIndex(l => l === 'TD');
@@ -939,13 +959,11 @@ function buildGame(event, summary) {
 }
 
 // ============================================================================
-// Projection — anchored to league averages so extreme matchups regress properly
+// Projection
 // ============================================================================
-const LEAGUE_AVG_PTS = 22.5;   // approx league average points per team per game
-const LEAGUE_AVG_YDS = 340;    // approx league average yards per team per game
+const LEAGUE_AVG_PTS = 22.5;
+const LEAGUE_AVG_YDS = 340;
 
-// Compute league averages from this season's actual prior-week data
-// so we self-calibrate to whatever pace the season is at.
 function getLeagueAvgPts() {
   const all = [];
   for (const teamId in state.priorWeeks) {
@@ -961,13 +979,12 @@ function projectTeam(teamId) {
   const sorted = prior.slice().sort((a, b) => a.week - b.week);
   const last4 = sorted.slice(-4);
   const avg = (arr, fn) => arr.length ? arr.reduce((s, r) => s + fn(r), 0) / arr.length : 0;
-  // Blend last-4 (60%) with full season (40%)
   const ptsFor = 0.6 * avg(last4, r => r.ptsFor) + 0.4 * avg(sorted, r => r.ptsFor);
   const ptsAg  = 0.6 * avg(last4, r => r.ptsAgainst) + 0.4 * avg(sorted, r => r.ptsAgainst);
   const lg = getLeagueAvgPts();
   return {
-    offRating: ptsFor - lg,    // +N means scores N more than avg
-    defRating: ptsAg - lg,     // +N means allows N more than avg (i.e. worse defense)
+    offRating: ptsFor - lg,
+    defRating: ptsAg - lg,
     rawPtsFor: ptsFor,
     rawPtsAg: ptsAg,
     games: sorted.length,
@@ -980,7 +997,6 @@ function projectGame(g) {
   const h = projectTeam(g.home.id);
   const lg = getLeagueAvgPts();
 
-  // No prior data → just use league average
   if (!a.games || !h.games) {
     return {
       awayPts: lg * 0.97, homePts: lg * 1.03,
@@ -991,14 +1007,11 @@ function projectGame(g) {
     };
   }
 
-  // Each team's expected points = league avg + (their offense vs avg) + (opp's defense vs avg)
-  // Damped at 0.5 each so a great offense vs bad defense doesn't double-count.
   const awayPts = (lg + 0.5 * a.offRating + 0.5 * h.defRating) * 0.97;
   const homePts = (lg + 0.5 * h.offRating + 0.5 * a.defRating) * 1.03;
 
-  // Yards: scale league avg yards by points-vs-avg ratio (with damping)
   const ydsFromPts = (pts) => {
-    const ratio = 1 + 0.7 * (pts / lg - 1); // 70% of the points-delta translates to yards
+    const ratio = 1 + 0.7 * (pts / lg - 1);
     return Math.round(LEAGUE_AVG_YDS * Math.max(0.6, Math.min(1.5, ratio)));
   };
 
