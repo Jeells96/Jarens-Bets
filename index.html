@@ -734,9 +734,17 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
   teamSchedule: (teamId, season) =>
     `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/schedule?season=${season}`,
+  priorSeasonScoreboard: (season, week) =>
+    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&week=${week}`,
 };
 
-const CACHE_VERSION = 'v5'; // bumped — forces all old v4 cache entries to be ignored
+// How much to weight prior season vs current season.
+// Week 1 = 100% prior season. By week 8+ = 0% prior season.
+function priorSeasonWeight(currentWeek) {
+  return Math.max(0, 1 - (currentWeek - 1) / 7);
+}
+
+const CACHE_VERSION = 'v6'; // bumped — forces all old v4 cache entries to be ignored
 const CACHE_TTL_COMPLETED_MS = 1000 * 60 * 60 * 12; // 12h for completed weeks (scores won't change)
 const CACHE_TTL_ACTIVE_MS    = 1000 * 60 * 5;        // 5 min for current/future weeks
 
@@ -905,110 +913,125 @@ async function loadWeek() {
       return { event: ev, summary };
     });
 
-    // 3. Prior weeks: fetch scoreboards AND individual game summaries.
-    //    Scoreboards → team score history for team-level projections.
-    //    Game summaries → player stat history for player-level projections.
-    //    Both are strictly from weeks 1..N-1, so the model is blind to week N.
-    state.priorWeeks = {};        // teamId -> [{week, ptsFor, ptsAgainst}]
-    state.priorPlayerStats = {};  // playerId -> { name, team, abbr, position, games:[] }
+    // 3. Prior data: current season weeks 1..N-1 + prior season (blended, tapering off)
+    //    Prior season weight: 100% at week 1, 0% at week 8+
+    state.priorWeeks = {};
+    state.priorPlayerStats = {};
 
-    if (state.week > 1) {
-      const priorWeekNums = [];
-      for (let w = 1; w < state.week; w++) priorWeekNums.push(w);
+    const prevSeason      = state.season - 1;
+    const psWeight        = priorSeasonWeight(state.week); // 0..1
+    const currentWks      = state.week > 1 ? Array.from({length: state.week - 1}, (_,i) => i+1) : [];
 
-      // 3a. Scoreboards (lightweight — just need final scores)
-      showLoader(38, 'Loading prior scoreboards', `0 of ${priorWeekNums.length}`);
-      const priorScoreboards = await mapLimit(priorWeekNums, 4, async (w, idx) => {
-        let data = null;
-        try {
-          data = await cachedJSON(ESPN.scoreboard(state.season, w), state.season, w, true);
-        } catch (e) {
-          console.warn('prior scoreboard fail', w, e.message);
-        }
-        const pct = 38 + Math.round(12 * (idx + 1) / priorWeekNums.length);
-        showLoader(pct, 'Prior scoreboards', `Week ${w}`);
-        return { week: w, data };
-      });
-
-      // Collect prior event IDs per week for game summary fetching
-      const priorEventsByWeek = {}; // week -> [eventId, ...]
-      for (const { week: w, data } of priorScoreboards) {
-        if (!data || !data.events) continue;
-        priorEventsByWeek[w] = [];
-        for (const ev of data.events) {
-          const comp = ev.competitions && ev.competitions[0];
-          if (!comp) continue;
-          const status = comp.status && comp.status.type;
-          if (!status || !status.completed) continue;
-          const cs = comp.competitors || [];
-          const home = cs.find(c => c.homeAway === 'home');
-          const away = cs.find(c => c.homeAway === 'away');
-          if (!home || !away) continue;
-          const homeScore = +home.score || 0;
-          const awayScore = +away.score || 0;
-          if (!state.priorWeeks[home.team.id]) state.priorWeeks[home.team.id] = [];
-          if (!state.priorWeeks[away.team.id]) state.priorWeeks[away.team.id] = [];
-          state.priorWeeks[home.team.id].push({ week: w, ptsFor: homeScore, ptsAgainst: awayScore });
-          state.priorWeeks[away.team.id].push({ week: w, ptsFor: awayScore, ptsAgainst: homeScore });
-          priorEventsByWeek[w].push(ev.id);
-        }
-      }
-
-      // 3b. Game summaries for all prior events — player stat history
-      const allPriorEventIds = Object.values(priorEventsByWeek).flat();
-      showLoader(50, 'Loading prior player stats', `0 of ${allPriorEventIds.length} games`);
-      await mapLimit(allPriorEventIds, 4, async (evId, idx) => {
-        let summary = null;
-        try {
-          // Find which week this event belongs to so we can pass correct cache params
-          const evWeek = +Object.entries(priorEventsByWeek).find(([, ids]) => ids.includes(evId))?.[0] || 1;
-          summary = await cachedJSON(ESPN.summary(evId), state.season, evWeek, true);
-        } catch (e) {
-          console.warn('prior summary fail', evId, e.message);
-        }
-        const pct = 50 + Math.round(40 * (idx + 1) / allPriorEventIds.length);
-        showLoader(pct, 'Prior player stats', `${idx + 1} of ${allPriorEventIds.length}`);
-        if (!summary || !summary.boxscore || !summary.boxscore.players) return;
-
-        for (const teamBlock of summary.boxscore.players) {
-          const teamId = teamBlock.team && teamBlock.team.id;
-          const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
-          for (const grp of (teamBlock.statistics || [])) {
-            const cat = grp.name;
-            if (!['passing','rushing','receiving'].includes(cat)) continue;
-            const labels = grp.labels || [];
-            const ydsIdx = labels.findIndex(l => l === 'YDS');
-            const tdIdx  = labels.findIndex(l => l === 'TD');
-            for (const ath of (grp.athletes || [])) {
-              const a = ath.athlete || {};
-              if (!a.id) continue;
-              const stats = ath.stats || [];
-              const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
-              const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
-              if (!state.priorPlayerStats[a.id]) {
-                state.priorPlayerStats[a.id] = {
-                  id: a.id,
-                  name: a.displayName || a.shortName || '',
-                  team: teamId,
-                  abbr: teamAbbr,
-                  position: (a.position && a.position.abbreviation) || '',
-                  games: 0,
-                  passYds: 0, rushYds: 0, recYds: 0,
-                  passTds: 0, rushTds: 0, recTds: 0,
-                };
-              }
-              const ps = state.priorPlayerStats[a.id];
-              // Update team in case player moved or abbr changed
-              ps.team = teamId;
-              ps.abbr = teamAbbr;
-              if (cat === 'passing')   { ps.passYds += yds; ps.passTds += tds; }
-              else if (cat === 'rushing')   { ps.rushYds += yds; ps.rushTds += tds; }
-              else if (cat === 'receiving') { ps.recYds  += yds; ps.recTds  += tds; }
-              // Count games only once per player per game (use passing for QBs, rushing for others)
-              if (cat === 'passing' || (cat === 'rushing' && ps.position !== 'QB')) ps.games++;
+    // Helper: ingest a box score summary into priorPlayerStats
+    // weightMult: 1.0 for current season, psWeight for prior season
+    function ingestSummary(summary, teamIdOverride, weightMult) {
+      if (!summary?.boxscore?.players) return;
+      for (const teamBlock of summary.boxscore.players) {
+        const teamId  = teamIdOverride ?? (teamBlock.team && teamBlock.team.id);
+        const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
+        for (const grp of (teamBlock.statistics || [])) {
+          const cat = grp.name;
+          if (!['passing','rushing','receiving'].includes(cat)) continue;
+          const labels = grp.labels || [];
+          const ydsIdx = labels.findIndex(l => l === 'YDS');
+          const tdIdx  = labels.findIndex(l => l === 'TD');
+          for (const ath of (grp.athletes || [])) {
+            const a = ath.athlete || {};
+            if (!a.id) continue;
+            const stats = ath.stats || [];
+            const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
+            const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
+            if (!state.priorPlayerStats[a.id]) {
+              state.priorPlayerStats[a.id] = {
+                id: a.id,
+                name: a.displayName || a.shortName || '',
+                team: teamId, abbr: teamAbbr,
+                position: (a.position && a.position.abbreviation) || '',
+                games: 0,
+                passYds: 0, rushYds: 0, recYds: 0,
+                passTds: 0, rushTds: 0, recTds: 0,
+              };
             }
+            const ps = state.priorPlayerStats[a.id];
+            ps.team = teamId; ps.abbr = teamAbbr;
+            // Apply weight — prior season stats count fractionally
+            if (cat === 'passing')        { ps.passYds += yds * weightMult; ps.passTds += tds * weightMult; }
+            else if (cat === 'rushing')   { ps.rushYds += yds * weightMult; ps.rushTds += tds * weightMult; }
+            else if (cat === 'receiving') { ps.recYds  += yds * weightMult; ps.recTds  += tds * weightMult; }
+            // Game counter — weighted so prior season games count fractionally
+            if (cat === 'passing')        { if (ps.position === 'QB' || ps.position === '') ps.games += weightMult; }
+            else if (cat === 'rushing')   { if (ps.position === 'RB') ps.games += weightMult; }
+            else if (cat === 'receiving') { if (ps.position === 'WR' || ps.position === 'TE') ps.games += weightMult; }
           }
         }
+      }
+    }
+
+    // Helper: ingest scoreboard into priorWeeks
+    function ingestScoreboard(data, weekLabel, weightMult, eventsOut) {
+      if (!data?.events) return;
+      for (const ev of data.events) {
+        const comp = ev.competitions?.[0];
+        if (!comp?.status?.type?.completed) continue;
+        const cs   = comp.competitors || [];
+        const home = cs.find(c => c.homeAway === 'home');
+        const away = cs.find(c => c.homeAway === 'away');
+        if (!home || !away) continue;
+        const homeScore = +home.score || 0;
+        const awayScore = +away.score || 0;
+        if (!state.priorWeeks[home.team.id]) state.priorWeeks[home.team.id] = [];
+        if (!state.priorWeeks[away.team.id]) state.priorWeeks[away.team.id] = [];
+        // Store weighted score entries (weight embedded so wavg uses correct values)
+        state.priorWeeks[home.team.id].push({ week: weekLabel, ptsFor: homeScore, ptsAgainst: awayScore, w: weightMult });
+        state.priorWeeks[away.team.id].push({ week: weekLabel, ptsFor: awayScore, ptsAgainst: homeScore, w: weightMult });
+        if (eventsOut) eventsOut.push({ id: ev.id, week: weekLabel });
+      }
+    }
+
+    // 3a. Prior season (weeks 1–18) — only fetch if psWeight > 0
+    if (psWeight > 0) {
+      showLoader(30, 'Loading prior season', `${prevSeason}`);
+      const prevWeekNums = Array.from({length: 18}, (_,i) => i+1);
+      const prevBoards = await mapLimit(prevWeekNums, 4, async (w, idx) => {
+        let data = null;
+        try { data = await cachedJSON(ESPN.priorSeasonScoreboard(prevSeason, w), prevSeason, w, true); }
+        catch(e) { console.warn('prev season scoreboard fail', prevSeason, w); }
+        showLoader(30 + Math.round(10*(idx+1)/prevWeekNums.length), 'Prior season scoreboards', `${prevSeason} W${w}`);
+        return { week: w, data };
+      });
+      const prevEventIds = [];
+      for (const { week: w, data } of prevBoards) ingestScoreboard(data, -w, psWeight, prevEventIds);
+
+      showLoader(40, 'Prior season player stats', `0 of ${prevEventIds.length}`);
+      await mapLimit(prevEventIds, 4, async ({ id: evId, week: evW }, idx) => {
+        let summary = null;
+        try { summary = await cachedJSON(ESPN.summary(evId), prevSeason, Math.abs(evW), true); }
+        catch(e) { console.warn('prev season summary fail', evId); }
+        showLoader(40 + Math.round(12*(idx+1)/Math.max(1,prevEventIds.length)), 'Prior season players', `${idx+1}/${prevEventIds.length}`);
+        ingestSummary(summary, null, psWeight);
+      });
+    }
+
+    // 3b. Current season weeks 1..N-1
+    if (currentWks.length) {
+      showLoader(53, 'Loading current season', `weeks 1–${state.week-1}`);
+      const curBoards = await mapLimit(currentWks, 4, async (w, idx) => {
+        let data = null;
+        try { data = await cachedJSON(ESPN.scoreboard(state.season, w), state.season, w, true); }
+        catch(e) { console.warn('cur scoreboard fail', w); }
+        showLoader(53 + Math.round(10*(idx+1)/currentWks.length), 'Current season scoreboards', `W${w}`);
+        return { week: w, data };
+      });
+      const curEventIds = [];
+      for (const { week: w, data } of curBoards) ingestScoreboard(data, w, 1.0, curEventIds);
+
+      showLoader(63, 'Current season player stats', `0 of ${curEventIds.length}`);
+      await mapLimit(curEventIds, 4, async ({ id: evId, week: evW }, idx) => {
+        let summary = null;
+        try { summary = await cachedJSON(ESPN.summary(evId), state.season, evW, true); }
+        catch(e) { console.warn('cur summary fail', evId); }
+        showLoader(63 + Math.round(27*(idx+1)/Math.max(1,curEventIds.length)), 'Current season players', `${idx+1}/${curEventIds.length}`);
+        ingestSummary(summary, null, 1.0);
       });
     }
 
@@ -1103,7 +1126,7 @@ function buildGame(event, summary) {
           else if (cat === 'receiving') { ap.recYds  += yds; ap.recTds  += tds; }
         }
       }
-      if (teamId) game.teamYards[teamId] = teamPassYds + teamRushYds;
+      if (teamId) game.teamYards[teamId] = { pass: teamPassYds, rush: teamRushYds, total: teamPassYds + teamRushYds };
     }
   }
   return game;
@@ -1117,11 +1140,10 @@ const LEAGUE_AVG_PASS_YDS = 230;
 const LEAGUE_AVG_RUSH_YDS = 110;
 
 function leagueAvgs() {
-  const pts = [];
+  let sum = 0, wt = 0;
   for (const teamId in state.priorWeeks)
-    for (const w of state.priorWeeks[teamId]) pts.push(w.ptsFor);
-  const avg = arr => arr.length >= 4 ? arr.reduce((s,x)=>s+x,0)/arr.length : null;
-  return { pts: avg(pts) ?? LEAGUE_AVG_PTS };
+    for (const r of state.priorWeeks[teamId]) { const w = r.w ?? 1; sum += r.ptsFor * w; wt += w; }
+  return { pts: wt >= 8 ? sum / wt : LEAGUE_AVG_PTS };
 }
 
 function wavg(arr, fn) {
@@ -1133,13 +1155,24 @@ function wavg(arr, fn) {
 function teamRatings(teamId, lgPts) {
   const prior = state.priorWeeks[teamId] || [];
   if (!prior.length) return null;
-  const sorted = prior.slice().sort((a,b) => a.week - b.week);
-  const last4  = sorted.slice(-4);
-  const blend  = fn => 0.6 * wavg(last4, fn) + 0.4 * wavg(sorted, fn);
+  // Sort: prior season entries have negative week labels, so they sort before current season
+  const sorted  = prior.slice().sort((a,b) => a.week - b.week);
+  // last4 = most recent 4 current-season games only (positive week)
+  const curOnly = sorted.filter(r => r.week > 0);
+  const last4   = curOnly.slice(-4);
+  const wavgW   = (arr, fn) => {
+    // weight by both recency (index) and data quality (.w field)
+    let sum = 0, wt = 0;
+    arr.forEach((r, i) => { const w = (i + 1) * (r.w ?? 1); sum += fn(r) * w; wt += w; });
+    return wt ? sum / wt : 0;
+  };
+  const blend = fn => last4.length
+    ? 0.6 * wavgW(last4, fn) + 0.4 * wavgW(sorted, fn)
+    : wavgW(sorted, fn);
   return {
     offPts: blend(r => r.ptsFor)     - lgPts,
     defPts: blend(r => r.ptsAgainst) - lgPts,
-    games:  sorted.length,
+    games:  curOnly.length,
   };
 }
 
@@ -1209,13 +1242,22 @@ function mathBreakdown(g, proj) {
   const awayBase   = lg + 0.5 * aOff + 0.5 * hDef;
   const homeBase   = lg + 0.5 * hOff + 0.5 * aDef;
 
+  // Net matchup = this team's off + opp def (each weighted 0.5)
+  const awayNet = 0.5 * aOff + 0.5 * hDef;
+  const homeNet = 0.5 * hOff + 0.5 * aDef;
+
   const rows = [
-    { label: 'League avg pts/game',   away: lg.toFixed(1),         home: lg.toFixed(1),         aCls: '', hCls: '' },
-    { label: `${g.away.abbr} off rating`,  away: fmt(aOff),  home: '—',            aCls: cls(aOff),  hCls: '' },
-    { label: `${g.home.abbr} def rating`,  away: fmt(0.5*hDef), home: '—',         aCls: cls(0.5*hDef), hCls: '' },
-    { label: `${g.home.abbr} off rating`,  away: '—',            home: fmt(hOff),  aCls: '', hCls: cls(hOff) },
-    { label: `${g.away.abbr} def rating`,  away: '—',            home: fmt(0.5*aDef), aCls: '', hCls: cls(0.5*aDef) },
-    { label: 'Home/away factor',       away: '×0.97',              home: '×1.03',              aCls: 'neg', hCls: 'pos' },
+    { label: 'League avg pts/game',
+      away: lg.toFixed(1), home: lg.toFixed(1), aCls: '', hCls: '' },
+    { label: `Off rating (avg pts scored vs avg)`,
+      away: fmt(aOff), home: fmt(hOff), aCls: cls(aOff), hCls: cls(hOff) },
+    { label: `Def rating (avg pts allowed vs avg)`,
+      away: fmt(aDef), home: fmt(hDef),
+      aCls: cls(-aDef), hCls: cls(-hDef) },  // good defense = negative = green
+    { label: 'Net matchup edge (off vs opp def)',
+      away: fmt(awayNet), home: fmt(homeNet), aCls: cls(awayNet), hCls: cls(homeNet) },
+    { label: 'Home/away factor',
+      away: '×0.97', home: '×1.03', aCls: 'neg', hCls: 'pos' },
   ];
 
   const rowsHTML = rows.map(r => `
@@ -1292,8 +1334,8 @@ function renderGameCard(g) {
       + ' · ' + date.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' })
     : '';
 
-  const awayActualYds = g.teamYards[g.away.id] || null;
-  const homeActualYds = g.teamYards[g.home.id] || null;
+  const awayYds = g.teamYards[g.away.id] || null;
+  const homeYds = g.teamYards[g.home.id] || null;
 
   // Accuracy delta badge
   const delta = (projPts, actualPts) => {
@@ -1382,10 +1424,16 @@ function renderGameCard(g) {
                 <td class="col-away">${proj.awayRushYds}</td>
                 <td class="col-home">${proj.homeRushYds}</td>
               </tr>
-              ${g.completed ? `<tr class="row-total">
-                <td class="col-lbl">Actual total yds</td>
-                <td class="col-away">${awayActualYds ?? '—'}</td>
-                <td class="col-home">${homeActualYds ?? '—'}</td>
+              ${g.completed ? `
+              <tr class="row-total">
+                <td class="col-lbl">Actual passing</td>
+                <td class="col-away">${awayYds?.pass ?? '—'}</td>
+                <td class="col-home">${homeYds?.pass ?? '—'}</td>
+              </tr>
+              <tr class="row-total">
+                <td class="col-lbl">Actual rushing</td>
+                <td class="col-away">${awayYds?.rush ?? '—'}</td>
+                <td class="col-home">${homeYds?.rush ?? '—'}</td>
               </tr>` : ''}
             </tbody>
           </table>
