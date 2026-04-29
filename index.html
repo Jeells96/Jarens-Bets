@@ -954,7 +954,7 @@ function priorSeasonWeight(currentWeek) {
   return Math.max(0, 1 - (currentWeek - 1) / 7);
 }
 
-const CACHE_VERSION = 'v10'; // bumped — forces all old v4 cache entries to be ignored
+const CACHE_VERSION = 'v11'; // bumped — forces all old v4 cache entries to be ignored
 const CACHE_TTL_COMPLETED_MS = 1000 * 60 * 60 * 12; // 12h for completed weeks (scores won't change)
 const CACHE_TTL_ACTIVE_MS    = 1000 * 60 * 5;        // 5 min for current/future weeks
 
@@ -1075,200 +1075,136 @@ async function loadWeek() {
   state.week   = +document.getElementById('week').value;
 
   state.loading = true;
-  state.loaded = false;
+  state.loaded  = false;
   document.getElementById('load-btn').disabled = true;
   setStatus('loading', `Loading Week ${state.week}…`);
 
   try {
-    // 1. Scoreboard for the target week (to get matchups + actual scores if completed)
-    showLoader(5, 'Fetching schedule', 'site.api.espn.com');
-    const scoreboard = await cachedJSON(ESPN.scoreboard(state.season, state.week), state.season, state.week, false);
+    // ── Step 1: current week scoreboard ──────────────────────────────────────
+    showLoader(5, 'Fetching schedule', '');
+    const scoreboard = await cachedJSON(
+      ESPN.scoreboard(state.season, state.week), state.season, state.week, false
+    );
     const events = scoreboard.events || [];
 
     if (!events.length) {
-      state.games = [];
-      state.loading = false;
-      state.loaded = true;
+      state.games = []; state.loading = false; state.loaded = true;
       document.getElementById('load-btn').disabled = false;
       setStatus('err', 'No games found');
-      document.getElementById('main').innerHTML = `
-        <div class="hint">
-          <div class="icon">🤔</div>
-          <div class="title">No games for ${state.season} W${state.week}</div>
-          <div class="sub">ESPN didn't return any events. The 2026 schedule may not be published yet, or this week is outside the regular season.</div>
-        </div>`;
+      document.getElementById('main').innerHTML = `<div class="hint"><div class="icon">🤔</div>
+        <div class="title">No games for ${state.season} W${state.week}</div>
+        <div class="sub">ESPN returned no events. Try a different week.</div></div>`;
       return;
     }
 
-    const weekCompleted = events.every(ev => {
-      const comp = ev.competitions && ev.competitions[0];
-      return comp && comp.status && comp.status.type && comp.status.type.completed;
-    });
+    const weekCompleted = events.every(ev =>
+      ev.competitions?.[0]?.status?.type?.completed
+    );
 
-    // 2. Fetch current week box scores — used ONLY for actual final scores/yards after the game.
-    //    Player stats from this week are NEVER used for projections.
-    showLoader(15, `Found ${events.length} games`, 'Pulling box scores');
-    const gamesData = await mapLimit(events, 3, async (ev, idx) => {
+    // ── Step 2: current week box scores (for actual scores + actuals display) ─
+    showLoader(15, `${events.length} games found`, 'Fetching box scores…');
+    const gamesData = await mapLimit(events, 5, async (ev, idx) => {
       let summary = null;
       try {
         summary = await cachedJSON(ESPN.summary(ev.id), state.season, state.week, weekCompleted);
-      } catch (e) {
-        console.warn('summary fail', ev.id, e.message);
-      }
-      const pct = 15 + Math.round(20 * (idx + 1) / events.length);
-      showLoader(pct, 'Box scores', `${idx + 1} of ${events.length}`);
+      } catch(e) { console.warn('summary fail', ev.id); }
+      showLoader(15 + Math.round(25 * (idx+1) / events.length), 'Box scores', `${idx+1}/${events.length}`);
       return { event: ev, summary };
     });
 
-    // 3. Prior data: current season weeks 1..N-1 + prior season (blended, tapering off)
-    //    Prior season weight: 100% at week 1, 0% at week 8+
-    state.priorWeeks = {};
+    // ── Step 3: prior weeks scoreboards (team score history) ─────────────────
+    state.priorWeeks      = {};
     state.priorPlayerStats = {};
 
-    const prevSeason      = state.season - 1;
-    const psWeight        = priorSeasonWeight(state.week); // 0..1
-    const currentWks      = state.week > 1 ? Array.from({length: state.week - 1}, (_,i) => i+1) : [];
-
-    // Helper: ingest a box score summary into priorPlayerStats
-    // weightMult: 1.0 for current season, psWeight for prior season
-    function ingestSummary(summary, teamIdOverride, weightMult) {
-      if (!summary?.boxscore?.players) return;
-      for (const teamBlock of summary.boxscore.players) {
-        const teamId  = teamIdOverride ?? (teamBlock.team && teamBlock.team.id);
-        const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
-        for (const grp of (teamBlock.statistics || [])) {
-          const cat = grp.name;
-          if (!['passing','rushing','receiving'].includes(cat)) continue;
-          const labels = grp.labels || [];
-          const ydsIdx = labels.findIndex(l => l === 'YDS');
-          const tdIdx  = labels.findIndex(l => l === 'TD');
-          for (const ath of (grp.athletes || [])) {
-            const a = ath.athlete || {};
-            if (!a.id) continue;
-            const stats = ath.stats || [];
-            const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
-            const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
-            // Derive position from stat category only if ESPN doesn't send it
-            // Never downgrade a known position (e.g. RB appearing in receiving block stays RB)
-            const espnPos = (a.position && a.position.abbreviation) || '';
-            const catPos  = cat === 'passing' ? 'QB' : cat === 'rushing' ? 'RB' : 'WR'; // receiving → WR as fallback only
-            const inferredPos = espnPos || catPos;
-
-            if (!state.priorPlayerStats[a.id]) {
-              state.priorPlayerStats[a.id] = {
-                id: a.id,
-                name: a.displayName || a.shortName || '',
-                team: teamId, abbr: teamAbbr,
-                position: inferredPos,
-                games: 0,
-                passYds: 0, rushYds: 0, recYds: 0,
-                passTds: 0, rushTds: 0, recTds: 0,
-              };
-            }
-            const ps = state.priorPlayerStats[a.id];
-            ps.team = teamId; ps.abbr = teamAbbr;
-            // Only upgrade position if: we had none, OR we have the ESPN source (espnPos)
-            // Never overwrite a real ESPN position with a category-inferred one
-            if (!ps.position && inferredPos) ps.position = inferredPos;
-            else if (espnPos && ps.position !== espnPos) ps.position = espnPos;
-
-            // Accumulate stats with weight
-            if (cat === 'passing')        { ps.passYds += yds * weightMult; ps.passTds += tds * weightMult; }
-            else if (cat === 'rushing')   { ps.rushYds += yds * weightMult; ps.rushTds += tds * weightMult; }
-            else if (cat === 'receiving') { ps.recYds  += yds * weightMult; ps.recTds  += tds * weightMult; }
-
-            // Count game once per player per stat category that matches their position
-            const pos = ps.position;
-            if (cat === 'passing'   && (pos === 'QB'))           ps.games += weightMult;
-            else if (cat === 'rushing'   && (pos === 'RB'))      ps.games += weightMult;
-            else if (cat === 'receiving' && (pos === 'WR' || pos === 'TE' || pos === 'FB')) ps.games += weightMult;
-          }
-        }
-      }
-    }
-
-    // Helper: ingest scoreboard into priorWeeks
-    function ingestScoreboard(data, weekLabel, weightMult, eventsOut) {
-      if (!data?.events) return;
-      for (const ev of data.events) {
-        const comp = ev.competitions?.[0];
-        if (!comp?.status?.type?.completed) continue;
-        const cs   = comp.competitors || [];
-        const home = cs.find(c => c.homeAway === 'home');
-        const away = cs.find(c => c.homeAway === 'away');
-        if (!home || !away) continue;
-        const homeScore = +home.score || 0;
-        const awayScore = +away.score || 0;
-        if (!state.priorWeeks[home.team.id]) state.priorWeeks[home.team.id] = [];
-        if (!state.priorWeeks[away.team.id]) state.priorWeeks[away.team.id] = [];
-        // Store weighted score entries (weight embedded so wavg uses correct values)
-        state.priorWeeks[home.team.id].push({ week: weekLabel, ptsFor: homeScore, ptsAgainst: awayScore, w: weightMult });
-        state.priorWeeks[away.team.id].push({ week: weekLabel, ptsFor: awayScore, ptsAgainst: homeScore, w: weightMult });
-        if (eventsOut) eventsOut.push({ id: ev.id, week: weekLabel });
-      }
-    }
-
-    // 3a. Prior season (weeks 1–18) — only fetch if psWeight > 0
-    if (psWeight > 0) {
-      showLoader(30, 'Loading prior season', `${prevSeason}`);
-      const prevWeekNums = Array.from({length: 18}, (_,i) => i+1);
-      const prevBoards = await mapLimit(prevWeekNums, 4, async (w, idx) => {
-        let data = null;
-        try { data = await cachedJSON(ESPN.priorSeasonScoreboard(prevSeason, w), prevSeason, w, true); }
-        catch(e) { console.warn('prev season scoreboard fail', prevSeason, w); }
-        showLoader(30 + Math.round(10*(idx+1)/prevWeekNums.length), 'Prior season scoreboards', `${prevSeason} W${w}`);
-        return { week: w, data };
-      });
-      const prevEventIds = [];
-      for (const { week: w, data } of prevBoards) ingestScoreboard(data, -w, psWeight, prevEventIds);
-
-      // Only fetch player summaries from last 4 weeks of prior season
-      const prevRecentEventIds = prevEventIds.filter(({ week: w }) => Math.abs(w) >= 15);
-      showLoader(40, 'Prior season player stats', `0 of ${prevRecentEventIds.length}`);
-      await mapLimit(prevRecentEventIds, 6, async ({ id: evId, week: evW }, idx) => {
-        let summary = null;
-        try { summary = await cachedJSON(ESPN.summary(evId), prevSeason, Math.abs(evW), true); }
-        catch(e) { console.warn('prev season summary fail', evId); }
-        showLoader(40 + Math.round(12*(idx+1)/Math.max(1,prevRecentEventIds.length)), 'Prior season players', `${idx+1}/${prevRecentEventIds.length}`);
-        ingestSummary(summary, null, psWeight);
-      });
-    }
-
-    // 3b. Current season weeks 1..N-1
-    if (currentWks.length) {
-      showLoader(53, 'Loading current season', `weeks 1–${state.week-1}`);
-      const curBoards = await mapLimit(currentWks, 4, async (w, idx) => {
+    if (state.week > 1) {
+      const priorWks = Array.from({length: state.week - 1}, (_, i) => i + 1);
+      showLoader(42, 'Prior scoreboards', `weeks 1–${state.week - 1}`);
+      const boards = await mapLimit(priorWks, 6, async (w, idx) => {
         let data = null;
         try { data = await cachedJSON(ESPN.scoreboard(state.season, w), state.season, w, true); }
-        catch(e) { console.warn('cur scoreboard fail', w); }
-        showLoader(53 + Math.round(10*(idx+1)/currentWks.length), 'Current season scoreboards', `W${w}`);
+        catch(e) { console.warn('prior board fail', w); }
+        showLoader(42 + Math.round(18 * (idx+1) / priorWks.length), 'Scoreboards', `W${w}`);
         return { week: w, data };
       });
-      const curEventIds = [];
-      for (const { week: w, data } of curBoards) ingestScoreboard(data, w, 1.0, curEventIds);
 
-      // Cap: only fetch player summaries for the 3 most recent weeks to limit requests
-      const recentWeeks = currentWks.slice(-3);
-      const recentEventIds = curEventIds.filter(({ week: w }) => recentWeeks.includes(w));
-      const allEventIds = recentEventIds; // use recent only; older weeks contribute via score history
-      showLoader(63, 'Current season player stats', `0 of ${allEventIds.length}`);
-      await mapLimit(allEventIds, 6, async ({ id: evId, week: evW }, idx) => {
+      const allPriorEventIds = [];
+      for (const { week: w, data } of boards) {
+        if (!data?.events) continue;
+        for (const ev of data.events) {
+          const comp = ev.competitions?.[0];
+          if (!comp?.status?.type?.completed) continue;
+          const cs   = comp.competitors || [];
+          const home = cs.find(c => c.homeAway === 'home');
+          const away = cs.find(c => c.homeAway === 'away');
+          if (!home || !away) continue;
+          const hScore = +home.score || 0;
+          const aScore = +away.score || 0;
+          if (!state.priorWeeks[home.team.id]) state.priorWeeks[home.team.id] = [];
+          if (!state.priorWeeks[away.team.id]) state.priorWeeks[away.team.id] = [];
+          state.priorWeeks[home.team.id].push({ week: w, ptsFor: hScore, ptsAgainst: aScore, w: 1 });
+          state.priorWeeks[away.team.id].push({ week: w, ptsFor: aScore, ptsAgainst: hScore, w: 1 });
+          allPriorEventIds.push({ id: ev.id, week: w });
+        }
+      }
+
+      // ── Step 4: player summaries — ONLY last 3 weeks to keep it fast ────────
+      const recentWks    = priorWks.slice(-3);
+      const recentEvents = allPriorEventIds.filter(e => recentWks.includes(e.week));
+      showLoader(62, 'Player stats', `${recentEvents.length} games (last 3 wks)`);
+      await mapLimit(recentEvents, 6, async ({ id: evId, week: evW }, idx) => {
         let summary = null;
         try { summary = await cachedJSON(ESPN.summary(evId), state.season, evW, true); }
-        catch(e) { console.warn('cur summary fail', evId); }
-        showLoader(63 + Math.round(27*(idx+1)/Math.max(1,allEventIds.length)), 'Player stats', `${idx+1}/${allEventIds.length}`);
-        ingestSummary(summary, null, 1.0);
+        catch(e) { console.warn('player summary fail', evId); }
+        showLoader(62 + Math.round(28 * (idx+1) / Math.max(1, recentEvents.length)), 'Player stats', `${idx+1}/${recentEvents.length}`);
+        if (!summary?.boxscore?.players) return;
+        for (const teamBlock of summary.boxscore.players) {
+          const teamId   = teamBlock.team?.id;
+          const teamAbbr = teamBlock.team?.abbreviation;
+          for (const grp of (teamBlock.statistics || [])) {
+            const cat = grp.name;
+            if (!['passing','rushing','receiving'].includes(cat)) continue;
+            const labels = grp.labels || [];
+            const ydsIdx = labels.findIndex(l => l === 'YDS');
+            const tdIdx  = labels.findIndex(l => l === 'TD');
+            for (const ath of (grp.athletes || [])) {
+              const a    = ath.athlete || {};
+              if (!a.id) continue;
+              const stats = ath.stats || [];
+              const yds  = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
+              const tds  = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
+              const espnPos    = a.position?.abbreviation || '';
+              const inferredPos = espnPos || (cat === 'passing' ? 'QB' : cat === 'rushing' ? 'RB' : 'WR');
+              if (!state.priorPlayerStats[a.id]) {
+                state.priorPlayerStats[a.id] = {
+                  id: a.id, name: a.displayName || a.shortName || '',
+                  team: teamId, abbr: teamAbbr, position: inferredPos,
+                  games: 0, passYds: 0, rushYds: 0, recYds: 0,
+                  passTds: 0, rushTds: 0, recTds: 0,
+                };
+              }
+              const ps = state.priorPlayerStats[a.id];
+              ps.team = teamId; ps.abbr = teamAbbr;
+              if (espnPos && ps.position !== espnPos) ps.position = espnPos;
+              if (cat === 'passing')        { ps.passYds += yds; ps.passTds += tds; }
+              else if (cat === 'rushing')   { ps.rushYds += yds; ps.rushTds += tds; }
+              else if (cat === 'receiving') { ps.recYds  += yds; ps.recTds  += tds; }
+              const pos = ps.position;
+              if      (cat === 'passing'   && pos === 'QB')                      ps.games++;
+              else if (cat === 'rushing'   && pos === 'RB')                      ps.games++;
+              else if (cat === 'receiving' && (pos === 'WR'||pos === 'TE'||pos === 'FB')) ps.games++;
+            }
+          }
+        }
       });
     }
 
-    // 4. Build game objects (actual scores from current week, projections from prior data)
+    // ── Step 5: build + render ────────────────────────────────────────────────
     showLoader(92, 'Computing projections', '');
     state.games = gamesData.map(g => buildGame(g.event, g.summary)).filter(Boolean);
-
     showLoader(100, 'Done', '');
     setStatus('live', `Week ${state.week} loaded`, `${state.games.length} games`);
     state.loading = false;
-    state.loaded = true;
+    state.loaded  = true;
     document.getElementById('load-btn').disabled = false;
     render();
 
@@ -1281,17 +1217,12 @@ async function loadWeek() {
       <div class="error-panel">
         <h4>Could not load data</h4>
         <p><b>Error:</b> ${(err && err.message) || err || 'unknown'}</p>
-        <p>This app uses ESPN's public API. Common causes:</p>
-        <ul style="font-size:12px;color:var(--ink-faint);line-height:1.7;margin:0 0 10px 18px;padding:0">
-          <li>Captive WiFi / no internet</li>
-          <li>Safari Private Relay blocking the request</li>
-          <li>Content blocker rule for site.api.espn.com</li>
-          <li>ESPN API briefly down (rare)</li>
-        </ul>
+        <p>This app uses ESPN's public API. Common causes: no internet, Safari Private Relay, content blocker, or ESPN API down.</p>
         <button onclick="localStorage.clear();location.reload()">Clear cache &amp; retry</button>
       </div>`;
   }
 }
+
 
 // ============================================================================
 // Build game object
