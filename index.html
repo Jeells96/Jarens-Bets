@@ -265,7 +265,12 @@ font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 11px;
 color: var(–ink-dim);
 }
-.total-proj { text-align: right; }
+.total-proj {
+text-align: right;
+display: flex;
+flex-direction: column;
+align-items: flex-end;
+}
 .total-proj .num {
 font-family: ui-serif, Georgia, serif;
 font-weight: 700;
@@ -277,9 +282,10 @@ color: var(–accent);
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 9px;
 color: var(–ink-faint);
-letter-spacing: 0.12em;
+letter-spacing: 0.08em;
 text-transform: uppercase;
-margin-top: 4px;
+margin-top: 3px;
+align-self: flex-end;
 }
 
 .team-totals {
@@ -744,7 +750,7 @@ function priorSeasonWeight(currentWeek) {
   return Math.max(0, 1 - (currentWeek - 1) / 7);
 }
 
-const CACHE_VERSION = 'v6'; // bumped — forces all old v4 cache entries to be ignored
+const CACHE_VERSION = 'v7'; // bumped — forces all old v4 cache entries to be ignored
 const CACHE_TTL_COMPLETED_MS = 1000 * 60 * 60 * 12; // 12h for completed weeks (scores won't change)
 const CACHE_TTL_ACTIVE_MS    = 1000 * 60 * 5;        // 5 min for current/future weeks
 
@@ -941,12 +947,16 @@ async function loadWeek() {
             const stats = ath.stats || [];
             const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
             const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
+            // Derive position from stat category if ESPN doesn't send it
+            const espnPos = (a.position && a.position.abbreviation) || '';
+            const inferredPos = espnPos || (cat === 'passing' ? 'QB' : cat === 'rushing' ? 'RB' : cat === 'receiving' ? 'WR' : '');
+
             if (!state.priorPlayerStats[a.id]) {
               state.priorPlayerStats[a.id] = {
                 id: a.id,
                 name: a.displayName || a.shortName || '',
                 team: teamId, abbr: teamAbbr,
-                position: (a.position && a.position.abbreviation) || '',
+                position: inferredPos,
                 games: 0,
                 passYds: 0, rushYds: 0, recYds: 0,
                 passTds: 0, rushTds: 0, recTds: 0,
@@ -954,14 +964,19 @@ async function loadWeek() {
             }
             const ps = state.priorPlayerStats[a.id];
             ps.team = teamId; ps.abbr = teamAbbr;
-            // Apply weight — prior season stats count fractionally
+            // Upgrade position if we now have a real one
+            if (!ps.position && inferredPos) ps.position = inferredPos;
+
+            // Accumulate stats with weight
             if (cat === 'passing')        { ps.passYds += yds * weightMult; ps.passTds += tds * weightMult; }
             else if (cat === 'rushing')   { ps.rushYds += yds * weightMult; ps.rushTds += tds * weightMult; }
             else if (cat === 'receiving') { ps.recYds  += yds * weightMult; ps.recTds  += tds * weightMult; }
-            // Game counter — weighted so prior season games count fractionally
-            if (cat === 'passing')        { if (ps.position === 'QB' || ps.position === '') ps.games += weightMult; }
-            else if (cat === 'rushing')   { if (ps.position === 'RB') ps.games += weightMult; }
-            else if (cat === 'receiving') { if (ps.position === 'WR' || ps.position === 'TE') ps.games += weightMult; }
+
+            // Count game once per player per stat category that matches their position
+            const pos = ps.position;
+            if (cat === 'passing'   && (pos === 'QB'))           ps.games += weightMult;
+            else if (cat === 'rushing'   && (pos === 'RB'))      ps.games += weightMult;
+            else if (cat === 'receiving' && (pos === 'WR' || pos === 'TE' || pos === 'FB')) ps.games += weightMult;
           }
         }
       }
@@ -1475,7 +1490,9 @@ function renderPlayerSections(g, proj) {
   const homeR = teamRatings(g.home.id, lg.pts);
 
   const relevantPlayers = Object.values(state.priorPlayerStats)
-    .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position));
+    .filter(ps => teamIds.includes(ps.team)
+      && ['QB','RB','WR','TE','FB'].includes(ps.position)
+      && ps.games > 0.1);
 
   const out = [];
   for (const pos of ['QB','RB','WR','TE']) {
@@ -1541,7 +1558,7 @@ function renderTDSection(g) {
   const homeR = teamRatings(g.home.id, lg.pts);
 
   const candidates = Object.values(state.priorPlayerStats)
-    .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position) && ps.games > 0)
+    .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE','FB'].includes(ps.position) && ps.games > 0.1)
     .map(ps => {
       const isAway  = ps.team === g.away.id;
       const oppRat  = isAway ? homeR : awayR;
