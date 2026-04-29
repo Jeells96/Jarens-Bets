@@ -239,6 +239,7 @@ background: var(–bg-2);
 border: 1px solid var(–line);
 border-radius: 12px;
 overflow: hidden;
+cursor: pointer;
 }
 .game-head {
 padding: 14px 16px 12px;
@@ -246,7 +247,6 @@ display: flex;
 align-items: center;
 justify-content: space-between;
 border-bottom: 1px solid var(–line);
-cursor: pointer;
 }
 .matchup { display: flex; flex-direction: column; gap: 2px; }
 .matchup .teams {
@@ -423,25 +423,28 @@ text-align: right;
 .game-body { display: none; }
 .game.open .game-body { display: block; }
 
-.reason-block {
-padding: 10px 12px;
-background: var(–bg-3);
-border-radius: 8px;
-border-left: 2px solid var(–line-2);
-}
-.reason-team {
+.math-table {
+width: 100%;
+border-collapse: collapse;
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
-font-size: 11px;
-font-weight: 700;
-color: var(–accent);
-margin-bottom: 5px;
-letter-spacing: 0.04em;
+font-size: 12px;
 }
-.reason-text {
-font-size: 13px;
-color: var(–ink-dim);
-line-height: 1.55;
+.math-table td {
+padding: 6px 8px;
+border-bottom: 1px solid var(–line);
+vertical-align: middle;
 }
+.math-table tr:last-child td { border-bottom: none; }
+.math-table .col-lbl { color: var(–ink-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+.math-table .col-away { text-align: center; font-weight: 700; color: var(–ink); }
+.math-table .col-home { text-align: center; font-weight: 700; color: var(–ink); }
+.math-table .col-away.pos { color: var(–accent); }
+.math-table .col-away.neg { color: var(–hot); }
+.math-table .col-home.pos { color: var(–accent); }
+.math-table .col-home.neg { color: var(–hot); }
+.math-table .row-total td { background: var(–bg-3); font-weight: 700; font-size: 13px; }
+.math-table .row-total .col-lbl { color: var(–ink); }
+.math-sep { height: 1px; background: var(–line-2); margin: 2px 0; }
 .game-head .caret {
 color: var(–ink-faint);
 font-size: 12px;
@@ -1189,47 +1192,72 @@ function projectGame(g) {
   };
 }
 
-// Plain-English reasoning for a team's score projection
-function scoreReasoning(teamAbbr, teamRat, oppRat, projPts, lgPts, isHome) {
-  if (!teamRat || !oppRat) return `${teamAbbr} projected at league average — no prior data yet.`;
-  const lines = [];
-  const fmt = n => (n >= 0 ? '+' : '') + n.toFixed(1);
+// Color-coded math breakdown for score projection
+function mathBreakdown(g, proj) {
+  if (!proj.aRat || !proj.hRat) return '';
+  const lg    = proj.lgPts;
+  const aOff  = proj.aRat.offPts;
+  const aDef  = proj.aRat.defPts;
+  const hOff  = proj.hRat.offPts;
+  const hDef  = proj.hRat.defPts;
 
-  // Offense line
-  if (Math.abs(teamRat.offPts) >= 2) {
-    const word = teamRat.offPts > 0 ? 'above-average offense' : 'below-average offense';
-    lines.push(`${teamAbbr} has an ${word} (${fmt(teamRat.offPts)} pts/game vs league avg).`);
-  } else {
-    lines.push(`${teamAbbr}'s offense is around league average.`);
-  }
+  const fmt = (n, decimals=1) => (n >= 0 ? '+' : '') + n.toFixed(decimals);
+  const cls = (n) => Math.abs(n) < 0.5 ? '' : n > 0 ? 'pos' : 'neg';
 
-  // Defense they're facing
-  if (Math.abs(oppRat.defPts) >= 2) {
-    const oppWord = oppRat.defPts > 0 ? 'gives up more points than average' : 'holds teams below average';
-    lines.push(`Their opponent ${oppWord} (${fmt(oppRat.defPts)} pts/game allowed vs avg).`);
-  } else {
-    lines.push(`Their opponent's defense is around league average.`);
-  }
+  // Away score math: lg + 0.5*aOff + 0.5*hDef, then ×0.97
+  // Home score math: lg + 0.5*hOff + 0.5*aDef, then ×1.03
+  const awayBase   = lg + 0.5 * aOff + 0.5 * hDef;
+  const homeBase   = lg + 0.5 * hOff + 0.5 * aDef;
 
-  // Net effect
-  const net = 0.5 * teamRat.offPts + 0.5 * oppRat.defPts;
-  if (net > 3) lines.push(`Combined, this is a favourable matchup — scoring above average is likely.`);
-  else if (net < -3) lines.push(`Combined, this is a tough matchup — expect a lower-scoring game.`);
-  else lines.push(`The matchup is roughly neutral — projecting close to average output.`);
+  const rows = [
+    { label: 'League avg pts/game',   away: lg.toFixed(1),         home: lg.toFixed(1),         aCls: '', hCls: '' },
+    { label: `${g.away.abbr} off rating`,  away: fmt(aOff),  home: '—',            aCls: cls(aOff),  hCls: '' },
+    { label: `${g.home.abbr} def rating`,  away: fmt(0.5*hDef), home: '—',         aCls: cls(0.5*hDef), hCls: '' },
+    { label: `${g.home.abbr} off rating`,  away: '—',            home: fmt(hOff),  aCls: '', hCls: cls(hOff) },
+    { label: `${g.away.abbr} def rating`,  away: '—',            home: fmt(0.5*aDef), aCls: '', hCls: cls(0.5*aDef) },
+    { label: 'Home/away factor',       away: '×0.97',              home: '×1.03',              aCls: 'neg', hCls: 'pos' },
+  ];
 
-  // Home/away note
-  lines.push(isHome ? `Home field adds a small boost (+3%).` : `Away games trend slightly lower (-3%).`);
+  const rowsHTML = rows.map(r => `
+    <tr>
+      <td class="col-lbl">${r.label}</td>
+      <td class="col-away ${r.aCls}">${r.away}</td>
+      <td class="col-home ${r.hCls}">${r.home}</td>
+    </tr>`).join('');
 
-  return lines.join(' ');
-}
+  const aAccuracy = g.completed ? (() => {
+    const d = Math.abs(proj.awayPts - g.away.score);
+    const c = d <= 3 ? 'var(--accent)' : d <= 7 ? 'var(--warn)' : 'var(--hot)';
+    return `<span style="font-size:10px;color:${c};margin-left:6px">Δ${d.toFixed(0)}</span>`;
+  })() : '';
+  const hAccuracy = g.completed ? (() => {
+    const d = Math.abs(proj.homePts - g.home.score);
+    const c = d <= 3 ? 'var(--accent)' : d <= 7 ? 'var(--warn)' : 'var(--hot)';
+    return `<span style="font-size:10px;color:${c};margin-left:6px">Δ${d.toFixed(0)}</span>`;
+  })() : '';
 
-// ============================================================================
-// Render
-// ============================================================================
-function render() {
-  const main = document.getElementById('main');
-  if (!state.loaded) return;
-  state.activeTab === 'summary' ? renderSummary(main) : renderGames(main);
+  return `
+    <div class="section">
+      <h4>Score projection math</h4>
+      <table class="math-table">
+        <thead>
+          <tr>
+            <td class="col-lbl"></td>
+            <td class="col-lbl" style="text-align:center">${g.away.abbr}</td>
+            <td class="col-lbl" style="text-align:center">${g.home.abbr}</td>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHTML}
+          <tr class="row-total">
+            <td class="col-lbl">Projection</td>
+            <td class="col-away">${proj.awayPts.toFixed(1)}${aAccuracy}</td>
+            <td class="col-home">${proj.homePts.toFixed(1)}${hAccuracy}</td>
+          </tr>
+          ${g.completed ? `<tr class="row-total"><td class="col-lbl">Actual</td><td class="col-away">${g.away.score}</td><td class="col-home">${g.home.score}</td></tr>` : ''}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function renderGames(main) {
@@ -1241,8 +1269,9 @@ function renderGames(main) {
   for (const g of state.games) html += renderGameCard(g);
   html += '</div>';
   main.innerHTML = html;
-  main.querySelectorAll('.game-head').forEach(h => {
-    h.addEventListener('click', () => h.closest('.game').classList.toggle('open'));
+  // Whole card is clickable
+  main.querySelectorAll('.game').forEach(card => {
+    card.addEventListener('click', () => card.classList.toggle('open'));
   });
 }
 
@@ -1251,7 +1280,7 @@ function renderGameCard(g) {
   if (!proj) return '';
 
   const actualTotal = g.completed ? (g.away.score + g.home.score) : null;
-  const date = g.date ? new Date(g.date) : null;
+  const date    = g.date ? new Date(g.date) : null;
   const kickoff = date && !isNaN(date)
     ? date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })
       + ' · ' + date.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' })
@@ -1260,22 +1289,18 @@ function renderGameCard(g) {
   const awayActualYds = g.teamYards[g.away.id] || null;
   const homeActualYds = g.teamYards[g.home.id] || null;
 
-  // Score accuracy indicator (only for completed games)
-  function accuracyBadge(projPts, actualPts) {
+  // Accuracy delta badge
+  const delta = (projPts, actualPts) => {
     if (actualPts == null) return '';
-    const diff = Math.abs(projPts - actualPts);
-    const color = diff <= 3 ? 'var(--accent)' : diff <= 7 ? 'var(--warn)' : 'var(--hot)';
-    const label = diff <= 3 ? `within ${diff.toFixed(0)} pts` : diff <= 7 ? `off by ${diff.toFixed(0)}` : `off by ${diff.toFixed(0)}`;
-    return `<div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9px;color:${color};margin-top:3px">${label}</div>`;
-  }
-
-  const awayReason = scoreReasoning(g.away.abbr, proj.aRat, proj.hRat, proj.awayPts, proj.lgPts, false);
-  const homeReason = scoreReasoning(g.home.abbr, proj.hRat, proj.aRat, proj.homePts, proj.lgPts, true);
+    const d = Math.abs(projPts - actualPts);
+    const c = d <= 3 ? 'var(--accent)' : d <= 7 ? 'var(--warn)' : 'var(--hot)';
+    return `<span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9px;color:${c}">Δ${d.toFixed(0)}</span>`;
+  };
 
   return `
     <div class="game" data-id="${g.id}">
 
-      <!-- Card face: matchup + projected total only -->
+      <!-- Header row: matchup + projected total + caret -->
       <div class="game-head">
         <div class="matchup">
           <div class="teams">${g.away.abbr}<span class="at">@</span>${g.home.abbr}</div>
@@ -1284,13 +1309,13 @@ function renderGameCard(g) {
         <div style="display:flex;align-items:center;gap:10px">
           <div class="total-proj">
             <div class="num">${proj.total.toFixed(1)}</div>
-            <div class="lbl">proj pts${actualTotal != null ? ` · ${actualTotal} actual` : ''}</div>
+            <div class="lbl">proj${actualTotal != null ? ` · ${actualTotal} actual` : ''}</div>
           </div>
           <span class="caret">▾</span>
         </div>
       </div>
 
-      <!-- Score comparison -->
+      <!-- Score row: proj → actual, side by side, always visible -->
       <div class="team-totals">
         <div class="tt away">
           <div class="team">${g.away.abbr} <span style="font-weight:400;color:var(--ink-faint);font-size:10px">away</span></div>
@@ -1298,8 +1323,13 @@ function renderGameCard(g) {
             <div class="proj-pts">${proj.awayPts.toFixed(1)}</div>
             <div class="proj-lbl">proj</div>
           </div>
-          ${g.completed ? `<div class="actual-row"><div class="actual-pts">${g.away.score}</div><div class="actual-lbl">actual</div></div>` : ''}
-          ${g.completed ? accuracyBadge(proj.awayPts, g.away.score) : ''}
+          ${g.completed
+            ? `<div class="actual-row">
+                 <div class="actual-pts">${g.away.score}</div>
+                 <div class="actual-lbl">actual</div>
+                 ${delta(proj.awayPts, g.away.score)}
+               </div>`
+            : ''}
         </div>
         <div class="divider"></div>
         <div class="tt home">
@@ -1308,52 +1338,51 @@ function renderGameCard(g) {
             <div class="proj-pts">${proj.homePts.toFixed(1)}</div>
             <div class="proj-lbl">proj</div>
           </div>
-          ${g.completed ? `<div class="actual-row"><div class="actual-pts">${g.home.score}</div><div class="actual-lbl">actual</div></div>` : ''}
-          ${g.completed ? accuracyBadge(proj.homePts, g.home.score) : ''}
+          ${g.completed
+            ? `<div class="actual-row">
+                 <div class="actual-pts">${g.home.score}</div>
+                 <div class="actual-lbl">actual</div>
+                 ${delta(proj.homePts, g.home.score)}
+               </div>`
+            : ''}
         </div>
       </div>
 
-      <!-- Expandable detail -->
+      <!-- Expandable on tap anywhere on card -->
       <div class="game-body">
 
-        <!-- Why these scores -->
-        <div class="section">
-          <h4>Why these projections</h4>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            <div class="reason-block">
-              <div class="reason-team">${g.away.abbr} · ${proj.awayPts.toFixed(1)} proj</div>
-              <div class="reason-text">${awayReason}</div>
-            </div>
-            <div class="reason-block">
-              <div class="reason-team">${g.home.abbr} · ${proj.homePts.toFixed(1)} proj</div>
-              <div class="reason-text">${homeReason}</div>
-            </div>
-          </div>
-        </div>
+        <!-- Math breakdown table -->
+        ${mathBreakdown(g, proj)}
 
-        <!-- Yardage breakdown -->
+        <!-- Projected yardage -->
         <div class="section">
           <h4>Projected yardage</h4>
-          <div class="detail-grid">
-            <div class="detail-cell">
-              <div class="detail-lbl">${g.away.abbr} passing</div>
-              <div class="detail-val">${proj.awayPassYds}<span class="sub">proj yds</span></div>
-            </div>
-            <div class="detail-cell right">
-              <div class="detail-lbl">${g.home.abbr} passing</div>
-              <div class="detail-val">${proj.homePassYds}<span class="sub">proj yds</span></div>
-            </div>
-            <div class="detail-cell">
-              <div class="detail-lbl">${g.away.abbr} rushing</div>
-              <div class="detail-val">${proj.awayRushYds}<span class="sub">proj yds</span></div>
-            </div>
-            <div class="detail-cell right">
-              <div class="detail-lbl">${g.home.abbr} rushing</div>
-              <div class="detail-val">${proj.homeRushYds}<span class="sub">proj yds</span></div>
-            </div>
-            ${g.completed && awayActualYds ? `<div class="detail-cell"><div class="detail-lbl">${g.away.abbr} actual yds</div><div class="detail-val">${awayActualYds}<span class="sub">yds</span></div></div>` : ''}
-            ${g.completed && homeActualYds ? `<div class="detail-cell right"><div class="detail-lbl">${g.home.abbr} actual yds</div><div class="detail-val">${homeActualYds}<span class="sub">yds</span></div></div>` : ''}
-          </div>
+          <table class="math-table">
+            <thead>
+              <tr>
+                <td class="col-lbl"></td>
+                <td class="col-lbl" style="text-align:center">${g.away.abbr}</td>
+                <td class="col-lbl" style="text-align:center">${g.home.abbr}</td>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="col-lbl">Proj passing</td>
+                <td class="col-away">${proj.awayPassYds}</td>
+                <td class="col-home">${proj.homePassYds}</td>
+              </tr>
+              <tr>
+                <td class="col-lbl">Proj rushing</td>
+                <td class="col-away">${proj.awayRushYds}</td>
+                <td class="col-home">${proj.homeRushYds}</td>
+              </tr>
+              ${g.completed ? `<tr class="row-total">
+                <td class="col-lbl">Actual total yds</td>
+                <td class="col-away">${awayActualYds ?? '—'}</td>
+                <td class="col-home">${homeActualYds ?? '—'}</td>
+              </tr>` : ''}
+            </tbody>
+          </table>
         </div>
 
         ${renderPlayerSections(g, proj)}
