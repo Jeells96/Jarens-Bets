@@ -674,7 +674,7 @@ margin: 0 auto 12px;
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <div class="tag">NFL · v2</div>
+    <div class="tag">NFL · v2.1</div>
   </div>
   <div class="controls">
     <div class="control">
@@ -1258,6 +1258,12 @@ function mathBreakdown(g, proj) {
         </tbody>
       </table>
     </div>`;
+}
+
+function render() {
+  const main = document.getElementById("main");
+  if (!state.loaded) return;
+  state.activeTab === "summary" ? renderSummary(main) : renderGames(main);
 }
 
 function renderGames(main) {
