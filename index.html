@@ -1060,71 +1060,95 @@ function buildGame(event, summary) {
 }
 
 // ============================================================================
-// Projection
+// Projection engine — off/def matchup model, pass/rush split
 // ============================================================================
-const LEAGUE_AVG_PTS = 22.5;
-const LEAGUE_AVG_YDS = 340;
+const LEAGUE_AVG_PTS      = 22.5;
+const LEAGUE_AVG_PASS_YDS = 230;
+const LEAGUE_AVG_RUSH_YDS = 110;
 
-function getLeagueAvgPts() {
-  const all = [];
-  for (const teamId in state.priorWeeks) {
-    for (const w of state.priorWeeks[teamId]) all.push(w.ptsFor);
-  }
-  if (all.length < 8) return LEAGUE_AVG_PTS;
-  return all.reduce((s, x) => s + x, 0) / all.length;
+function leagueAvgs() {
+  const pts = [];
+  for (const teamId in state.priorWeeks)
+    for (const w of state.priorWeeks[teamId]) pts.push(w.ptsFor);
+  const avg = arr => arr.length >= 4 ? arr.reduce((s,x)=>s+x,0)/arr.length : null;
+  return { pts: avg(pts) ?? LEAGUE_AVG_PTS };
 }
 
-function projectTeam(teamId) {
+function wavg(arr, fn) {
+  let sum = 0, w = 0;
+  arr.forEach((r, i) => { const wt = i + 1; sum += fn(r) * wt; w += wt; });
+  return w ? sum / w : 0;
+}
+
+function teamRatings(teamId, lgPts) {
   const prior = state.priorWeeks[teamId] || [];
-  if (!prior.length) return { offRating: 0, defRating: 0, games: 0 };
-  const sorted = prior.slice().sort((a, b) => a.week - b.week);
-  const last4 = sorted.slice(-4);
-  const avg = (arr, fn) => arr.length ? arr.reduce((s, r) => s + fn(r), 0) / arr.length : 0;
-  const ptsFor = 0.6 * avg(last4, r => r.ptsFor) + 0.4 * avg(sorted, r => r.ptsFor);
-  const ptsAg  = 0.6 * avg(last4, r => r.ptsAgainst) + 0.4 * avg(sorted, r => r.ptsAgainst);
-  const lg = getLeagueAvgPts();
+  if (!prior.length) return null;
+  const sorted = prior.slice().sort((a,b) => a.week - b.week);
+  const last4  = sorted.slice(-4);
+  const blend  = fn => 0.6 * wavg(last4, fn) + 0.4 * wavg(sorted, fn);
   return {
-    offRating: ptsFor - lg,
-    defRating: ptsAg - lg,
-    rawPtsFor: ptsFor,
-    rawPtsAg: ptsAg,
-    games: sorted.length,
+    offPts: blend(r => r.ptsFor)     - lgPts,
+    defPts: blend(r => r.ptsAgainst) - lgPts,
+    games:  sorted.length,
   };
 }
+
+// Per-player yards allowed to each position by a given opponent team
+// oppTeamId: the defending team; returns avg yds per game allowed to pos
+function avgYdsAllowedToPos(oppTeamId, pos) {
+  // We don't have direct per-game opp data in priorPlayerStats,
+  // so compute league avg output for this pos as baseline,
+  // then scale by oppTeam's overall defPts rating
+  const players = Object.values(state.priorPlayerStats)
+    .filter(ps => ps.position === pos && ps.games > 0);
+  if (!players.length) return null;
+  const leagueAvgYds = players.reduce((s, ps) => s + getPriorYds(ps, pos), 0) / players.length;
+  return leagueAvgYds;
+}
+
+function getLeagueAvgPts() { return leagueAvgs().pts; }
 
 function projectGame(g) {
   if (!g.away || !g.home) return null;
-  const a = projectTeam(g.away.id);
-  const h = projectTeam(g.home.id);
-  const lg = getLeagueAvgPts();
+  const lg = leagueAvgs();
+  const a  = teamRatings(g.away.id, lg.pts);
+  const h  = teamRatings(g.home.id, lg.pts);
 
-  if (!a.games || !h.games) {
+  // Fallback when no prior data
+  if (!a || !h) {
     return {
-      awayPts: lg * 0.97, homePts: lg * 1.03,
-      total: lg * 2,
-      awayYds: Math.round(LEAGUE_AVG_YDS * 0.97),
-      homeYds: Math.round(LEAGUE_AVG_YDS * 1.03),
-      conf: 30,
+      awayPts: lg.pts * 0.97, homePts: lg.pts * 1.03,
+      total: lg.pts * 2,
+      awayPassYds: Math.round(LEAGUE_AVG_PASS_YDS * 0.97),
+      awayRushYds: Math.round(LEAGUE_AVG_RUSH_YDS * 0.97),
+      homePassYds: Math.round(LEAGUE_AVG_PASS_YDS * 1.03),
+      homeRushYds: Math.round(LEAGUE_AVG_RUSH_YDS * 1.03),
+      awayPassEdge: null, awayRushEdge: null,
+      homePassEdge: null, homeRushEdge: null,
     };
   }
 
-  const awayPts = (lg + 0.5 * a.offRating + 0.5 * h.defRating) * 0.97;
-  const homePts = (lg + 0.5 * h.offRating + 0.5 * a.defRating) * 1.03;
+  // Cross-reference: each team's offense rating vs opponent's defense rating
+  const awayPts = Math.max(3, (lg.pts + 0.5 * a.offPts + 0.5 * h.defPts) * 0.97);
+  const homePts = Math.max(3, (lg.pts + 0.5 * h.offPts + 0.5 * a.defPts) * 1.03);
 
-  const ydsFromPts = (pts) => {
-    const ratio = 1 + 0.7 * (pts / lg - 1);
-    return Math.round(LEAGUE_AVG_YDS * Math.max(0.6, Math.min(1.5, ratio)));
-  };
+  // Scale yardage from pts projection vs league avg
+  const ptScale = (pts) => Math.max(0.5, Math.min(1.6, pts / lg.pts));
+  const awayPassYds = Math.round(LEAGUE_AVG_PASS_YDS * ptScale(awayPts) * 0.97);
+  const awayRushYds = Math.round(LEAGUE_AVG_RUSH_YDS * ptScale(awayPts) * 0.97);
+  const homePassYds = Math.round(LEAGUE_AVG_PASS_YDS * ptScale(homePts) * 1.03);
+  const homeRushYds = Math.round(LEAGUE_AVG_RUSH_YDS * ptScale(homePts) * 1.03);
 
-  const minGames = Math.min(a.games, h.games);
-  const conf = Math.min(95, Math.round(40 + minGames * 6));
+  // Edge tags: how much this offense outpaces opp defense
+  const passEdge = (offRating, defRating) => offRating - defRating;
 
   return {
-    awayPts, homePts,
-    total: awayPts + homePts,
-    awayYds: ydsFromPts(awayPts),
-    homeYds: ydsFromPts(homePts),
-    conf,
+    awayPts, homePts, total: awayPts + homePts,
+    awayPassYds, awayRushYds, homePassYds, homeRushYds,
+    awayPassEdge: passEdge(a.offPts, h.defPts),
+    awayRushEdge: passEdge(a.offPts, h.defPts),
+    homePassEdge: passEdge(h.offPts, a.defPts),
+    homeRushEdge: passEdge(h.offPts, a.defPts),
   };
 }
 
@@ -1134,11 +1158,7 @@ function projectGame(g) {
 function render() {
   const main = document.getElementById('main');
   if (!state.loaded) return;
-  if (state.activeTab === 'summary') {
-    renderSummary(main);
-  } else {
-    renderGames(main);
-  }
+  state.activeTab === 'summary' ? renderSummary(main) : renderGames(main);
 }
 
 function renderGames(main) {
@@ -1155,16 +1175,26 @@ function renderGames(main) {
   });
 }
 
+function edgeTag(edge) {
+  if (edge == null || Math.abs(edge) < 3) return '';
+  const dir = edge > 0 ? '▲' : '▼';
+  const col = edge > 0 ? 'var(--accent)' : 'var(--hot)';
+  return `<span style="font-size:8px;color:${col};margin-left:3px">${dir}</span>`;
+}
+
 function renderGameCard(g) {
   const proj = projectGame(g);
   if (!proj) return '';
 
   const actualTotal = g.completed ? (g.away.score + g.home.score) : null;
   const date = g.date ? new Date(g.date) : null;
-  const kickoff = date && !isNaN(date) ?
-    date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) +
-    ' · ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  const kickoff = date && !isNaN(date)
+    ? date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })
+      + ' · ' + date.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' })
     : '';
+
+  const awayActualYds = g.teamYards[g.away.id] || null;
+  const homeActualYds = g.teamYards[g.home.id] || null;
 
   return `
     <div class="game" data-id="${g.id}">
@@ -1175,15 +1205,8 @@ function renderGameCard(g) {
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <div class="total-proj">
-            ${actualTotal != null
-              ? `<div style="display:flex;align-items:baseline;gap:6px;justify-content:flex-end">
-                   <div class="num">${actualTotal}</div>
-                   <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.1em">actual</div>
-                 </div>
-                 <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;color:var(--ink-faint);text-align:right;margin-top:2px">proj ${proj.total.toFixed(1)}</div>`
-              : `<div class="num">${proj.total.toFixed(1)}</div>
-                 <div class="lbl">Total proj</div>`
-            }
+            <div class="num">${proj.total.toFixed(1)}</div>
+            <div class="lbl">proj total${actualTotal != null ? ` · ${actualTotal} actual` : ''}</div>
           </div>
           <span class="caret">▾</span>
         </div>
@@ -1198,8 +1221,9 @@ function renderGameCard(g) {
           </div>
           ${g.completed ? `<div class="actual-row"><div class="actual-pts">${g.away.score}</div><div class="actual-lbl">actual</div></div>` : ''}
           <div class="yds-row">
-            <div class="yds-item"><span class="yds-num">${proj.awayYds}</span><span class="yds-lbl">proj yds</span></div>
-            ${g.teamYards[g.away.id] ? `<div class="yds-item"><span class="yds-num">${g.teamYards[g.away.id]}</span><span class="yds-lbl">actual yds</span></div>` : ''}
+            <div class="yds-item"><span class="yds-num">${proj.awayPassYds}</span><span class="yds-lbl">pass${edgeTag(proj.awayPassEdge)}</span></div>
+            <div class="yds-item"><span class="yds-num">${proj.awayRushYds}</span><span class="yds-lbl">rush${edgeTag(proj.awayRushEdge)}</span></div>
+            ${g.completed && awayActualYds ? `<div class="yds-item" style="margin-top:3px"><span class="yds-num">${awayActualYds}</span><span class="yds-lbl">actual total yds</span></div>` : ''}
           </div>
         </div>
         <div class="divider"></div>
@@ -1211,16 +1235,11 @@ function renderGameCard(g) {
           </div>
           ${g.completed ? `<div class="actual-row"><div class="actual-pts">${g.home.score}</div><div class="actual-lbl">actual</div></div>` : ''}
           <div class="yds-row">
-            <div class="yds-item"><span class="yds-num">${proj.homeYds}</span><span class="yds-lbl">proj yds</span></div>
-            ${g.teamYards[g.home.id] ? `<div class="yds-item"><span class="yds-num">${g.teamYards[g.home.id]}</span><span class="yds-lbl">actual yds</span></div>` : ''}
+            <div class="yds-item"><span class="yds-num">${proj.homePassYds}</span><span class="yds-lbl">pass${edgeTag(proj.homePassEdge)}</span></div>
+            <div class="yds-item"><span class="yds-num">${proj.homeRushYds}</span><span class="yds-lbl">rush${edgeTag(proj.homeRushEdge)}</span></div>
+            ${g.completed && homeActualYds ? `<div class="yds-item" style="margin-top:3px"><span class="yds-num">${homeActualYds}</span><span class="yds-lbl">actual total yds</span></div>` : ''}
           </div>
         </div>
-      </div>
-
-      <div class="conf-row">
-        <span class="conf-label">Data confidence (${Math.min(state.week - 1, 7)} wks of history)</span>
-        <div class="conf-bar"><div class="conf-fill" style="width:${proj.conf}%"></div></div>
-        <span class="conf-pct">${proj.conf}%</span>
       </div>
 
       <div class="game-body">
@@ -1233,9 +1252,9 @@ function renderGameCard(g) {
 function getPriorYds(ps, pos) {
   if (!ps || !ps.games) return 0;
   if (pos === 'QB') return (ps.passYds + ps.rushYds) / ps.games;
-  if (pos === 'RB') return (ps.rushYds + ps.recYds) / ps.games;
-  if (pos === 'WR') return (ps.recYds + ps.rushYds) / ps.games;
-  if (pos === 'TE') return ps.recYds / ps.games;
+  if (pos === 'RB') return (ps.rushYds + ps.recYds)  / ps.games;
+  if (pos === 'WR') return (ps.recYds  + ps.rushYds) / ps.games;
+  if (pos === 'TE') return  ps.recYds                / ps.games;
   return 0;
 }
 
@@ -1248,14 +1267,17 @@ function getActualYds(ap, pos) {
   if (!ap) return null;
   if (pos === 'QB') return ap.passYds + ap.rushYds;
   if (pos === 'RB') return ap.rushYds + ap.recYds;
-  if (pos === 'WR') return ap.recYds + ap.rushYds;
+  if (pos === 'WR') return ap.recYds  + ap.rushYds;
   if (pos === 'TE') return ap.recYds;
   return null;
 }
 
 function renderPlayerSections(g, proj) {
-  // Get all prior-stats players who played for either team in prior weeks
   const teamIds = [g.away.id, g.home.id];
+  const lg = leagueAvgs();
+  const awayR = teamRatings(g.away.id, lg.pts);
+  const homeR = teamRatings(g.home.id, lg.pts);
+
   const relevantPlayers = Object.values(state.priorPlayerStats)
     .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position));
 
@@ -1263,108 +1285,110 @@ function renderPlayerSections(g, proj) {
   for (const pos of ['QB','RB','WR','TE']) {
     const rows = [];
     for (const side of ['away','home']) {
-      const team = g[side];
-      const teamProjYds = side === 'away' ? proj.awayYds : proj.homeYds;
-      const teamPlayers = relevantPlayers
+      const team     = g[side];
+      const oppRat   = side === 'away' ? homeR : awayR;
+      const homeBonus = side === 'home' ? 1.03 : 0.97;
+
+      const players = relevantPlayers
         .filter(ps => ps.team === team.id && ps.position === pos)
-        .sort((a, b) => getPriorYds(b, pos) - getPriorYds(a, pos));
+        .sort((a,b) => getPriorYds(b,pos) - getPriorYds(a,pos));
 
       const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
-      const tops = teamPlayers.slice(0, limit);
+      for (const ps of players.slice(0, limit)) {
+        const priorAvg = getPriorYds(ps, pos);
 
-      // If no prior data, fall back to league-average share projection (no name)
-      if (!tops.length && state.week === 1) {
-        const share = pos === 'QB' ? 0.65 : pos === 'RB' ? 0.30 : pos === 'WR' ? 0.20 : 0.12;
-        const projYds = Math.round(teamProjYds * share);
-        rows.push(`
-          <div class="player-row">
-            <span class="pos-tag pos-${pos}">${pos}</span>
-            <div class="player-name" style="color:var(--ink-faint)">${team.abbr} starter<span class="player-team">no prior data</span></div>
-            <div class="player-proj">${projYds}<span class="unit">yd</span></div>
-            <div class="player-actual actual-na">—</div>
-          </div>`);
-        continue;
-      }
+        // Matchup adjustment: scale by opp's defensive weakness (defPts as proxy)
+        // If opp allows 20% more pts than avg → their defense is 20% easier → boost projection
+        let defMult = 1.0;
+        if (oppRat) {
+          defMult = 1 + (oppRat.defPts / Math.max(1, lg.pts)) * 0.4;
+          defMult = Math.max(0.6, Math.min(1.5, defMult));
+        }
+        const projYds = Math.round(priorAvg * defMult * homeBonus);
 
-      for (const ps of tops) {
-        // Projection: player's prior avg yds, scaled by how this team's proj compares to their prior avg
-        const priorAvgYds = getPriorYds(ps, pos);
-        const share = pos === 'QB' ? 0.65 : pos === 'RB' ? 0.30 : pos === 'WR' ? 0.20 : 0.12;
-        // Blend player history with team-level projection
-        const teamBaseline = teamProjYds * share;
-        const projYds = Math.round(0.6 * priorAvgYds + 0.4 * teamBaseline);
-
-        // Actual: from current week box score (only shown if game completed)
+        // Actual from current week — only show if completed
         const ap = g.actualPlayers[ps.id];
-        const actualYds = g.completed ? (getActualYds(ap, pos) ?? '?') : null;
-        const cls = !g.completed ? 'actual-na'
-          : (actualYds !== '?' && actualYds >= projYds ? 'actual-hit' : 'actual-miss');
+        const actualYds = g.completed ? getActualYds(ap, pos) : null;
+        const cls = actualYds == null ? '' : actualYds >= projYds ? 'actual-hit' : 'actual-miss';
 
         rows.push(`
           <div class="player-row">
             <span class="pos-tag pos-${pos}">${pos}</span>
             <div class="player-name">${ps.name}<span class="player-team">${ps.abbr}</span></div>
-            <div class="player-proj">${projYds}<span class="unit">yd</span></div>
-            <div class="player-actual ${cls}">${g.completed ? actualYds : '—'}</div>
+            <div class="player-proj">${projYds}<span class="unit">yd proj</span></div>
+            <div class="player-actual ${cls}">${actualYds != null ? actualYds : ''}</div>
           </div>`);
       }
     }
     if (rows.length) {
-      const title = { QB: 'Pass+Rush Yds', RB: 'Rush+Rec Yds', WR: 'Rec+Rush Yds', TE: 'Receiving Yds' }[pos];
-      const note = state.week === 1 ? ' · no prior data' : ` · avg from wk 1–${state.week - 1}`;
+      const title = {QB:'Pass+Rush', RB:'Rush+Rec', WR:'Rec+Rush', TE:'Receiving'}[pos];
+      const note  = state.week > 1 ? ` · prior avg × opp def` : '';
       out.push(`
         <div class="section">
-          <h4>${pos} · ${title}<span style="font-weight:400;opacity:0.5">${note}</span></h4>
+          <h4>${pos} ${title} Yds<span style="font-weight:400;opacity:0.45">${note}</span></h4>
           <div class="players">${rows.join('')}</div>
         </div>`);
     }
   }
-  return out.join('') || `<div class="section"><h4>Player projections</h4><p style="color:var(--ink-faint);font-size:12px;margin:0">No prior week data available${state.week === 1 ? ' — Week 1 has no history to draw from' : ''}.</p></div>`;
+
+  if (!out.length) return `<div class="section"><p style="color:var(--ink-faint);font-size:12px;margin:0">${
+    state.week === 1 ? 'Week 1 — no prior data to project from.' : 'No player history found.'
+  }</p></div>`;
+  return out.join('');
 }
 
 function renderTDSection(g) {
-  if (state.week === 1) return ''; // No prior data for TD likelihood in week 1
-
+  if (state.week === 1) return '';
   const teamIds = [g.away.id, g.home.id];
+  const lg = leagueAvgs();
+  const awayR = teamRatings(g.away.id, lg.pts);
+  const homeR = teamRatings(g.home.id, lg.pts);
+
   const candidates = Object.values(state.priorPlayerStats)
     .filter(ps => teamIds.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position) && ps.games > 0)
     .map(ps => {
-      const tdPerGame = getPriorTds(ps);
-      // Convert avg TDs per game to a probability (capped)
-      let prob = 0;
-      if (ps.position === 'QB') prob = Math.min(85, Math.round(30 + tdPerGame * 35));
-      else if (ps.position === 'RB') prob = Math.min(70, Math.round(10 + tdPerGame * 50));
-      else if (ps.position === 'WR') prob = Math.min(60, Math.round(5  + tdPerGame * 55));
-      else if (ps.position === 'TE') prob = Math.min(55, Math.round(5  + tdPerGame * 55));
+      const isAway  = ps.team === g.away.id;
+      const oppRat  = isAway ? homeR : awayR;
+      const tdPG    = getPriorTds(ps);
 
-      // Did they actually score this week?
+      let base = 0;
+      if (ps.position === 'QB') base = Math.min(88, 25 + tdPG * 38);
+      else if (ps.position === 'RB') base = Math.min(72, 8  + tdPG * 55);
+      else if (ps.position === 'WR') base = Math.min(62, 5  + tdPG * 60);
+      else if (ps.position === 'TE') base = Math.min(55, 5  + tdPG * 60);
+
+      // Opponent defense adjustment — weak defense (high defPts) → higher TD prob
+      const defAdj = oppRat ? oppRat.defPts * 0.5 : 0;
+      const prob   = Math.round(Math.max(0, Math.min(95, base + defAdj)));
+
       const ap = g.actualPlayers[ps.id];
-      const actualTds = ap ? (ap.passTds + ap.rushTds + ap.recTds) : 0;
-      return { ...ps, _prob: prob, _scored: actualTds > 0 };
+      const scored = g.completed && ap ? (ap.passTds + ap.rushTds + ap.recTds) > 0 : false;
+      return { ...ps, _prob: prob, _scored: scored };
     })
     .filter(p => p._prob >= 20)
-    .sort((a, b) => b._prob - a._prob)
-    .slice(0, 8);
+    .sort((a,b) => b._prob - a._prob)
+    .slice(0, 10);
 
   if (!candidates.length) return '';
 
   const rows = candidates.map(c => {
-    const tier = c._prob >= 50 ? 'high' : c._prob >= 35 ? 'med' : 'low';
-    const scoredHTML = !g.completed ? '' :
-      c._scored ? `<span class="td-scored yes">✓ scored</span>` : `<span class="td-scored no">✗ no TD</span>`;
+    const tier = c._prob >= 55 ? 'high' : c._prob >= 35 ? 'med' : 'low';
+    const result = !g.completed ? ''
+      : c._scored ? `<span class="td-scored yes">✓ TD</span>`
+                  : `<span class="td-scored no">no TD</span>`;
     return `
       <div class="td-row">
         <span class="pos-tag pos-${c.position}">${c.position}</span>
         <div class="player-name">${c.name}<span class="player-team">${c.abbr}</span></div>
         <span class="td-conf-dot td-conf-${tier}"></span>
         <div class="td-pct">${c._prob}%</div>
-        ${scoredHTML}
+        ${result}
       </div>`;
   }).join('');
 
   return `
     <div class="section">
-      <h4>TD Likelihood <span style="font-weight:400;opacity:0.5">· based on wk 1–${state.week - 1} avg</span></h4>
+      <h4>TD Likelihood <span style="font-weight:400;opacity:0.45">· prior avg vs opp def</span></h4>
       <div class="tds">${rows}</div>
     </div>`;
 }
