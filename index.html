@@ -2210,24 +2210,32 @@ function renderFactCheck(main) {
 // ============================================================================
 // Wire up
 // ============================================================================
-populateWeekDropdown();
+function init() {
+  populateWeekDropdown();
 
-document.getElementById('season').addEventListener('change', e => {
-  state.season = +e.target.value;
-});
-document.getElementById('week').addEventListener('change', e => {
-  state.week = +e.target.value;
-});
-document.getElementById('load-btn').addEventListener('click', loadWeek);
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    state.activeTab = tab.dataset.tab;
-    state.openGameId = null;  // reset drill-in when switching tabs
-    render();
+  document.getElementById('season').addEventListener('change', e => {
+    state.season = +e.target.value;
   });
-});
+  document.getElementById('week').addEventListener('change', e => {
+    state.week = +e.target.value;
+  });
+  document.getElementById('load-btn').addEventListener('click', loadWeek);
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.activeTab = tab.dataset.tab;
+      state.openGameId = null;
+      render();
+    });
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
 </script>
 
 </body>
