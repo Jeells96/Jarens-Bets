@@ -242,18 +242,20 @@ overflow: hidden;
 cursor: pointer;
 }
 .game-head {
-padding: 14px 16px 12px;
+padding: 12px 16px;
 display: flex;
 align-items: center;
 justify-content: space-between;
 border-bottom: 1px solid var(–line);
+gap: 8px;
 }
-.matchup { display: flex; flex-direction: column; gap: 2px; }
+.matchup { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .matchup .teams {
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-weight: 700;
 font-size: 15px;
 letter-spacing: 0.02em;
+white-space: nowrap;
 }
 .matchup .teams .at {
 color: var(–ink-faint);
@@ -266,15 +268,16 @@ font-size: 11px;
 color: var(–ink-dim);
 }
 .total-proj {
-text-align: right;
 display: flex;
-flex-direction: column;
-align-items: flex-end;
+flex-direction: row;
+align-items: baseline;
+gap: 5px;
+flex-shrink: 0;
 }
 .total-proj .num {
 font-family: ui-serif, Georgia, serif;
 font-weight: 700;
-font-size: 28px;
+font-size: 24px;
 line-height: 1;
 color: var(–accent);
 }
@@ -284,8 +287,6 @@ font-size: 9px;
 color: var(–ink-faint);
 letter-spacing: 0.08em;
 text-transform: uppercase;
-margin-top: 3px;
-align-self: flex-end;
 }
 
 .team-totals {
@@ -428,6 +429,83 @@ text-align: right;
 
 .game-body { display: none; }
 .game.open .game-body { display: block; }
+
+.props-accordion {
+border: 1px solid var(–line);
+border-radius: 8px;
+overflow: hidden;
+margin-bottom: 8px;
+}
+.props-header {
+padding: 11px 14px;
+display: flex;
+align-items: center;
+justify-content: space-between;
+background: var(–bg-3);
+cursor: pointer;
+user-select: none;
+}
+.props-header-left {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-weight: 700;
+font-size: 12px;
+color: var(–ink);
+letter-spacing: 0.05em;
+}
+.props-header-right {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 10px;
+color: var(–ink-faint);
+display: flex;
+align-items: center;
+gap: 6px;
+}
+.props-caret {
+color: var(–ink-faint);
+font-size: 10px;
+transition: transform 0.2s;
+}
+.props-accordion.open .props-caret { transform: rotate(180deg); }
+.props-body { display: none; }
+.props-accordion.open .props-body { display: block; }
+
+.player-prop-row {
+padding: 0;
+border-top: 1px solid var(–line);
+cursor: pointer;
+}
+.player-prop-row:hover { background: rgba(255,255,255,0.02); }
+.player-prop-summary {
+padding: 10px 14px;
+display: grid;
+grid-template-columns: auto 1fr auto auto;
+gap: 10px;
+align-items: center;
+}
+.player-prop-math {
+display: none;
+padding: 0 14px 12px;
+}
+.player-prop-row.open .player-prop-math { display: block; }
+.prop-math-table {
+width: 100%;
+border-collapse: collapse;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 11px;
+background: var(–bg);
+border-radius: 6px;
+overflow: hidden;
+}
+.prop-math-table td {
+padding: 5px 10px;
+border-bottom: 1px solid var(–line);
+}
+.prop-math-table tr:last-child td { border-bottom: none; }
+.prop-math-lbl { color: var(–ink-faint); }
+.prop-math-val { text-align: right; font-weight: 600; color: var(–ink); }
+.prop-math-val.pos { color: var(–accent); }
+.prop-math-val.neg { color: var(–hot); }
+.prop-math-val.total { color: var(–accent); font-size: 13px; }
 
 .math-table {
 width: 100%;
@@ -750,7 +828,7 @@ function priorSeasonWeight(currentWeek) {
   return Math.max(0, 1 - (currentWeek - 1) / 7);
 }
 
-const CACHE_VERSION = 'v7'; // bumped — forces all old v4 cache entries to be ignored
+const CACHE_VERSION = 'v8'; // bumped — forces all old v4 cache entries to be ignored
 const CACHE_TTL_COMPLETED_MS = 1000 * 60 * 60 * 12; // 12h for completed weeks (scores won't change)
 const CACHE_TTL_ACTIVE_MS    = 1000 * 60 * 5;        // 5 min for current/future weeks
 
@@ -947,9 +1025,11 @@ async function loadWeek() {
             const stats = ath.stats || [];
             const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
             const tds = tdIdx  >= 0 ? +stats[tdIdx]  || 0 : 0;
-            // Derive position from stat category if ESPN doesn't send it
+            // Derive position from stat category only if ESPN doesn't send it
+            // Never downgrade a known position (e.g. RB appearing in receiving block stays RB)
             const espnPos = (a.position && a.position.abbreviation) || '';
-            const inferredPos = espnPos || (cat === 'passing' ? 'QB' : cat === 'rushing' ? 'RB' : cat === 'receiving' ? 'WR' : '');
+            const catPos  = cat === 'passing' ? 'QB' : cat === 'rushing' ? 'RB' : 'WR'; // receiving → WR as fallback only
+            const inferredPos = espnPos || catPos;
 
             if (!state.priorPlayerStats[a.id]) {
               state.priorPlayerStats[a.id] = {
@@ -964,8 +1044,10 @@ async function loadWeek() {
             }
             const ps = state.priorPlayerStats[a.id];
             ps.team = teamId; ps.abbr = teamAbbr;
-            // Upgrade position if we now have a real one
+            // Only upgrade position if: we had none, OR we have the ESPN source (espnPos)
+            // Never overwrite a real ESPN position with a category-inferred one
             if (!ps.position && inferredPos) ps.position = inferredPos;
+            else if (espnPos && ps.position !== espnPos) ps.position = espnPos;
 
             // Accumulate stats with weight
             if (cat === 'passing')        { ps.passYds += yds * weightMult; ps.passTds += tds * weightMult; }
@@ -1483,6 +1565,25 @@ function getActualYds(ap, pos) {
   return null;
 }
 
+// Build player math breakdown HTML
+function playerMathHTML(ps, pos, projYds, priorAvg, baseline, regressionWeight, defMult, homeBonus, oppAbbr, games) {
+  const fmt1 = n => n.toFixed(1);
+  const fmtPct = n => (n >= 0 ? '+' : '') + ((n - 1) * 100).toFixed(0) + '%';
+  const cls = n => n > 1.02 ? 'pos' : n < 0.98 ? 'neg' : '';
+
+  const rows = [
+    { lbl: `Prior avg (${Math.round(games)} games)`,     val: fmt1(priorAvg) + ' yds',      cls: '' },
+    { lbl: `Regression to mean (${Math.round(regressionWeight*100)}%)`,
+      val: fmt1(priorAvg * (1-regressionWeight) + baseline * regressionWeight) + ' yds', cls: '' },
+    { lbl: `Opp (${oppAbbr}) def adj`,                   val: fmtPct(defMult),               cls: cls(defMult) },
+    { lbl: `Home/away factor`,                           val: fmtPct(homeBonus),              cls: cls(homeBonus) },
+    { lbl: `Projection`,                                 val: projYds + ' yds',              cls: 'total' },
+  ];
+  return `<table class="prop-math-table">${rows.map(r =>
+    `<tr><td class="prop-math-lbl">${r.lbl}</td><td class="prop-math-val ${r.cls}">${r.val}</td></tr>`
+  ).join('')}</table>`;
+}
+
 function renderPlayerSections(g, proj) {
   const teamIds = [g.away.id, g.home.id];
   const lg = leagueAvgs();
@@ -1494,12 +1595,16 @@ function renderPlayerSections(g, proj) {
       && ['QB','RB','WR','TE','FB'].includes(ps.position)
       && ps.games > 0.1);
 
-  const out = [];
+  const posBaseline = { QB: 220, RB: 65, WR: 55, TE: 35, FB: 20 };
+
+  // Build all player rows, grouped by position
+  const sections = [];
   for (const pos of ['QB','RB','WR','TE']) {
-    const rows = [];
+    const allRows = [];
     for (const side of ['away','home']) {
-      const team     = g[side];
-      const oppRat   = side === 'away' ? homeR : awayR;
+      const team      = g[side];
+      const oppTeam   = g[side === 'away' ? 'home' : 'away'];
+      const oppRat    = side === 'away' ? homeR : awayR;
       const homeBonus = side === 'home' ? 1.03 : 0.97;
 
       const players = relevantPlayers
@@ -1508,46 +1613,56 @@ function renderPlayerSections(g, proj) {
 
       const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
       for (const ps of players.slice(0, limit)) {
-        const priorAvg = getPriorYds(ps, pos);
+        const priorAvg  = getPriorYds(ps, pos);
+        const baseline  = posBaseline[pos] || 50;
+        const games     = ps.games;
+        const regW      = Math.max(0.15, 0.7 - (games - 1) * 0.08);
+        const regressed = priorAvg * (1 - regW) + baseline * regW;
 
-        // Matchup adjustment: scale by opp's defensive weakness (defPts as proxy)
-        // If opp allows 20% more pts than avg → their defense is 20% easier → boost projection
         let defMult = 1.0;
         if (oppRat) {
-          defMult = 1 + (oppRat.defPts / Math.max(1, lg.pts)) * 0.4;
-          defMult = Math.max(0.6, Math.min(1.5, defMult));
+          defMult = 1 + (oppRat.defPts / Math.max(1, lg.pts)) * 0.3;
+          defMult = Math.max(0.75, Math.min(1.25, defMult));
         }
-        const projYds = Math.round(priorAvg * defMult * homeBonus);
+        const projYds = Math.round(regressed * defMult * homeBonus);
 
-        // Actual from current week — only show if completed
         const ap = g.actualPlayers[ps.id];
         const actualYds = g.completed ? getActualYds(ap, pos) : null;
-        const cls = actualYds == null ? '' : actualYds >= projYds ? 'actual-hit' : 'actual-miss';
+        const hitCls = actualYds == null ? '' : actualYds >= projYds ? 'actual-hit' : 'actual-miss';
 
-        rows.push(`
-          <div class="player-row">
-            <span class="pos-tag pos-${pos}">${pos}</span>
-            <div class="player-name">${ps.name}<span class="player-team">${ps.abbr}</span></div>
-            <div class="player-proj">${projYds}<span class="unit">yd proj</span></div>
-            <div class="player-actual ${cls}">${actualYds != null ? actualYds : ''}</div>
+        const mathHTML = playerMathHTML(ps, pos, projYds, priorAvg, baseline, regW, defMult, homeBonus, oppTeam.abbr, games);
+
+        allRows.push(`
+          <div class="player-prop-row" onclick="event.stopPropagation();this.classList.toggle('open')">
+            <div class="player-prop-summary">
+              <span class="pos-tag pos-${ps.position}">${ps.position}</span>
+              <div class="player-name">${ps.name}<span class="player-team">${ps.abbr}</span></div>
+              <div class="player-proj">${projYds}<span class="unit">yd proj</span></div>
+              <div class="player-actual ${hitCls}">${actualYds != null ? actualYds : ''}</div>
+            </div>
+            <div class="player-prop-math">${mathHTML}</div>
           </div>`);
       }
     }
-    if (rows.length) {
-      const title = {QB:'Pass+Rush', RB:'Rush+Rec', WR:'Rec+Rush', TE:'Receiving'}[pos];
-      const note  = state.week > 1 ? ` · prior avg × opp def` : '';
-      out.push(`
-        <div class="section">
-          <h4>${pos} ${title} Yds<span style="font-weight:400;opacity:0.45">${note}</span></h4>
-          <div class="players">${rows.join('')}</div>
+    if (allRows.length) {
+      const title = {QB:'QB · Passing+Rushing', RB:'RB · Rushing+Receiving', WR:'WR · Receiving+Rushing', TE:'TE · Receiving'}[pos];
+      const count = allRows.length;
+      sections.push(`
+        <div class="props-accordion" onclick="event.stopPropagation();this.classList.toggle('open')">
+          <div class="props-header">
+            <span class="props-header-left">${title}</span>
+            <span class="props-header-right">${count} players <span class="props-caret">▾</span></span>
+          </div>
+          <div class="props-body">${allRows.join('')}</div>
         </div>`);
     }
   }
 
-  if (!out.length) return `<div class="section"><p style="color:var(--ink-faint);font-size:12px;margin:0">${
-    state.week === 1 ? 'Week 1 — no prior data to project from.' : 'No player history found.'
+  if (!sections.length) return `<div class="section"><p style="color:var(--ink-faint);font-size:12px;margin:0">${
+    state.week === 1 ? 'Week 1 — no prior data.' : 'No player history found.'
   }</p></div>`;
-  return out.join('');
+
+  return `<div class="section"><h4>Player Props</h4>${sections.join('')}</div>`;
 }
 
 function renderTDSection(g) {
@@ -1570,13 +1685,12 @@ function renderTDSection(g) {
       else if (ps.position === 'WR') base = Math.min(62, 5  + tdPG * 60);
       else if (ps.position === 'TE') base = Math.min(55, 5  + tdPG * 60);
 
-      // Opponent defense adjustment — weak defense (high defPts) → higher TD prob
-      const defAdj = oppRat ? oppRat.defPts * 0.5 : 0;
+      const defAdj = oppRat ? Math.max(-15, Math.min(15, oppRat.defPts * 0.5)) : 0;
       const prob   = Math.round(Math.max(0, Math.min(95, base + defAdj)));
 
       const ap = g.actualPlayers[ps.id];
       const scored = g.completed && ap ? (ap.passTds + ap.rushTds + ap.recTds) > 0 : false;
-      return { ...ps, _prob: prob, _scored: scored };
+      return { ...ps, _prob: prob, _scored: scored, _tdPG: tdPG, _defAdj: defAdj };
     })
     .filter(p => p._prob >= 20)
     .sort((a,b) => b._prob - a._prob)
@@ -1585,24 +1699,41 @@ function renderTDSection(g) {
   if (!candidates.length) return '';
 
   const rows = candidates.map(c => {
-    const tier = c._prob >= 55 ? 'high' : c._prob >= 35 ? 'med' : 'low';
+    const tier   = c._prob >= 55 ? 'high' : c._prob >= 35 ? 'med' : 'low';
     const result = !g.completed ? ''
       : c._scored ? `<span class="td-scored yes">✓ TD</span>`
                   : `<span class="td-scored no">no TD</span>`;
+    const oppAbbr = c.team === g.away.id ? g.home.abbr : g.away.abbr;
+    const mathHTML = `<table class="prop-math-table">
+      <tr><td class="prop-math-lbl">TD avg/game</td><td class="prop-math-val">${c._tdPG.toFixed(2)}</td></tr>
+      <tr><td class="prop-math-lbl">Base prob</td><td class="prop-math-val">${Math.round(c._prob - c._defAdj)}%</td></tr>
+      <tr><td class="prop-math-lbl">Opp (${oppAbbr}) def adj</td><td class="prop-math-val ${c._defAdj >= 0 ? 'pos' : 'neg'}">${c._defAdj >= 0 ? '+' : ''}${Math.round(c._defAdj)}%</td></tr>
+      <tr><td class="prop-math-lbl">Final probability</td><td class="prop-math-val total">${c._prob}%</td></tr>
+    </table>`;
     return `
-      <div class="td-row">
-        <span class="pos-tag pos-${c.position}">${c.position}</span>
-        <div class="player-name">${c.name}<span class="player-team">${c.abbr}</span></div>
-        <span class="td-conf-dot td-conf-${tier}"></span>
-        <div class="td-pct">${c._prob}%</div>
-        ${result}
+      <div class="player-prop-row" onclick="event.stopPropagation();this.classList.toggle('open')">
+        <div class="player-prop-summary">
+          <span class="pos-tag pos-${c.position}">${c.position}</span>
+          <div class="player-name">${c.name}<span class="player-team">${c.abbr}</span></div>
+          <span class="td-conf-dot td-conf-${tier}" style="flex-shrink:0"></span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="td-pct">${c._prob}%</div>
+            ${result}
+          </div>
+        </div>
+        <div class="player-prop-math">${mathHTML}</div>
       </div>`;
   }).join('');
 
   return `
     <div class="section">
-      <h4>TD Likelihood <span style="font-weight:400;opacity:0.45">· prior avg vs opp def</span></h4>
-      <div class="tds">${rows}</div>
+      <div class="props-accordion" onclick="event.stopPropagation();this.classList.toggle('open')">
+        <div class="props-header">
+          <span class="props-header-left">TD Likelihood</span>
+          <span class="props-header-right">${candidates.length} players <span class="props-caret">▾</span></span>
+        </div>
+        <div class="props-body">${rows}</div>
+      </div>
     </div>`;
 }
 
