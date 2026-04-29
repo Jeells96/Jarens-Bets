@@ -735,6 +735,112 @@ letter-spacing: 0.1em;
 margin-top: 2px;
 }
 
+.fact-section {
+margin: 12px;
+background: var(–bg-2);
+border: 1px solid var(–line);
+border-radius: 12px;
+overflow: hidden;
+margin-bottom: 10px;
+}
+.fact-section-head {
+padding: 12px 16px;
+display: flex;
+justify-content: space-between;
+align-items: center;
+border-bottom: 1px solid var(–line);
+}
+.fact-section-head h3 {
+margin: 0;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 12px;
+font-weight: 700;
+letter-spacing: 0.08em;
+text-transform: uppercase;
+color: var(–ink);
+}
+.fact-score {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 22px;
+font-weight: 700;
+color: var(–accent);
+}
+.fact-row {
+padding: 9px 16px;
+display: flex;
+justify-content: space-between;
+align-items: center;
+border-bottom: 1px solid var(–line);
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 12px;
+}
+.fact-row:last-child { border-bottom: none; }
+.fact-row-lbl { color: var(–ink-dim); }
+.fact-hit { color: var(–accent); font-weight: 700; }
+.fact-miss { color: var(–hot); font-weight: 700; }
+.fact-na { color: var(–ink-faint); }
+
+/* Game drill-in view */
+.game-detail-header {
+display: flex;
+align-items: center;
+gap: 12px;
+padding: 12px 16px;
+background: var(–bg-2);
+border-bottom: 1px solid var(–line);
+position: sticky;
+top: 0;
+z-index: 5;
+}
+.back-btn {
+background: var(–bg-3);
+border: 1px solid var(–line);
+color: var(–ink);
+padding: 6px 12px;
+border-radius: 6px;
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 11px;
+font-weight: 700;
+cursor: pointer;
+flex-shrink: 0;
+}
+.game-detail-title {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-weight: 700;
+font-size: 14px;
+}
+
+/* Yardage prop row — same style as player prop rows */
+.yds-prop-row {
+border-top: 1px solid var(–line);
+cursor: pointer;
+}
+.yds-prop-row:hover { background: rgba(255,255,255,0.02); }
+.yds-prop-summary {
+padding: 10px 14px;
+display: grid;
+grid-template-columns: auto 1fr auto auto;
+gap: 10px;
+align-items: center;
+}
+.yds-prop-math {
+display: none;
+padding: 0 14px 12px;
+}
+.yds-prop-row.open .yds-prop-math { display: block; }
+.yds-tag {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 9px;
+font-weight: 700;
+background: var(–bg-3);
+border: 1px solid var(–line-2);
+color: var(–ink-dim);
+padding: 2px 5px;
+border-radius: 3px;
+letter-spacing: 0.05em;
+white-space: nowrap;
+}
+
 .foot {
 padding: 20px 16px 40px;
 text-align: center;
@@ -758,7 +864,7 @@ margin: 0 auto 12px;
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <div class="tag">NFL · v2.1</div>
+    <div class="tag">NFL · v2.2</div>
   </div>
   <div class="controls">
     <div class="control">
@@ -785,6 +891,7 @@ margin: 0 auto 12px;
 <div class="tabs">
   <button class="tab active" data-tab="games">Games</button>
   <button class="tab" data-tab="summary">Model</button>
+  <button class="tab" data-tab="factcheck">Facts</button>
 </div>
 
 <main id="main">
@@ -828,7 +935,7 @@ function priorSeasonWeight(currentWeek) {
   return Math.max(0, 1 - (currentWeek - 1) / 7);
 }
 
-const CACHE_VERSION = 'v8'; // bumped — forces all old v4 cache entries to be ignored
+const CACHE_VERSION = 'v9'; // bumped — forces all old v4 cache entries to be ignored
 const CACHE_TTL_COMPLETED_MS = 1000 * 60 * 60 * 12; // 12h for completed weeks (scores won't change)
 const CACHE_TTL_ACTIVE_MS    = 1000 * 60 * 5;        // 5 min for current/future weeks
 
@@ -907,6 +1014,7 @@ const state = {
   loading: false,
   loaded: false,
   activeTab: 'games',
+  openGameId: null,  // currently drilled-in game
 };
 
 // ============================================================================
@@ -1400,9 +1508,16 @@ function mathBreakdown(g, proj) {
 }
 
 function render() {
-  const main = document.getElementById("main");
+  const main = document.getElementById('main');
   if (!state.loaded) return;
-  state.activeTab === "summary" ? renderSummary(main) : renderGames(main);
+  if (state.activeTab === 'games') {
+    if (state.openGameId) renderGameDetail(main, state.openGameId);
+    else renderGames(main);
+  } else if (state.activeTab === 'summary') {
+    renderSummary(main);
+  } else if (state.activeTab === 'factcheck') {
+    renderFactCheck(main);
+  }
 }
 
 function renderGames(main) {
@@ -1414,9 +1529,83 @@ function renderGames(main) {
   for (const g of state.games) html += renderGameCard(g);
   html += '</div>';
   main.innerHTML = html;
-  // Whole card is clickable
+  // Tapping a game card drills in to full detail view
   main.querySelectorAll('.game').forEach(card => {
-    card.addEventListener('click', () => card.classList.toggle('open'));
+    card.addEventListener('click', () => {
+      state.openGameId = card.dataset.id;
+      render();
+    });
+  });
+}
+
+function renderGameDetail(main, gameId) {
+  const g = state.games.find(x => x.id === gameId);
+  if (!g) { state.openGameId = null; render(); return; }
+  const proj = projectGame(g);
+
+  const date = g.date ? new Date(g.date) : null;
+  const kickoff = date && !isNaN(date)
+    ? date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })
+      + ' · ' + date.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' })
+    : '';
+
+  main.innerHTML = `
+    <div class="game-detail-header">
+      <button class="back-btn" id="back-btn">← Games</button>
+      <div class="game-detail-title">${g.away.abbr} @ ${g.home.abbr} · ${kickoff}</div>
+    </div>
+    <div id="game-detail-body"></div>`;
+
+  document.getElementById('back-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    state.openGameId = null;
+    render();
+  });
+
+  // Render the detail body
+  const body = document.getElementById('game-detail-body');
+
+  // Score comparison
+  const awayYds = g.teamYards[g.away.id] || null;
+  const homeYds = g.teamYards[g.home.id] || null;
+  const delta = (projPts, actualPts) => {
+    if (actualPts == null) return '';
+    const d = Math.abs(projPts - actualPts);
+    const c = d <= 3 ? 'var(--accent)' : d <= 7 ? 'var(--warn)' : 'var(--hot)';
+    return \`<span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9px;color:\${c}">Δ\${d.toFixed(0)}</span>\`;
+  };
+
+  body.innerHTML = \`
+    <div class="team-totals" style="margin:12px;border-radius:10px;overflow:hidden;border:1px solid var(--line)">
+      <div class="tt away">
+        <div class="team">\${g.away.abbr} <span style="font-weight:400;color:var(--ink-faint);font-size:10px">away</span></div>
+        <div class="score-row"><div class="proj-pts">\${proj.awayPts.toFixed(1)}</div><div class="proj-lbl">proj</div></div>
+        \${g.completed ? \`<div class="actual-row"><div class="actual-pts">\${g.away.score}</div><div class="actual-lbl">actual</div>\${delta(proj.awayPts,g.away.score)}</div>\` : ''}
+      </div>
+      <div class="divider"></div>
+      <div class="tt home">
+        <div class="team">\${g.home.abbr} <span style="font-weight:400;color:var(--ink-faint);font-size:10px">home</span></div>
+        <div class="score-row"><div class="proj-pts">\${proj.homePts.toFixed(1)}</div><div class="proj-lbl">proj</div></div>
+        \${g.completed ? \`<div class="actual-row"><div class="actual-pts">\${g.home.score}</div><div class="actual-lbl">actual</div>\${delta(proj.homePts,g.home.score)}</div>\` : ''}
+      </div>
+    </div>
+    \${mathBreakdown(g, proj)}
+    \${renderYardsSection(g, proj)}
+    \${renderPlayerSections(g, proj)}
+    \${renderTDSection(g)}\`;
+
+  // Wire up inner accordions — stop propagation so back button still works
+  body.querySelectorAll('.props-accordion').forEach(acc => {
+    acc.addEventListener('click', e => { e.stopPropagation(); acc.classList.toggle('open'); });
+  });
+  body.querySelectorAll('.player-prop-row').forEach(row => {
+    row.addEventListener('click', e => { e.stopPropagation(); row.classList.toggle('open'); });
+  });
+  body.querySelectorAll('.yds-prop-row').forEach(row => {
+    row.addEventListener('click', e => { e.stopPropagation(); row.classList.toggle('open'); });
+  });
+  body.querySelectorAll('.yds-section-header').forEach(h => {
+    h.addEventListener('click', e => { e.stopPropagation(); h.closest('.yds-accordion').classList.toggle('open'); });
   });
 }
 
@@ -1538,6 +1727,87 @@ function renderGameCard(g) {
 
         ${renderPlayerSections(g, proj)}
         ${renderTDSection(g)}
+      </div>
+    </div>`;
+}
+
+function renderYardsSection(g, proj) {
+  const awayYds = g.teamYards[g.away.id] || null;
+  const homeYds = g.teamYards[g.home.id] || null;
+
+  function ydsRow(label, tag, projVal, actualVal, tol, mathRows) {
+    const hit    = actualVal != null && Math.abs(projVal - actualVal) <= tol;
+    const miss   = actualVal != null && Math.abs(projVal - actualVal) > tol;
+    const delta  = actualVal != null ? Math.abs(projVal - actualVal) : null;
+    const hitCls = actualVal == null ? '' : hit ? 'actual-hit' : 'actual-miss';
+    const deltaStr = delta != null
+      ? `<span class="${hitCls}" style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;padding:2px 5px;border-radius:3px">Δ${Math.round(delta)}${hit ? ' ✓' : ''}</span>`
+      : '';
+    const mathHTML = `<table class="prop-math-table">${mathRows.map(r =>
+      `<tr><td class="prop-math-lbl">${r.l}</td><td class="prop-math-val ${r.c||''}">${r.v}</td></tr>`
+    ).join('')}</table>`;
+    return `
+      <div class="yds-prop-row" onclick="event.stopPropagation();this.classList.toggle('open')">
+        <div class="yds-prop-summary">
+          <span class="yds-tag">${tag}</span>
+          <div class="player-name" style="font-size:12px">${label}</div>
+          <div class="player-proj">${projVal}<span class="unit">yd proj</span></div>
+          <div>${actualVal != null ? `<span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:13px;font-weight:700;color:var(--ink)">${actualVal}</span> ${deltaStr}` : ''}</div>
+        </div>
+        <div class="yds-prop-math">${mathHTML}</div>
+      </div>`;
+  }
+
+  const lg   = leagueAvgs();
+  const aRat = proj.aRat;
+  const hRat = proj.hRat;
+  const fmt1 = n => n != null ? (n >= 0 ? '+' : '') + n.toFixed(1) : '—';
+  const fmtPct = n => (n >= 0 ? '+' : '') + ((n-1)*100).toFixed(0) + '%';
+
+  const awayPassMath = [
+    { l: 'League avg passing',    v: LEAGUE_AVG_PASS_YDS + ' yds' },
+    { l: `${g.away.abbr} off adj`, v: fmt1(aRat?.offPts), c: aRat?.offPts > 0 ? 'pos' : aRat?.offPts < 0 ? 'neg' : '' },
+    { l: `${g.home.abbr} def adj`, v: fmt1(hRat?.defPts), c: hRat?.defPts > 0 ? 'pos' : hRat?.defPts < 0 ? 'neg' : '' },
+    { l: 'Away factor',            v: '×0.97',             c: 'neg' },
+    { l: 'Projection',             v: proj.awayPassYds + ' yds', c: 'total' },
+  ];
+  const awayRushMath = [
+    { l: 'League avg rushing',    v: LEAGUE_AVG_RUSH_YDS + ' yds' },
+    { l: `${g.away.abbr} off adj`, v: fmt1(aRat?.offPts), c: aRat?.offPts > 0 ? 'pos' : 'neg' },
+    { l: `${g.home.abbr} def adj`, v: fmt1(hRat?.defPts), c: hRat?.defPts > 0 ? 'pos' : 'neg' },
+    { l: 'Away factor',            v: '×0.97',             c: 'neg' },
+    { l: 'Projection',             v: proj.awayRushYds + ' yds', c: 'total' },
+  ];
+  const homePassMath = [
+    { l: 'League avg passing',    v: LEAGUE_AVG_PASS_YDS + ' yds' },
+    { l: `${g.home.abbr} off adj`, v: fmt1(hRat?.offPts), c: hRat?.offPts > 0 ? 'pos' : 'neg' },
+    { l: `${g.away.abbr} def adj`, v: fmt1(aRat?.defPts), c: aRat?.defPts > 0 ? 'pos' : 'neg' },
+    { l: 'Home factor',            v: '×1.03',             c: 'pos' },
+    { l: 'Projection',             v: proj.homePassYds + ' yds', c: 'total' },
+  ];
+  const homeRushMath = [
+    { l: 'League avg rushing',    v: LEAGUE_AVG_RUSH_YDS + ' yds' },
+    { l: `${g.home.abbr} off adj`, v: fmt1(hRat?.offPts), c: hRat?.offPts > 0 ? 'pos' : 'neg' },
+    { l: `${g.away.abbr} def adj`, v: fmt1(aRat?.defPts), c: aRat?.defPts > 0 ? 'pos' : 'neg' },
+    { l: 'Home factor',            v: '×1.03',             c: 'pos' },
+    { l: 'Projection',             v: proj.homeRushYds + ' yds', c: 'total' },
+  ];
+
+  const rows = [
+    ydsRow(`${g.away.abbr} Passing`, 'PASS', proj.awayPassYds, awayYds?.pass ?? null, 10, awayPassMath),
+    ydsRow(`${g.away.abbr} Rushing`, 'RUSH', proj.awayRushYds, awayYds?.rush ?? null, 10, awayRushMath),
+    ydsRow(`${g.home.abbr} Passing`, 'PASS', proj.homePassYds, homeYds?.pass ?? null, 10, homePassMath),
+    ydsRow(`${g.home.abbr} Rushing`, 'RUSH', proj.homeRushYds, homeYds?.rush ?? null, 10, homeRushMath),
+  ].join('');
+
+  return `
+    <div class="section">
+      <div class="props-accordion" id="yds-accord">
+        <div class="props-header" onclick="event.stopPropagation();this.closest('.props-accordion').classList.toggle('open')">
+          <span class="props-header-left">Team Yardage</span>
+          <span class="props-header-right">4 props <span class="props-caret">▾</span></span>
+        </div>
+        <div class="props-body">${rows}</div>
       </div>
     </div>`;
 }
@@ -1740,13 +2010,7 @@ function renderTDSection(g) {
 function renderSummary(main) {
   const completed = state.games.filter(g => g.completed);
   if (!completed.length) {
-    main.innerHTML = `
-      <div class="summary">
-        <h3>Model Performance</h3>
-        <p style="color:var(--ink-dim);font-size:13px;margin:0">
-          No completed games this week. Pick a past week.
-        </p>
-      </div>`;
+    main.innerHTML = `<div class="summary"><h3>Model Performance</h3><p style="color:var(--ink-dim);font-size:13px;margin:0">No completed games. Pick a past week.</p></div>`;
     return;
   }
   let totalsErr = 0, totalsHit = 0, marginErr = 0;
@@ -1754,53 +2018,193 @@ function renderSummary(main) {
   for (const g of completed) {
     const proj = projectGame(g);
     if (!proj) continue;
-    const actualTotal = g.away.score + g.home.score;
+    const actualTotal  = g.away.score + g.home.score;
     const actualMargin = g.home.score - g.away.score;
-    const projMargin = proj.homePts - proj.awayPts;
-    totalsErr += Math.abs(proj.total - actualTotal);
-    if (Math.abs(proj.total - actualTotal) <= 7) totalsHit++;
-    marginErr += Math.abs(projMargin - actualMargin);
-    samples.push({
-      a: g.away.abbr, h: g.home.abbr,
-      proj: proj.total.toFixed(1),
-      actual: actualTotal,
-      delta: (proj.total - actualTotal).toFixed(1),
-    });
+    const projMargin   = proj.homePts - proj.awayPts;
+    totalsErr  += Math.abs(proj.total - actualTotal);
+    if (Math.abs(proj.total - actualTotal) <= 3) totalsHit++;
+    marginErr  += Math.abs(projMargin - actualMargin);
+    samples.push({ a: g.away.abbr, h: g.home.abbr, proj: proj.total.toFixed(1), actual: actualTotal, delta: proj.total - actualTotal });
   }
   const n = samples.length;
-  const mae = n ? (totalsErr / n).toFixed(1) : '—';
-  const spreadMae = n ? (marginErr / n).toFixed(1) : '—';
-  const hitRate = n ? Math.round(100 * totalsHit / n) : 0;
-
-  const sampleRows = samples.map(s => `
-    <div class="player-row">
+  const mae      = n ? (totalsErr / n).toFixed(1) : '—';
+  const hitRate  = n ? Math.round(100 * totalsHit / n) : 0;
+  const sampleRows = samples.map(s => {
+    const hit = Math.abs(s.delta) <= 3;
+    return `<div class="player-row">
       <div class="player-name">${s.a} @ ${s.h}</div>
       <div class="player-proj">${s.proj}</div>
-      <div class="player-actual ${Math.abs(+s.delta) <= 7 ? 'actual-hit' : 'actual-miss'}">${s.actual}</div>
-    </div>`).join('');
-
+      <div class="player-actual ${hit ? 'actual-hit' : 'actual-miss'}">${s.actual} (Δ${Math.abs(s.delta).toFixed(0)})</div>
+    </div>`;
+  }).join('');
   main.innerHTML = `
     <div class="summary">
       <h3>Model · ${state.season} W${state.week}</h3>
       <div class="summary-grid">
         <div class="stat"><div class="val">${mae}</div><div class="lbl">Total MAE</div></div>
-        <div class="stat"><div class="val">${spreadMae}</div><div class="lbl">Margin MAE</div></div>
-        <div class="stat"><div class="val">${hitRate}%</div><div class="lbl">Within 7 pts</div></div>
+        <div class="stat"><div class="val">${hitRate}%</div><div class="lbl">±3 hit rate</div></div>
         <div class="stat"><div class="val">${n}</div><div class="lbl">Games</div></div>
       </div>
     </div>
-    <div class="summary">
-      <h3>Game-by-game</h3>
-      <div class="players">${sampleRows}</div>
-    </div>
-    <div class="summary">
-      <h3>How it works</h3>
+    <div class="summary"><h3>Game-by-game</h3><div class="players">${sampleRows}</div></div>
+    <div class="summary"><h3>How it works</h3>
       <p style="color:var(--ink-dim);font-size:13px;line-height:1.6;margin:0">
-        Each team's projected points blend their <b style="color:var(--ink)">last-4-week scoring</b> (60%)
-        with their <b style="color:var(--ink)">season average</b> (40%), mixed with the opponent's
-        points-allowed history. Home +3%, away -3%. Confidence scales with sample size.
+        Team scores blend last-4-week (60%) + full season (40%) offense vs opponent defense. 
+        Prior season fades out by week 8. Player props use per-game averages regressed to positional baselines, adjusted for matchup.
       </p>
     </div>`;
+}
+
+function renderFactCheck(main) {
+  const completed = state.games.filter(g => g.completed);
+  if (!completed.length) {
+    main.innerHTML = `<div class="hint"><div class="icon">📊</div><div class="title">No completed games</div><div class="sub">Load a past week to see fact check results.</div></div>`;
+    return;
+  }
+
+  // ── Category trackers ──────────────────────────────────────────────────────
+  const cats = {
+    total:    { label: 'Game Total (±3)',       hits: 0, total: 0 },
+    awayPts:  { label: 'Away Score (±3)',        hits: 0, total: 0 },
+    homePts:  { label: 'Home Score (±3)',        hits: 0, total: 0 },
+    awayPass: { label: 'Away Pass Yds (±10)',    hits: 0, total: 0 },
+    awayRush: { label: 'Away Rush Yds (±10)',    hits: 0, total: 0 },
+    homePass: { label: 'Home Pass Yds (±10)',    hits: 0, total: 0 },
+    homeRush: { label: 'Home Rush Yds (±10)',    hits: 0, total: 0 },
+    tdHit:    { label: 'TD Scorer (top pick)',   hits: 0, total: 0 },
+    playerYds:{ label: 'Player Yds (±10)',       hits: 0, total: 0 },
+  };
+
+  const gameRows = [];
+
+  for (const g of completed) {
+    const proj = projectGame(g);
+    if (!proj) continue;
+    const aY = g.teamYards[g.away.id];
+    const hY = g.teamYards[g.home.id];
+    const actualTotal = g.away.score + g.home.score;
+
+    const check = (cat, projVal, actualVal, tol) => {
+      if (actualVal == null) return null;
+      cats[cat].total++;
+      const hit = Math.abs(projVal - actualVal) <= tol;
+      if (hit) cats[cat].hits++;
+      return hit;
+    };
+
+    const totalHit  = check('total',    proj.total,        actualTotal,      3);
+    const awayHit   = check('awayPts',  proj.awayPts,      g.away.score,     3);
+    const homeHit   = check('homePts',  proj.homePts,      g.home.score,     3);
+    const awayPassH = check('awayPass', proj.awayPassYds,  aY?.pass ?? null, 10);
+    const awayRushH = check('awayRush', proj.awayRushYds,  aY?.rush ?? null, 10);
+    const homePassH = check('homePass', proj.homePassYds,  hY?.pass ?? null, 10);
+    const homeRushH = check('homeRush', proj.homeRushYds,  hY?.rush ?? null, 10);
+
+    // Top TD pick
+    const teamIds = [g.away.id, g.home.id];
+    const tdCands = Object.values(state.priorPlayerStats)
+      .filter(ps => teamIds.includes(ps.team) && ps.games > 0.1)
+      .map(ps => {
+        const tdPG = getPriorTds(ps);
+        let base = 0;
+        if (ps.position === 'QB') base = Math.min(88, 25 + tdPG * 38);
+        else if (ps.position === 'RB') base = Math.min(72, 8 + tdPG * 55);
+        else if (ps.position === 'WR') base = Math.min(62, 5 + tdPG * 60);
+        else if (ps.position === 'TE') base = Math.min(55, 5 + tdPG * 60);
+        return { ...ps, _prob: base };
+      })
+      .sort((a,b) => b._prob - a._prob);
+
+    let tdPickHit = null;
+    if (tdCands.length) {
+      cats.tdHit.total++;
+      const top = tdCands[0];
+      const ap = g.actualPlayers[top.id];
+      const scored = ap ? (ap.passTds + ap.rushTds + ap.recTds) > 0 : false;
+      if (scored) cats.tdHit.hits++;
+      tdPickHit = scored;
+    }
+
+    // Player yds
+    const teamIdsA = [g.away.id, g.home.id];
+    const relPlayers = Object.values(state.priorPlayerStats)
+      .filter(ps => teamIdsA.includes(ps.team) && ['QB','RB','WR','TE'].includes(ps.position) && ps.games > 0.1);
+    const posBaseline = { QB: 220, RB: 65, WR: 55, TE: 35 };
+    for (const pos of ['QB','RB','WR','TE']) {
+      for (const side of ['away','home']) {
+        const team = g[side];
+        const oppRat = side === 'away' ? (proj.hRat) : (proj.aRat);
+        const homeB  = side === 'home' ? 1.03 : 0.97;
+        const lg     = leagueAvgs();
+        const players = relPlayers.filter(ps => ps.team === team.id && ps.position === pos)
+          .sort((a,b) => getPriorYds(b,pos) - getPriorYds(a,pos)).slice(0, pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1);
+        for (const ps of players) {
+          const priorAvg = getPriorYds(ps, pos);
+          const baseline = posBaseline[pos] || 50;
+          const regW     = Math.max(0.15, 0.7 - (ps.games-1)*0.08);
+          const regressed = priorAvg*(1-regW) + baseline*regW;
+          let defMult = 1.0;
+          if (oppRat) { defMult = 1 + (oppRat.defPts/Math.max(1,lg.pts))*0.3; defMult = Math.max(0.75,Math.min(1.25,defMult)); }
+          const projYds = Math.round(regressed * defMult * homeB);
+          const ap = g.actualPlayers[ps.id];
+          const actualYds = ap ? getActualYds(ap, pos) : null;
+          if (actualYds != null) {
+            cats.playerYds.total++;
+            if (Math.abs(projYds - actualYds) <= 10) cats.playerYds.hits++;
+          }
+        }
+      }
+    }
+
+    const hitBadge = h => h == null ? '' : h
+      ? `<span class="fact-hit">✓</span>`
+      : `<span class="fact-miss">✗</span>`;
+
+    gameRows.push(`
+      <div class="fact-section">
+        <div class="fact-section-head">
+          <h3>${g.away.abbr} @ ${g.home.abbr}</h3>
+          <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:var(--ink-faint)">${
+            [totalHit,awayHit,homeHit,awayPassH,awayRushH,homePassH,homeRushH,tdPickHit].filter(x=>x===true).length
+          } / ${
+            [totalHit,awayHit,homeHit,awayPassH,awayRushH,homePassH,homeRushH,tdPickHit].filter(x=>x!=null).length
+          } hits</span>
+        </div>
+        <div class="fact-row"><span class="fact-row-lbl">Total (proj ${proj.total.toFixed(1)} · act ${actualTotal})</span>${hitBadge(totalHit)}</div>
+        <div class="fact-row"><span class="fact-row-lbl">${g.away.abbr} score (proj ${proj.awayPts.toFixed(1)} · act ${g.away.score})</span>${hitBadge(awayHit)}</div>
+        <div class="fact-row"><span class="fact-row-lbl">${g.home.abbr} score (proj ${proj.homePts.toFixed(1)} · act ${g.home.score})</span>${hitBadge(homeHit)}</div>
+        ${aY ? `<div class="fact-row"><span class="fact-row-lbl">${g.away.abbr} pass (proj ${proj.awayPassYds} · act ${aY.pass})</span>${hitBadge(awayPassH)}</div>
+        <div class="fact-row"><span class="fact-row-lbl">${g.away.abbr} rush (proj ${proj.awayRushYds} · act ${aY.rush})</span>${hitBadge(awayRushH)}</div>` : ''}
+        ${hY ? `<div class="fact-row"><span class="fact-row-lbl">${g.home.abbr} pass (proj ${proj.homePassYds} · act ${hY.pass})</span>${hitBadge(homePassH)}</div>
+        <div class="fact-row"><span class="fact-row-lbl">${g.home.abbr} rush (proj ${proj.homeRushYds} · act ${hY.rush})</span>${hitBadge(homeRushH)}</div>` : ''}
+        ${tdPickHit != null ? `<div class="fact-row"><span class="fact-row-lbl">Top TD pick: ${tdCands[0]?.name || '—'}</span>${hitBadge(tdPickHit)}</div>` : ''}
+      </div>`);
+  }
+
+  // Overall accuracy table
+  const catRows = Object.values(cats).map(c => {
+    if (!c.total) return '';
+    const pct = Math.round(100 * c.hits / c.total);
+    const col = pct >= 60 ? 'var(--accent)' : pct >= 40 ? 'var(--warn)' : 'var(--hot)';
+    return `<div class="fact-row">
+      <span class="fact-row-lbl">${c.label}</span>
+      <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-weight:700;font-size:13px;color:${col}">${pct}% (${c.hits}/${c.total})</span>
+    </div>`;
+  }).join('');
+
+  // Best category
+  const ranked = Object.values(cats).filter(c => c.total >= 2).sort((a,b) => (b.hits/b.total) - (a.hits/a.total));
+  const best = ranked[0];
+
+  main.innerHTML = `
+    <div class="fact-section">
+      <div class="fact-section-head" style="flex-direction:column;align-items:flex-start;gap:4px">
+        <h3>Accuracy · ${state.season} W${state.week}</h3>
+        ${best ? `<div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;color:var(--accent)">Best: ${best.label} (${Math.round(100*best.hits/best.total)}%)</div>` : ''}
+      </div>
+      ${catRows}
+    </div>
+    ${gameRows.join('')}`;
 }
 
 // ============================================================================
@@ -1820,6 +2224,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     state.activeTab = tab.dataset.tab;
+    state.openGameId = null;  // reset drill-in when switching tabs
     render();
   });
 });
