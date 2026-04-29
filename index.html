@@ -341,21 +341,48 @@ color: var(–ink-faint);
 text-transform: uppercase;
 letter-spacing: 0.1em;
 }
-.tt .yds-row {
+.tt .matchup-tag {
 margin-top: 6px;
-padding-top: 6px;
-border-top: 1px solid var(–line);
-}
-.tt .yds-item {
 font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
 font-size: 10px;
-display: flex;
-gap: 4px;
-align-items: baseline;
+color: var(–ink-faint);
 }
-.tt.home .yds-item { justify-content: flex-end; }
-.tt .yds-num { color: var(–ink-dim); font-weight: 600; }
-.tt .yds-lbl { color: var(–ink-faint); }
+.tt.home .matchup-tag { text-align: right; }
+.tt .matchup-tag.edge-good { color: var(–accent); }
+.tt .matchup-tag.edge-bad  { color: var(–hot); }
+
+.detail-grid {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 1px;
+background: var(–line);
+border-top: 1px solid var(–line);
+}
+.detail-cell {
+background: var(–bg-3);
+padding: 10px 14px;
+}
+.detail-cell.right { text-align: right; }
+.detail-lbl {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 9px;
+color: var(–ink-faint);
+text-transform: uppercase;
+letter-spacing: 0.1em;
+margin-bottom: 3px;
+}
+.detail-val {
+font-family: ui-monospace, ‘SF Mono’, Menlo, monospace;
+font-size: 14px;
+font-weight: 600;
+color: var(–ink);
+}
+.detail-val .sub {
+font-size: 10px;
+color: var(–ink-faint);
+font-weight: 400;
+margin-left: 3px;
+}
 
 .conf-row {
 padding: 8px 16px;
@@ -1196,8 +1223,22 @@ function renderGameCard(g) {
   const awayActualYds = g.teamYards[g.away.id] || null;
   const homeActualYds = g.teamYards[g.home.id] || null;
 
+  // Matchup edge label for the card face — plain English
+  function matchupLine(offEdge, label) {
+    if (offEdge == null || Math.abs(offEdge) < 3) return '';
+    const good = offEdge > 0;
+    const cls  = good ? 'edge-good' : 'edge-bad';
+    const word = good ? 'favourable' : 'tough';
+    return `<div class="matchup-tag ${cls}">${label} matchup ${word}</div>`;
+  }
+
+  const awayEdge = proj.awayPassEdge ?? 0;
+  const homeEdge = proj.homePassEdge ?? 0;
+
   return `
     <div class="game" data-id="${g.id}">
+
+      <!-- ── Card header: just the matchup + projected total ── -->
       <div class="game-head">
         <div class="matchup">
           <div class="teams">${g.away.abbr}<span class="at">@</span>${g.home.abbr}</div>
@@ -1206,12 +1247,13 @@ function renderGameCard(g) {
         <div style="display:flex;align-items:center;gap:10px">
           <div class="total-proj">
             <div class="num">${proj.total.toFixed(1)}</div>
-            <div class="lbl">proj total${actualTotal != null ? ` · ${actualTotal} actual` : ''}</div>
+            <div class="lbl">proj pts${actualTotal != null ? ` · ${actualTotal} actual` : ''}</div>
           </div>
           <span class="caret">▾</span>
         </div>
       </div>
 
+      <!-- ── Score comparison: proj vs actual, side by side ── -->
       <div class="team-totals">
         <div class="tt away">
           <div class="team">${g.away.abbr} <span style="font-weight:400;color:var(--ink-faint);font-size:10px">away</span></div>
@@ -1219,12 +1261,10 @@ function renderGameCard(g) {
             <div class="proj-pts">${proj.awayPts.toFixed(1)}</div>
             <div class="proj-lbl">proj</div>
           </div>
-          ${g.completed ? `<div class="actual-row"><div class="actual-pts">${g.away.score}</div><div class="actual-lbl">actual</div></div>` : ''}
-          <div class="yds-row">
-            <div class="yds-item"><span class="yds-num">${proj.awayPassYds}</span><span class="yds-lbl">pass${edgeTag(proj.awayPassEdge)}</span></div>
-            <div class="yds-item"><span class="yds-num">${proj.awayRushYds}</span><span class="yds-lbl">rush${edgeTag(proj.awayRushEdge)}</span></div>
-            ${g.completed && awayActualYds ? `<div class="yds-item" style="margin-top:3px"><span class="yds-num">${awayActualYds}</span><span class="yds-lbl">actual total yds</span></div>` : ''}
-          </div>
+          ${g.completed
+            ? `<div class="actual-row"><div class="actual-pts">${g.away.score}</div><div class="actual-lbl">actual</div></div>`
+            : ''}
+          ${matchupLine(awayEdge, 'off')}
         </div>
         <div class="divider"></div>
         <div class="tt home">
@@ -1233,16 +1273,46 @@ function renderGameCard(g) {
             <div class="proj-pts">${proj.homePts.toFixed(1)}</div>
             <div class="proj-lbl">proj</div>
           </div>
-          ${g.completed ? `<div class="actual-row"><div class="actual-pts">${g.home.score}</div><div class="actual-lbl">actual</div></div>` : ''}
-          <div class="yds-row">
-            <div class="yds-item"><span class="yds-num">${proj.homePassYds}</span><span class="yds-lbl">pass${edgeTag(proj.homePassEdge)}</span></div>
-            <div class="yds-item"><span class="yds-num">${proj.homeRushYds}</span><span class="yds-lbl">rush${edgeTag(proj.homeRushEdge)}</span></div>
-            ${g.completed && homeActualYds ? `<div class="yds-item" style="margin-top:3px"><span class="yds-num">${homeActualYds}</span><span class="yds-lbl">actual total yds</span></div>` : ''}
-          </div>
+          ${g.completed
+            ? `<div class="actual-row"><div class="actual-pts">${g.home.score}</div><div class="actual-lbl">actual</div></div>`
+            : ''}
+          ${matchupLine(homeEdge, 'off')}
         </div>
       </div>
 
+      <!-- ── Expandable: yardage breakdown + player projections ── -->
       <div class="game-body">
+
+        <!-- Yardage detail grid -->
+        <div class="detail-grid">
+          <div class="detail-cell">
+            <div class="detail-lbl">${g.away.abbr} proj passing</div>
+            <div class="detail-val">${proj.awayPassYds}<span class="sub">yds</span></div>
+          </div>
+          <div class="detail-cell right">
+            <div class="detail-lbl">${g.home.abbr} proj passing</div>
+            <div class="detail-val">${proj.homePassYds}<span class="sub">yds</span></div>
+          </div>
+          <div class="detail-cell">
+            <div class="detail-lbl">${g.away.abbr} proj rushing</div>
+            <div class="detail-val">${proj.awayRushYds}<span class="sub">yds</span></div>
+          </div>
+          <div class="detail-cell right">
+            <div class="detail-lbl">${g.home.abbr} proj rushing</div>
+            <div class="detail-val">${proj.homeRushYds}<span class="sub">yds</span></div>
+          </div>
+          ${g.completed && awayActualYds ? `
+          <div class="detail-cell">
+            <div class="detail-lbl">${g.away.abbr} actual total yds</div>
+            <div class="detail-val">${awayActualYds}<span class="sub">yds</span></div>
+          </div>` : ''}
+          ${g.completed && homeActualYds ? `
+          <div class="detail-cell right">
+            <div class="detail-lbl">${g.home.abbr} actual total yds</div>
+            <div class="detail-val">${homeActualYds}<span class="sub">yds</span></div>
+          </div>` : ''}
+        </div>
+
         ${renderPlayerSections(g, proj)}
         ${renderTDSection(g)}
       </div>
