@@ -522,7 +522,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
 const HIT_TOTAL_TOL = 3;     // game total / score: ±3
@@ -688,6 +688,46 @@ function extractTeamYardsFromSummary(summary) {
   return out;
 }
 
+// ESPN position codes — fallback map for when athlete.position comes as a $ref URL
+const ESPN_POSITION_BY_ID = {
+  '1': 'QB', '2': 'RB', '3': 'FB', '4': 'WR', '5': 'TE',
+  '6': 'OL', '7': 'C', '8': 'OG', '9': 'OT',
+  '10': 'DL', '11': 'DE', '12': 'DT', '13': 'NT',
+  '14': 'LB', '15': 'ILB', '16': 'OLB', '17': 'MLB',
+  '18': 'CB', '19': 'S', '20': 'SAF', '21': 'FS', '22': 'SS',
+  '23': 'K', '24': 'P', '25': 'LS', '26': 'PR', '27': 'KR', '28': 'H',
+};
+function resolvePosition(athleteObj) {
+  if (!athleteObj) return '';
+  const pos = athleteObj.position;
+  if (!pos) return '';
+  // Inline object form
+  if (typeof pos === 'object' && pos.abbreviation) return pos.abbreviation;
+  // $ref URL form: ".../positions/{N}?lang=en&region=us"
+  if (typeof pos === 'object' && pos.$ref) {
+    const m = String(pos.$ref).match(/\/positions\/(\d+)/);
+    if (m && ESPN_POSITION_BY_ID[m[1]]) return ESPN_POSITION_BY_ID[m[1]];
+  }
+  if (typeof pos === 'string') {
+    const m = pos.match(/\/positions\/(\d+)/);
+    if (m && ESPN_POSITION_BY_ID[m[1]]) return ESPN_POSITION_BY_ID[m[1]];
+  }
+  return '';
+}
+// Infer position from stats-group context when athlete.position is missing
+function inferPositionFromGroup(catName, currentPos, isLeadAthlete) {
+  // Don't override a real QB/RB/WR/TE/FB position
+  if (['QB','RB','WR','TE','FB'].includes(currentPos)) return currentPos;
+  // Passing group: leader is virtually always the QB
+  if (catName === 'passing' && isLeadAthlete) return 'QB';
+  // Rushing group: leader is the lead RB (could be WR on jet sweeps, but lead is RB ~95% of the time)
+  if (catName === 'rushing' && isLeadAthlete) return 'RB';
+  // Receiving group: assume WR for everyone (actual TEs vs WRs requires more signal — see refinement below)
+  if (catName === 'receiving') return currentPos || 'WR';
+  // Non-leaders in passing/rushing — leave as-is (could be anyone)
+  return currentPos;
+}
+
 function extractPlayersFromSummary(summary) {
   const players = [];
   if (!summary || !summary.boxscore || !summary.boxscore.players) return players;
@@ -699,27 +739,57 @@ function extractPlayersFromSummary(summary) {
       const labels = grp.labels || [];
       const ydsIdx = labels.findIndex(l => l === 'YDS');
       const tdIdx = labels.findIndex(l => l === 'TD');
-      for (const ath of (grp.athletes || [])) {
+      const recIdx = labels.findIndex(l => l === 'REC');
+      const recAvgIdx = labels.findIndex(l => l === 'AVG');
+      const athletes = grp.athletes || [];
+      athletes.forEach((ath, athIdx) => {
         const a = ath.athlete || {};
+        if (!a.id) return;
         const stats = ath.stats || [];
         const yds = ydsIdx >= 0 ? +stats[ydsIdx] || 0 : 0;
         const tds = tdIdx >= 0 ? +stats[tdIdx] || 0 : 0;
+        const recs = recIdx >= 0 ? +stats[recIdx] || 0 : 0;
         let p = players.find(pl => pl.id === a.id);
         if (!p) {
           p = {
             id: a.id, name: a.displayName || a.shortName || '',
             team: teamId, abbr: teamAbbr,
-            position: (a.position && a.position.abbreviation) || '',
+            position: resolvePosition(a),
             passYds: 0, rushYds: 0, recYds: 0,
             passTds: 0, rushTds: 0, recTds: 0,
+            // Track for position inference:
+            _recCount: 0, _recAvgYds: 0,
           };
           players.push(p);
         }
+        // Update position if still missing — infer from the stats group context
+        if (!p.position) {
+          p.position = inferPositionFromGroup(cat, p.position, athIdx === 0);
+        }
         if (cat === 'passing')   { p.passYds += yds; p.passTds += tds; }
         else if (cat === 'rushing')   { p.rushYds += yds; p.rushTds += tds; }
-        else if (cat === 'receiving') { p.recYds += yds; p.recTds += tds; }
+        else if (cat === 'receiving') {
+          p.recYds += yds; p.recTds += tds;
+          p._recCount += recs;
+          if (recAvgIdx >= 0) p._recAvgYds = +stats[recAvgIdx] || 0;
+        }
+      });
+    }
+  }
+  // Final pass: refine WR vs TE for receiving-only players using crude heuristic.
+  // A player whose only stats are receiving with low avg yds/rec (<11) AND not many recs (<6) → likely a TE.
+  // This is rough but better than calling everyone a WR.
+  for (const p of players) {
+    if (p.position === 'WR' && p.passYds === 0 && p.rushYds === 0) {
+      // If we already had a real position from $ref, we'd never be here.
+      // Heuristic only fires when ESPN gave us nothing.
+      if (p._recAvgYds > 0 && p._recAvgYds < 11 && p._recCount > 0 && p._recCount < 6) {
+        // Tentatively call it TE — still imperfect, but distinguishes some.
+        p.position = 'TE';
       }
     }
+    delete p._recCount;
+    delete p._recAvgYds;
   }
   return players;
 }
@@ -1499,6 +1569,7 @@ function renderScoreSection(g, proj, isOpen) {
           '<div class="math" style="background:transparent;padding:12px 0 0">' +
             '<div class="m-formula">' +
               'points = (lg + 0.5·own_off + 0.5·opp_def) × home/away factor<br>' +
+              'data sources: ' + (state.week > 1 ? 'weeks 1–' + (state.week - 1) + ' of ' + state.season + ' + all of ' + (state.season - 1) : 'all of ' + (state.season - 1) + ' (no prior weeks this season)') + '<br>' +
               'prior season blend weight: ' + (priorSeasonWeight() * 100).toFixed(0) + '% (Wk ' + state.week + ')<br>' +
               'within ±' + HIT_TOTAL_TOL + ' = HIT' +
             '</div>' +
@@ -1656,6 +1727,27 @@ function renderPropsSection(g, proj, isOpen, expanded) {
     }
   }
 
+  // Empty-state guard: if no rows were rendered, explain why
+  let bodyHtml;
+  if (totalRows === 0) {
+    const hasAnyPlayers = g.players && g.players.length > 0;
+    const hasAnyOffSkill = hasAnyPlayers && g.players.some(p => ['QB','RB','WR','TE'].includes(p.position));
+    let msg;
+    if (!hasAnyPlayers) {
+      msg = 'No player data returned by ESPN for this game.';
+    } else if (!hasAnyOffSkill) {
+      msg = 'Player roster came through, but ESPN did not tag any positions (QB/RB/WR/TE). This usually clears up on a re-load.';
+    } else {
+      msg = 'No skill-position players matched. (Unusual.)';
+    }
+    bodyHtml =
+      '<div class="hint" style="padding:24px 16px">' +
+        '<div class="sub" style="max-width:none">' + escapeHtml(msg) + '</div>' +
+      '</div>';
+  } else {
+    bodyHtml = '<div class="prop-list">' + groupsHtml.join('') + '</div>';
+  }
+
   return '' +
     '<div class="section ' + (isOpen ? 'open' : '') + '" data-section="props">' +
       '<div class="section-head">' +
@@ -1663,7 +1755,7 @@ function renderPropsSection(g, proj, isOpen, expanded) {
         '<span class="section-caret">▾</span>' +
       '</div>' +
       '<div class="section-body">' +
-        '<div class="prop-list">' + groupsHtml.join('') + '</div>' +
+        bodyHtml +
       '</div>' +
     '</div>';
 }
