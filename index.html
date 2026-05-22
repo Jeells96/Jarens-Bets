@@ -639,6 +639,81 @@
   .fact-hist-bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); border-radius: 2px; }
   .fact-hist-pct { color: var(--ink); font-weight: 700; min-width: 40px; text-align: right; }
   .fact-hist-cum { color: var(--accent); }
+
+  /* ---- V3: Player Props tab ---- */
+  .props-tab { padding: 12px; display: flex; flex-direction: column; gap: 0; }
+  .props-filters {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex; flex-direction: column; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .filter-group { display: flex; flex-direction: column; gap: 6px; }
+  .filter-label {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px; font-weight: 600;
+    padding: 6px 10px; border-radius: 7px;
+    background: var(--bg-3); color: var(--ink-dim);
+    border: 1px solid var(--line);
+    cursor: pointer;
+  }
+  .chip:active { transform: scale(0.96); }
+  .chip.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .props-summary {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px; color: var(--ink-dim);
+    padding: 0 4px 10px;
+  }
+  .props-colhead {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    gap: 10px; align-items: center;
+    padding: 8px 14px;
+    background: var(--bg-4);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .props-list { background: var(--bg-2); border: 1px solid var(--line); border-radius: 0 0 12px 12px; overflow: hidden; }
+  .props-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    gap: 10px; align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .props-row:last-child { border-bottom: none; }
+  .props-row.is-hit { background: linear-gradient(90deg, rgba(212,255,58,0.05), transparent 60%); }
+  .props-row.is-miss { background: linear-gradient(90deg, rgba(255,107,107,0.05), transparent 60%); }
+  .props-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .props-name > :first-child { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .props-stattype { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 9px; color: var(--ink-faint); }
+  .conf-pip { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .conf-pip.conf-high { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .conf-pip.conf-med { background: var(--warn); }
+  .conf-pip.conf-low { background: var(--ink-faint); }
+
+  /* All-time / season scan */
+  .scan-btn {
+    margin: 0;
+    width: 100%;
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 12px; border-radius: 8px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-weight: 700; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+    cursor: pointer;
+  }
+  .scan-btn:disabled { opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -666,8 +741,9 @@
 
 <div class="tabs">
   <button class="tab active" data-tab="games">Games</button>
+  <button class="tab" data-tab="props">Props</button>
+  <button class="tab" data-tab="gamebets">Bets</button>
   <button class="tab" data-tab="facts">Facts</button>
-  <button class="tab" data-tab="gamebets">Game Bets</button>
 </div>
 
 <div class="modal-overlay" id="settings-modal">
@@ -728,7 +804,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V2';
+const APP_VERSION = 'V3';
 const CACHE_VERSION = 'v8';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -827,6 +903,11 @@ const state = {
   weatherEnabled: true,
   factHistory: null,     // { weeks: [{week, pct, hit, n}], cumPct } for prior weeks
   factHistoryLoading: false,
+  seasonScan: null,      // { weeks:[...], cats:{...}, cumPct, cumHit, cumN } whole-season walk-forward
+  seasonScanLoading: false,
+  seasonScanProgress: '',
+  propTeamFilter: 'all', // team abbr or 'all'
+  propConfFilter: 'all', // 'all' | 'high' | 'med' | 'low'
 };
 
 // ============================================================================
@@ -1151,6 +1232,10 @@ async function loadWeek() {
   state.expandedRows = {};
   state.factHistory = null;
   state.factHistoryLoading = false;
+  state.seasonScan = null;
+  state.seasonScanLoading = false;
+  state.propTeamFilter = 'all';
+  state.propConfFilter = 'all';
   document.getElementById('load-btn').disabled = true;
   setStatus('loading', 'Loading Week ' + state.week + '…');
 
@@ -1765,6 +1850,7 @@ function render() {
   const main = document.getElementById('main');
   if (!state.loaded) return;
   if (state.activeTab === 'gamebets') return renderGameBets(main);
+  if (state.activeTab === 'props') return renderProps(main);
   if (state.activeTab === 'facts') return renderFacts(main);
   return renderGames(main);
 }
@@ -2405,104 +2491,158 @@ function gradeWeek() {
 // prior season) and grade the completed games of week W. Everything is read
 // from cache (already fetched at load) so this is fast on a warm cache.
 // ----------------------------------------------------------------------------
+// Build a priorWeeks structure from cached data for weeks [1, upTo)
+async function buildPriorWeeksUpTo(upTo) {
+  const pw = {};
+  for (let pwk = 1; pwk < upTo; pwk++) {
+    let sb = null;
+    try { sb = await cachedJSON(ESPN.scoreboard(state.season, pwk)); } catch {}
+    if (!sb || !sb.events) continue;
+    for (const ev of sb.events) {
+      const comp = ev.competitions && ev.competitions[0];
+      if (!comp || !comp.status || !comp.status.type || !comp.status.type.completed) continue;
+      const cs = comp.competitors || [];
+      const home = cs.find(c => c.homeAway === 'home');
+      const away = cs.find(c => c.homeAway === 'away');
+      if (!home || !away) continue;
+      const hs = +home.score, as = +away.score;
+      if (isNaN(hs) || isNaN(as)) continue;
+      let teamYds = {};
+      try { teamYds = extractTeamYardsFromSummary(await cachedJSON(ESPN.summary(ev.id))); } catch {}
+      const hY = teamYds[home.team.id], aY = teamYds[away.team.id];
+      for (const [t, pf, pa, my, opp] of [
+        [home.team.id, hs, as, hY, aY],
+        [away.team.id, as, hs, aY, hY],
+      ]) {
+        if (!pw[t]) pw[t] = [];
+        pw[t].push({
+          week: pwk, eventId: ev.id, ptsFor: pf, ptsAgainst: pa,
+          passYds: my ? my.passYds : null, rushYds: my ? my.rushYds : null,
+          passYdsAg: opp ? opp.passYds : null, rushYdsAg: opp ? opp.rushYds : null,
+        });
+      }
+    }
+  }
+  return pw;
+}
+
+// Grade a single week W blind (priors only from weeks < W). Returns gradeWeek() cats.
+async function gradeWeekBlind(W) {
+  const pw = await buildPriorWeeksUpTo(W);
+  let sbW = null;
+  try { sbW = await cachedJSON(ESPN.scoreboard(state.season, W)); } catch {}
+  const weekGames = [];
+  if (sbW && sbW.events) {
+    for (const ev of sbW.events) {
+      let summary = null;
+      try { summary = await cachedJSON(ESPN.summary(ev.id)); } catch {}
+      const game = buildGame(ev, summary);
+      if (game && game.completed) weekGames.push(game);
+    }
+  }
+  const savedPriorWeeks = state.priorWeeks, savedWeek = state.week, savedGames = state.games;
+  state.priorWeeks = pw; state.week = W; state.games = weekGames;
+  let graded;
+  try { graded = gradeWeek(); }
+  finally { state.priorWeeks = savedPriorWeeks; state.week = savedWeek; state.games = savedGames; }
+  return { graded, gameCount: weekGames.length };
+}
+
 async function loadFactHistory() {
   if (state.factHistoryLoading) return;
   state.factHistoryLoading = true;
   render();
 
-  // Snapshot live projection inputs so we can temporarily rewind them
-  const savedPriorWeeks = state.priorWeeks;
   const savedWeek = state.week;
-
-  const weeks = [];
-  for (let w = 1; w < savedWeek; w++) weeks.push(w);
-
   const results = [];
   let cumHit = 0, cumN = 0;
 
   try {
-    for (const W of weeks) {
-      // Build priorWeeks containing ONLY weeks < W from cached scoreboards+summaries
-      const pw = {};
-      for (let pwk = 1; pwk < W; pwk++) {
-        let sb = null;
-        try { sb = await cachedJSON(ESPN.scoreboard(state.season, pwk)); } catch {}
-        if (!sb || !sb.events) continue;
-        for (const ev of sb.events) {
-          const comp = ev.competitions && ev.competitions[0];
-          if (!comp || !comp.status || !comp.status.type || !comp.status.type.completed) continue;
-          const cs = comp.competitors || [];
-          const home = cs.find(c => c.homeAway === 'home');
-          const away = cs.find(c => c.homeAway === 'away');
-          if (!home || !away) continue;
-          const hs = +home.score, as = +away.score;
-          if (isNaN(hs) || isNaN(as)) continue;
-          let teamYds = {};
-          try { teamYds = extractTeamYardsFromSummary(await cachedJSON(ESPN.summary(ev.id))); } catch {}
-          const hY = teamYds[home.team.id], aY = teamYds[away.team.id];
-          for (const [t, pf, pa, my, opp] of [
-            [home.team.id, hs, as, hY, aY],
-            [away.team.id, as, hs, aY, hY],
-          ]) {
-            if (!pw[t]) pw[t] = [];
-            pw[t].push({
-              week: pwk, eventId: ev.id, ptsFor: pf, ptsAgainst: pa,
-              passYds: my ? my.passYds : null, rushYds: my ? my.rushYds : null,
-              passYdsAg: opp ? opp.passYds : null, rushYdsAg: opp ? opp.rushYds : null,
-            });
-          }
-        }
-      }
-
-      // Fetch week W's games (cached) and grade with the rewound priors
-      let sbW = null;
-      try { sbW = await cachedJSON(ESPN.scoreboard(state.season, W)); } catch {}
-      const weekGames = [];
-      if (sbW && sbW.events) {
-        for (const ev of sbW.events) {
-          let summary = null;
-          try { summary = await cachedJSON(ESPN.summary(ev.id)); } catch {}
-          const game = buildGame(ev, summary);
-          if (game && game.completed) weekGames.push(game);
-        }
-      }
-
-      // Rewind state and grade
-      state.priorWeeks = pw;
-      state.week = W;
-      const savedGames = state.games;
-      state.games = weekGames;
-      const graded = gradeWeek();
-      state.games = savedGames;
-
+    for (let W = 1; W < savedWeek; W++) {
+      const { graded, gameCount } = await gradeWeekBlind(W);
       const hit = Object.values(graded.cats).reduce((s, c) => s + c.hit, 0);
       const n = Object.values(graded.cats).reduce((s, c) => s + c.n, 0);
       cumHit += hit; cumN += n;
-      results.push({ week: W, hit, n, pct: n ? (100 * hit / n) : 0, games: weekGames.length });
+      results.push({ week: W, hit, n, pct: n ? (100 * hit / n) : 0, games: gameCount });
     }
-  } finally {
-    // Restore live state no matter what
-    state.priorWeeks = savedPriorWeeks;
-    state.week = savedWeek;
-  }
+  } catch (e) { console.warn('fact history error', e); }
 
   state.factHistory = { weeks: results, cumPct: cumN ? (100 * cumHit / cumN) : 0, cumHit, cumN };
   state.factHistoryLoading = false;
   render();
 }
 
+// All-time / full-season scan — walk every week 1..18 blind and aggregate by category.
+async function scanFullSeason() {
+  if (state.seasonScanLoading) return;
+  state.seasonScanLoading = true;
+  state.seasonScanProgress = 'Starting…';
+  render();
+
+  // Aggregate category totals across the whole season
+  const aggCats = {};
+  const weekResults = [];
+  let cumHit = 0, cumN = 0;
+
+  try {
+    for (let W = 1; W <= 18; W++) {
+      state.seasonScanProgress = 'Week ' + W + ' / 18';
+      // re-render just the progress without nuking the button handler context
+      const prog = document.getElementById('scan-progress');
+      if (prog) prog.textContent = state.seasonScanProgress; else render();
+
+      const { graded, gameCount } = await gradeWeekBlind(W);
+      if (gameCount === 0) { weekResults.push({ week: W, hit: 0, n: 0, pct: 0, games: 0 }); continue; }
+
+      let wkHit = 0, wkN = 0;
+      for (const key in graded.cats) {
+        const c = graded.cats[key];
+        if (!aggCats[key]) aggCats[key] = { hit: 0, n: 0, label: c.label, desc: c.desc };
+        aggCats[key].hit += c.hit;
+        aggCats[key].n += c.n;
+        wkHit += c.hit; wkN += c.n;
+      }
+      cumHit += wkHit; cumN += wkN;
+      weekResults.push({ week: W, hit: wkHit, n: wkN, pct: wkN ? (100 * wkHit / wkN) : 0, games: gameCount });
+    }
+  } catch (e) { console.warn('season scan error', e); }
+
+  state.seasonScan = {
+    cats: aggCats,
+    weeks: weekResults,
+    cumPct: cumN ? (100 * cumHit / cumN) : 0,
+    cumHit, cumN,
+    weeksWithGames: weekResults.filter(w => w.games > 0).length,
+  };
+  state.seasonScanLoading = false;
+  state.seasonScanProgress = '';
+  render();
+}
+
 function renderFacts(main) {
   const completed = state.games.filter(g => g.completed);
   if (!completed.length) {
+    // Still offer the all-time season scan even with no completed games this week
+    let seasonBlock;
+    if (state.seasonScanLoading) {
+      seasonBlock = '<div class="gb-empty">Scanning every week blind… <span id="scan-progress">' + escapeHtml(state.seasonScanProgress) + '</span></div>';
+    } else if (state.seasonScan) {
+      const ss = state.seasonScan;
+      seasonBlock = '<div style="padding:12px 14px;font-family:ui-monospace,monospace;font-size:13px;color:var(--ink)">Season accuracy: <b style="color:var(--accent)">' + ss.cumPct.toFixed(0) + '%</b> (' + ss.cumHit + '/' + ss.cumN + ') across ' + ss.weeksWithGames + ' weeks.</div>' +
+        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Re-scan season</button></div>';
+    } else {
+      seasonBlock = '<div class="gb-empty">No completed games this week — but you can still grade the whole ' + state.season + ' season.</div>' +
+        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Scan full season</button></div>';
+    }
     main.innerHTML =
       '<div class="facts">' +
         '<div class="fact-card">' +
-          '<div class="head">Facts · ' + state.season + ' W' + state.week + '</div>' +
-          '<div style="padding:14px;color:var(--ink-dim);font-size:13px">' +
-            'No completed games this week — Facts will fill in as games finish.' +
-          '</div>' +
+          '<div class="head">All-Time · Full Season Scan</div>' +
+          seasonBlock +
         '</div>' +
       '</div>';
+    const sb = main.querySelector('#season-scan-btn');
+    if (sb) sb.addEventListener('click', scanFullSeason);
     return;
   }
   const graded = gradeWeek();
@@ -2595,6 +2735,58 @@ function renderFacts(main) {
       '</div>';
   }
 
+  // All-time / full-season scan (every week 1..18, blind)
+  let seasonHtml;
+  if (state.seasonScanLoading) {
+    seasonHtml =
+      '<div class="fact-card">' +
+        '<div class="head">All-Time · Full Season Scan</div>' +
+        '<div class="gb-empty">Scanning every week blind… <span id="scan-progress">' + escapeHtml(state.seasonScanProgress) + '</span></div>' +
+      '</div>';
+  } else if (!state.seasonScan) {
+    seasonHtml =
+      '<div class="fact-card">' +
+        '<div class="head">All-Time · Full Season Scan</div>' +
+        '<div class="gb-empty">Grade the model across the entire ' + state.season + ' season at once — every week projected blind, aggregated by category. (Heaviest on a cold cache.)</div>' +
+        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Scan full season</button></div>' +
+      '</div>';
+  } else {
+    const ss = state.seasonScan;
+    const catEntries = Object.entries(ss.cats).filter(e => e[1].n > 0);
+    const bestCat = catEntries.length ? catEntries.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
+    const catRowsAll = catEntries.map(entry => {
+      const c = entry[1];
+      const pct = c.n ? (100 * c.hit / c.n) : 0;
+      const isBest = bestCat && entry[0] === bestCat[0];
+      return '<div class="fact-cat-row ' + (isBest ? 'best' : '') + '">' +
+          '<div class="fact-cat-top">' +
+            '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + (isBest ? '<span class="fact-best-pill">BEST</span>' : '') + '</div></div>' +
+            '<div class="fact-cat-pct">' + pct.toFixed(0) + '%</div>' +
+          '</div>' +
+          '<div class="fact-cat-bar-row">' +
+            '<div class="fact-cat-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="fact-cat-frac">' + c.hit + '/' + c.n + '</div>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+    const maxPct = Math.max(100, ...ss.weeks.map(w => w.pct));
+    const wkRows = ss.weeks.filter(w => w.games > 0).map(w =>
+      '<div class="fact-hist-row">' +
+        '<span class="fact-hist-wk">W' + w.week + '</span>' +
+        '<div class="fact-hist-bar"><div class="fill" style="width:' + (w.pct / maxPct * 100) + '%"></div></div>' +
+        '<span class="fact-hist-pct">' + w.pct.toFixed(0) + '%</span>' +
+      '</div>'
+    ).join('');
+    seasonHtml =
+      '<div class="fact-card">' +
+        '<div class="head">All-Time · ' + state.season + ' Season · cumulative <span class="fact-hist-cum">' + ss.cumPct.toFixed(0) + '%</span> (' + ss.cumHit + '/' + ss.cumN + ') · ' + ss.weeksWithGames + ' weeks</div>' +
+        catRowsAll +
+        '<div class="gb-sub">By Week</div>' +
+        '<div class="fact-history">' + wkRows + '</div>' +
+        '<div style="padding:10px 14px"><button class="scan-btn" id="season-scan-btn">Re-scan season</button></div>' +
+      '</div>';
+  }
+
   main.innerHTML = '' +
     '<div class="facts">' +
       '<div class="fact-hero">' +
@@ -2603,6 +2795,7 @@ function renderFacts(main) {
         '<div class="name">' + (best ? escapeHtml(best[1].label) : '—') + '</div>' +
         '<div class="sub">' + (best ? best[1].hit + '/' + best[1].n + ' hits' : '') + '</div>' +
       '</div>' +
+      seasonHtml +
       '<div class="fact-card">' +
         '<div class="head">This Week · Accuracy by Category</div>' +
         catRows +
@@ -2619,6 +2812,126 @@ function renderFacts(main) {
 
   const histBtn = main.querySelector('#fact-hist-btn');
   if (histBtn) histBtn.addEventListener('click', loadFactHistory);
+  const scanBtn = main.querySelector('#season-scan-btn');
+  if (scanBtn) scanBtn.addEventListener('click', scanFullSeason);
+}
+
+// ============================================================================
+// Player Props tab — flat, filterable list of every player prop
+// ============================================================================
+function confTier(conf) {
+  if (conf >= 70) return 'high';
+  if (conf >= 50) return 'med';
+  return 'low';
+}
+function confTierLabel(tier) {
+  return tier === 'high' ? 'High' : tier === 'med' ? 'Medium' : 'Low';
+}
+
+// Gather every player prop across all games into one flat list
+function gatherAllProps() {
+  const out = [];
+  for (const g of state.games) {
+    const proj = projectGame(g);
+    if (!proj) continue;
+    const conf = proj.conf;
+    const tier = confTier(conf);
+    for (const pos of ['QB','RB','WR','TE']) {
+      for (const side of ['away','home']) {
+        const team = g[side];
+        const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos);
+        teamPlayers.sort((a, b) => getPlayerActualYds(b, pos) - getPlayerActualYds(a, pos));
+        const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
+        for (const p of teamPlayers.slice(0, limit)) {
+          const got = getPlayerProjYds(p, pos, playerProjContext(g, proj, side));
+          const projYds = got.yds;
+          const actual = g.completed ? getPlayerActualYds(p, pos) : null;
+          const delta = actual != null ? actual - projYds : null;
+          const hit = delta != null ? Math.abs(delta) <= HIT_YDS_TOL : null;
+          out.push({
+            gameId: g.id, completed: g.completed,
+            name: p.name, abbr: p.abbr, teamId: p.team, position: pos,
+            oppAbbr: side === 'away' ? g.home.abbr : g.away.abbr,
+            projYds, actual, delta, hit,
+            conf, tier,
+            statType: pos === 'QB' ? 'Pass+Rush' : pos === 'RB' ? 'Rush+Rec' : pos === 'WR' ? 'Rec+Rush' : 'Rec',
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function renderProps(main) {
+  if (!state.games.length) {
+    main.innerHTML = '<div class="hint"><div class="title">No games</div></div>';
+    return;
+  }
+  const all = gatherAllProps();
+
+  // Build team filter options from teams present
+  const teams = Array.from(new Set(state.games.flatMap(g => [g.away.abbr, g.home.abbr]))).sort();
+
+  // Apply filters
+  let rows = all.slice();
+  if (state.propTeamFilter !== 'all') rows = rows.filter(r => r.abbr === state.propTeamFilter);
+  if (state.propConfFilter !== 'all') rows = rows.filter(r => r.tier === state.propConfFilter);
+
+  // Sort: confidence desc, then projected yards desc
+  rows.sort((a, b) => (b.conf - a.conf) || (b.projYds - a.projYds));
+
+  // Filter chips
+  const teamChips = ['all'].concat(teams).map(t =>
+    '<button class="chip ' + (state.propTeamFilter === t ? 'active' : '') + '" data-team="' + escapeHtml(t) + '">' + (t === 'all' ? 'All teams' : escapeHtml(t)) + '</button>'
+  ).join('');
+  const confChips = [['all','All'],['high','High'],['med','Medium'],['low','Low']].map(c =>
+    '<button class="chip ' + (state.propConfFilter === c[0] ? 'active' : '') + '" data-conf="' + c[0] + '">' + c[1] + '</button>'
+  ).join('');
+
+  // Hit-rate summary for the current filter (completed only)
+  const done = rows.filter(r => r.completed);
+  const hits = done.filter(r => r.hit).length;
+  const summaryLine = done.length
+    ? hits + '/' + done.length + ' hit (' + Math.round(100 * hits / done.length) + '%) · ±' + HIT_YDS_TOL + ' yds'
+    : rows.length + ' projected props · results show after games finish';
+
+  const propRows = rows.length ? rows.map(r => {
+    const tierDot = '<span class="conf-pip conf-' + r.tier + '" title="' + confTierLabel(r.tier) + ' confidence ' + r.conf + '%"></span>';
+    const actualCell = r.completed
+      ? '<div class="prop-actual ' + (r.hit ? 'hit' : 'miss') + '">' + r.actual + ' ' + fmtSigned(r.delta, 0) + '</div>'
+      : '<div class="prop-actual na">—</div>';
+    return '<div class="props-row ' + (r.completed ? (r.hit ? 'is-hit' : 'is-miss') : '') + '">' +
+      '<span class="pos-tag pos-' + r.position + '">' + r.position + '</span>' +
+      '<div class="props-name">' + escapeHtml(r.name) +
+        '<span class="prop-team">' + escapeHtml(r.abbr) + ' vs ' + escapeHtml(r.oppAbbr) + '</span>' +
+        '<span class="props-stattype">' + r.statType + ' yds</span>' +
+      '</div>' +
+      tierDot +
+      '<div class="prop-proj">' + r.projYds + '<span class="unit">yd</span></div>' +
+      actualCell +
+    '</div>';
+  }).join('') : '<div class="gb-empty">No props match these filters.</div>';
+
+  main.innerHTML = '<div class="props-tab">' +
+    '<div class="props-filters">' +
+      '<div class="filter-group"><div class="filter-label">Team</div><div class="chip-row">' + teamChips + '</div></div>' +
+      '<div class="filter-group"><div class="filter-label">Confidence</div><div class="chip-row">' + confChips + '</div></div>' +
+    '</div>' +
+    '<div class="props-summary">' + summaryLine + '</div>' +
+    '<div class="props-colhead">' +
+      '<span>Pos</span><span>Player · matchup</span><span title="model confidence">Conf</span>' +
+      '<span style="text-align:right">Proj</span><span style="text-align:right">Actual</span>' +
+    '</div>' +
+    '<div class="props-list">' + propRows + '</div>' +
+  '</div>';
+
+  main.querySelectorAll('.chip[data-team]').forEach(btn => {
+    btn.addEventListener('click', () => { state.propTeamFilter = btn.dataset.team; render(); });
+  });
+  main.querySelectorAll('.chip[data-conf]').forEach(btn => {
+    btn.addEventListener('click', () => { state.propConfFilter = btn.dataset.conf; render(); });
+  });
 }
 
 // ============================================================================
