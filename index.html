@@ -724,18 +724,37 @@
   .setting-section:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
   .pin-row { display: flex; gap: 10px; align-items: center; }
   .pin-input {
-    flex: 1;
+    display: block;
+    width: 100%;
     background: var(--bg-3);
     border: 1px solid var(--line-2);
     border-radius: 8px;
-    padding: 12px 14px;
+    padding: 14px 16px;
     color: var(--ink);
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 18px;
-    letter-spacing: 0.4em;
+    font-size: 22px;
+    letter-spacing: 0.35em;
     text-align: center;
+    margin-bottom: 10px;
   }
   .pin-input:focus { outline: none; border-color: var(--accent); }
+  .pin-input::placeholder { color: var(--ink-faint); letter-spacing: 0.35em; }
+  .pin-submit-btn {
+    display: block;
+    width: 100%;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    padding: 14px;
+    border-radius: 8px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .pin-submit-btn:active { transform: scale(0.98); }
 
   .market-grid {
     display: grid;
@@ -851,7 +870,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V4</span>
+    <span class="ver-badge" id="ver-badge">V4.1</span>
     <div class="tag">NFL · Projection Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -886,11 +905,9 @@
     <!-- PIN gate -->
     <div class="modal-body" id="settings-locked">
       <div class="setting-note" style="margin:0 0 10px;color:var(--ink)">Enter PIN to access settings</div>
-      <div class="pin-row">
-        <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="pin-input" class="pin-input" autocomplete="off" />
-        <button class="load-btn" id="pin-submit" style="margin:0;width:auto;padding:10px 16px">Unlock</button>
-      </div>
-      <div class="setting-note" id="pin-error" style="color:var(--hot);min-height:14px"></div>
+      <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="pin-input" class="pin-input" autocomplete="off" placeholder="0000" />
+      <button class="pin-submit-btn" id="pin-submit">Unlock</button>
+      <div class="setting-note" id="pin-error" style="color:var(--hot);min-height:14px;margin-top:8px"></div>
     </div>
 
     <!-- Settings body (hidden until unlocked) -->
@@ -967,7 +984,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V4</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V4.1</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1003,7 +1020,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V4';
+const APP_VERSION = 'V4.1';
 const CACHE_VERSION = 'v8';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -3926,6 +3943,14 @@ document.getElementById('settings-modal').addEventListener('click', e => {
 document.getElementById('pin-submit').addEventListener('click', tryUnlock);
 document.getElementById('pin-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') tryUnlock();
+});
+document.getElementById('pin-input').addEventListener('input', e => {
+  // Strip non-digits and auto-submit at 4 digits
+  const cleaned = (e.target.value || '').replace(/\D/g, '').slice(0, 4);
+  if (cleaned !== e.target.value) e.target.value = cleaned;
+  // Clear any prior error as the user types
+  document.getElementById('pin-error').textContent = '';
+  if (cleaned.length === 4) tryUnlock();
 });
 
 // Settings toggles
