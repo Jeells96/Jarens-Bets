@@ -778,6 +778,28 @@
   .market-toggle input { accent-color: var(--accent); }
   .market-toggle input:checked + span { color: var(--ink); }
 
+  .dk-quota-card {
+    background: var(--bg-3);
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    text-align: center;
+  }
+  .dk-quota-label {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .dk-quota-value {
+    font-family: ui-serif, Georgia, serif;
+    font-weight: 700;
+    font-size: 32px; line-height: 1;
+    color: var(--accent);
+    margin-top: 6px;
+  }
+  .dk-quota-value.low { color: var(--warn); }
+  .dk-quota-value.critical { color: var(--hot); }
+
   .fb-config {
     width: 100%;
     background: var(--bg-3);
@@ -870,12 +892,16 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V4.1</span>
+    <span class="ver-badge" id="ver-badge">V4.2</span>
     <div class="tag">NFL · Projection Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
   <div class="controls">
-    <div class="control" style="flex:1">
+    <div class="control">
+      <label for="season">Season</label>
+      <select id="season"></select>
+    </div>
+    <div class="control">
       <label for="week">Week</label>
       <select id="week"></select>
     </div>
@@ -912,17 +938,6 @@
 
     <!-- Settings body (hidden until unlocked) -->
     <div class="modal-body" id="settings-unlocked" style="display:none">
-      <!-- Season -->
-      <div class="setting-section">
-        <div class="setting-row">
-          <label class="setting-label" for="season">Season</label>
-          <div class="control" style="width:140px">
-            <select id="season"></select>
-          </div>
-        </div>
-        <div class="setting-note" id="season-note"></div>
-      </div>
-
       <!-- Weather -->
       <div class="setting-section">
         <div class="setting-row">
@@ -941,6 +956,11 @@
         <div class="setting-note">Pulls live DK lines from the-odds-api. Auto-fetches on first launch each Thursday. ~500 free calls/month.</div>
 
         <div id="dk-detail" style="display:none">
+          <div class="dk-quota-card" id="dk-quota-card">
+            <div class="dk-quota-label">API quota remaining (this month)</div>
+            <div class="dk-quota-value" id="dk-quota-value">— / —</div>
+            <div class="setting-note" id="dk-quota-meta">Updates after each pull.</div>
+          </div>
           <div class="setting-note" style="color:var(--ink);margin-top:8px"><b>Markets</b> (each toggle = +1 API call per game)</div>
           <div class="market-grid">
             <label class="market-toggle"><input type="checkbox" data-market="h2h"><span>Moneyline (h2h)</span></label>
@@ -960,18 +980,22 @@
           <div class="setting-note" id="dk-last-pull"></div>
 
           <button class="scan-btn" id="dk-manual-pull" style="margin-top:10px">Pull DK odds now</button>
+          <button class="chip" id="dk-quota-check" style="margin-top:8px;width:100%">Refresh quota only (1 call)</button>
+        </div>
+      </div>
 
-          <div class="setting-note" style="color:var(--ink);margin-top:14px"><b>Firebase config</b> (optional — for true cross-device dedupe)</div>
-          <div class="setting-note">Without Firebase, each device may pull once per Thursday (caches for 12h). Paste your Firebase Realtime Database config to share state across the family.</div>
-          <textarea id="fb-config" class="fb-config" placeholder='Paste Firebase config JSON, e.g.:
+      <!-- Firebase (separate top-level section so it's always reachable) -->
+      <div class="setting-section">
+        <div class="setting-label" style="margin-bottom:6px">Firebase config (optional)</div>
+        <div class="setting-note">For cross-device coordination of the Thursday DK pull. Without Firebase, each device may pull once per Thursday (still way under the 500/month quota for a small group). Paste your Firebase Realtime Database config JSON.</div>
+        <textarea id="fb-config" class="fb-config" placeholder='Paste Firebase config JSON, e.g.:
 {
   "apiKey": "...",
   "projectId": "...",
   "databaseURL": "https://....firebaseio.com"
 }'></textarea>
-          <button class="scan-btn" id="fb-save" style="margin-top:8px">Save Firebase config</button>
-          <div class="setting-note" id="fb-status"></div>
-        </div>
+        <button class="scan-btn" id="fb-save" style="margin-top:8px">Save Firebase config</button>
+        <div class="setting-note" id="fb-status"></div>
       </div>
 
       <!-- Event log -->
@@ -984,7 +1008,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V4.1</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V4.2</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1020,7 +1044,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V4.1';
+const APP_VERSION = 'V4.2';
 const CACHE_VERSION = 'v8';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -1149,6 +1173,10 @@ const state = {
   },
   dkOdds: null,                        // { fetchedAt, games: [{ home, away, markets: {...} }] }
   dkLastPullAt: null,                  // ms epoch (localStorage)
+  dkQuotaRemaining: null,              // captured from x-requests-remaining header
+  dkQuotaUsed: null,                   // captured from x-requests-used header
+  dkQuotaLastUsed: null,               // last call's x-requests-last
+  dkQuotaCheckedAt: null,              // ms epoch of last header read
   dkAccuracy: null,                    // { categories: {...}, lastUpdated } — historical vs DK
   eventLog: [],                        // [{ ts, level, label, msg }]
 };
@@ -1175,6 +1203,16 @@ function loadSettings() {
     state.dkLastPullAt = +localStorage.getItem('gl_dk_last_pull') || null;
     const acc = localStorage.getItem('gl_dk_accuracy');
     if (acc) { try { state.dkAccuracy = JSON.parse(acc); } catch {} }
+    const quota = localStorage.getItem('gl_dk_quota');
+    if (quota) {
+      try {
+        const q = JSON.parse(quota);
+        if (q.remaining != null) state.dkQuotaRemaining = +q.remaining;
+        if (q.used != null) state.dkQuotaUsed = +q.used;
+        if (q.lastUsed != null) state.dkQuotaLastUsed = +q.lastUsed;
+        if (q.checkedAt != null) state.dkQuotaCheckedAt = +q.checkedAt;
+      } catch {}
+    }
   } catch (e) { logEvent('warn', 'settings', 'load failed: ' + e.message); }
 }
 function saveSettings() {
@@ -1252,6 +1290,57 @@ function estimatedQuotaCost() {
   return { sel, gameLineCost, playerCost, total: gameLineCost + playerCost, games };
 }
 
+// Capture quota headers from any odds-api response
+function captureQuotaHeaders(res) {
+  try {
+    const remaining = res.headers.get('x-requests-remaining');
+    const used = res.headers.get('x-requests-used');
+    const last = res.headers.get('x-requests-last');
+    let changed = false;
+    if (remaining != null && remaining !== '') {
+      const n = +remaining;
+      if (!isNaN(n)) { state.dkQuotaRemaining = n; changed = true; }
+    }
+    if (used != null && used !== '') {
+      const n = +used;
+      if (!isNaN(n)) { state.dkQuotaUsed = n; changed = true; }
+    }
+    if (last != null && last !== '') {
+      const n = +last;
+      if (!isNaN(n)) { state.dkQuotaLastUsed = n; changed = true; }
+    }
+    if (changed) {
+      state.dkQuotaCheckedAt = Date.now();
+      try {
+        localStorage.setItem('gl_dk_quota', JSON.stringify({
+          remaining: state.dkQuotaRemaining,
+          used: state.dkQuotaUsed,
+          lastUsed: state.dkQuotaLastUsed,
+          checkedAt: state.dkQuotaCheckedAt,
+        }));
+      } catch {}
+      updateDkQuotaCard();
+      logEvent('net', 'quota', 'remaining=' + state.dkQuotaRemaining + ' used=' + state.dkQuotaUsed + ' lastCallCost=' + state.dkQuotaLastUsed);
+    }
+  } catch (e) { logEvent('warn', 'quota', 'header parse failed: ' + e.message); }
+}
+
+// Fetch just to read quota (cheap: a single in-season /sports call returns headers, costs nothing real)
+async function refreshQuotaOnly() {
+  // /sports endpoint is free and returns quota headers
+  const url = ODDS_API.base + '/sports?apiKey=' + ODDS_API.key;
+  logEvent('net', 'DK', 'GET /sports (quota check)');
+  try {
+    const res = await fetch(url);
+    captureQuotaHeaders(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    logEvent('info', 'DK', 'quota refresh ok');
+  } catch (e) {
+    logEvent('err', 'DK', 'quota refresh failed: ' + e.message);
+    throw e;
+  }
+}
+
 async function pullDKOdds(reason) {
   logEvent('net', 'DK', 'pull starting (' + reason + ')');
   const sel = selectedMarkets();
@@ -1271,6 +1360,7 @@ async function pullDKOdds(reason) {
         '&apiKey=' + ODDS_API.key;
       logEvent('net', 'DK', 'GET odds [' + gameLines.join(',') + ']');
       const res = await fetch(url);
+      captureQuotaHeaders(res);
       logEvent('net', 'DK', 'status ' + res.status + ' quota remaining: ' + (res.headers.get('x-requests-remaining') || '?'));
       if (!res.ok) throw new Error('HTTP ' + res.status + ' from odds API');
       const data = await res.json();
@@ -1294,6 +1384,7 @@ async function pullDKOdds(reason) {
       const eventsUrl = ODDS_API.base + '/sports/' + ODDS_API.sport + '/events?apiKey=' + ODDS_API.key;
       logEvent('net', 'DK', 'GET events list for player props');
       const evRes = await fetch(eventsUrl);
+      captureQuotaHeaders(evRes);
       if (!evRes.ok) throw new Error('events HTTP ' + evRes.status);
       const events = await evRes.json();
       logEvent('info', 'DK', events.length + ' events for player-prop scan');
@@ -1307,6 +1398,7 @@ async function pullDKOdds(reason) {
           '&apiKey=' + ODDS_API.key;
         try {
           const r = await fetch(pUrl);
+          captureQuotaHeaders(r);
           logEvent('net', 'DK', 'player-props ev ' + ev.id + ' status ' + r.status + ' quota: ' + (r.headers.get('x-requests-remaining') || '?'));
           if (!r.ok) { logEvent('warn', 'DK', 'player-props ev ' + ev.id + ' failed'); continue; }
           const d = await r.json();
@@ -3840,12 +3932,16 @@ function setVersionLabels() {
 
 function openSettings() {
   document.getElementById('settings-modal').classList.add('open');
-  // Always require PIN at open (session-level lock)
-  state.settings.settingsUnlocked = false;
+  if (state.settings.settingsUnlocked) {
+    // Already unlocked this session — go straight to settings
+    showUnlockedView();
+    logEvent('info', 'ui', 'settings opened (already unlocked)');
+    return;
+  }
   showLockedView();
   const pi = document.getElementById('pin-input');
   if (pi) { pi.value = ''; setTimeout(() => pi.focus(), 50); }
-  logEvent('info', 'ui', 'settings opened');
+  logEvent('info', 'ui', 'settings opened (locked)');
 }
 function closeSettings() {
   document.getElementById('settings-modal').classList.remove('open');
@@ -3886,7 +3982,36 @@ function syncSettingsUI() {
   const fb = document.getElementById('fb-config'); if (fb) fb.value = state.settings.firebaseConfig || '';
   updateDkQuotaEstimate();
   updateDkLastPullLabel();
+  updateDkQuotaCard();
   updateFirebaseStatus();
+}
+
+function updateDkQuotaCard() {
+  const valEl = document.getElementById('dk-quota-value');
+  const metaEl = document.getElementById('dk-quota-meta');
+  if (!valEl || !metaEl) return;
+  const r = state.dkQuotaRemaining;
+  const u = state.dkQuotaUsed;
+  if (r == null && u == null) {
+    valEl.textContent = '— / —';
+    valEl.className = 'dk-quota-value';
+    metaEl.textContent = 'Tap “Refresh quota only” below, or pull odds to update.';
+    return;
+  }
+  const total = (r != null && u != null) ? r + u : null;
+  if (r != null && total != null) {
+    valEl.textContent = r + ' / ' + total;
+  } else if (r != null) {
+    valEl.textContent = r + ' left';
+  } else {
+    valEl.textContent = u + ' used';
+  }
+  // Color-code based on remaining
+  valEl.className = 'dk-quota-value' + (r != null && r < 25 ? ' critical' : (r != null && r < 100 ? ' low' : ''));
+  const parts = [];
+  if (state.dkQuotaLastUsed != null) parts.push('last call cost ' + state.dkQuotaLastUsed);
+  if (state.dkQuotaCheckedAt) parts.push('as of ' + new Date(state.dkQuotaCheckedAt).toLocaleTimeString());
+  metaEl.textContent = parts.length ? parts.join(' · ') : 'From the-odds-api response headers.';
 }
 
 function updateDkQuotaEstimate() {
@@ -3987,6 +4112,18 @@ document.getElementById('dk-manual-pull').addEventListener('click', async () => 
     btn.textContent = 'Failed — see log';
   } finally {
     setTimeout(() => { btn.textContent = 'Pull DK odds now'; btn.disabled = false; }, 2500);
+  }
+});
+document.getElementById('dk-quota-check').addEventListener('click', async () => {
+  const btn = document.getElementById('dk-quota-check');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    await refreshQuotaOnly();
+    btn.textContent = 'Updated ✓';
+  } catch (e) {
+    btn.textContent = 'Failed — see log';
+  } finally {
+    setTimeout(() => { btn.textContent = 'Refresh quota only (1 call)'; btn.disabled = false; }, 2200);
   }
 });
 document.getElementById('fb-save').addEventListener('click', () => {
