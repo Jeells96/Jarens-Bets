@@ -938,7 +938,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V5.1</span>
+    <span class="ver-badge" id="ver-badge">V5.2</span>
     <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -1059,7 +1059,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V5.1</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V5.2</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1095,8 +1095,8 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V5.1';
-const CACHE_VERSION = 'v8';
+const APP_VERSION = 'V5.2';
+const CACHE_VERSION = 'v9';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
 // the-odds-api (DraftKings odds) — see https://the-odds-api.com
@@ -1243,7 +1243,9 @@ async function fetchJSON(url, { timeout = 15000, retries = 2 } = {}) {
 }
 
 function cacheKey(url) {
-  return 'gl_' + CACHE_VERSION + '_' + btoa(unescape(encodeURIComponent(url))).slice(0, 80);
+  // FULL url in the key — a truncated key made every summary/scoreboard URL
+  // collide (they differ only at the end), which poisoned all game data.
+  return 'gl_' + CACHE_VERSION + '_' + url;
 }
 
 async function cachedJSON(url) {
@@ -1261,6 +1263,36 @@ async function cachedJSON(url) {
     if (s.length < 800_000) localStorage.setItem(k, s);
   } catch (e) {}
   return data;
+}
+
+// Remove cache entries from older CACHE_VERSIONs (they may be poisoned by the
+// old truncated-key collision bug, and dead weight against iOS storage quota).
+// Only touches versioned cache keys (gl_v#_...), never settings/DK/member keys.
+function purgeStaleCache() {
+  const keep = 'gl_' + CACHE_VERSION + '_';
+  const doomed = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && /^gl_v\d+_/.test(k) && !k.startsWith(keep)) doomed.push(k);
+    }
+    for (const k of doomed) localStorage.removeItem(k);
+    if (doomed.length) logEvent('info', 'cache', 'purged ' + doomed.length + ' stale cache entries');
+  } catch (e) { logEvent('warn', 'cache', 'purge failed: ' + e.message); }
+}
+
+// Fetch a game summary and VERIFY it belongs to the requested event.
+// If a cache/data bug ever serves the wrong game's box score again, we refuse
+// it (returning null) and log loudly instead of silently grading garbage.
+async function fetchSummary(eventId) {
+  const summary = await cachedJSON(ESPN.summary(eventId));
+  const sid = summary && summary.header && summary.header.id;
+  if (sid != null && String(sid) !== String(eventId)) {
+    logEvent('err', 'data', 'summary mismatch: asked ' + eventId + ' got ' + sid + ' — discarding');
+    try { localStorage.removeItem(cacheKey(ESPN.summary(eventId))); } catch {}
+    return null;
+  }
+  return summary;
 }
 
 async function mapLimit(items, limit, fn) {
@@ -1877,7 +1909,7 @@ async function loadPriorSeasonAggregate(season, progressFn) {
   await mapLimit(completedEvents, 4, async (ev, idx) => {
     if (idx % 5 === 0) progressFn && progressFn('prior season box scores', (idx + 1) + '/' + completedEvents.length);
     let summary = null;
-    try { summary = await cachedJSON(ESPN.summary(ev.id)); } catch {}
+    try { summary = await fetchSummary(ev.id); } catch {}
     if (!summary) return;
     const teamYds = extractTeamYardsFromSummary(summary);
     const players = extractPlayersFromSummary(summary);
@@ -1995,7 +2027,7 @@ async function loadWeek() {
 
     const gamesData = await mapLimit(events, 3, async (ev, idx) => {
       let summary = null;
-      try { summary = await cachedJSON(ESPN.summary(ev.id)); }
+      try { summary = await fetchSummary(ev.id); }
       catch (e) { console.warn('summary fail', ev.id, e.message); }
       const pct = 8 + Math.round(20 * (idx + 1) / events.length);
       showLoader(pct, 'Box scores', (idx + 1) + ' of ' + events.length);
@@ -2057,7 +2089,7 @@ async function loadWeek() {
       await mapLimit(priorEventsWithWeek, 4, async (entry) => {
         const { ev, w } = entry;
         let summary = null;
-        try { summary = await cachedJSON(ESPN.summary(ev.id)); } catch {}
+        try { summary = await fetchSummary(ev.id); } catch {}
         done++;
         const pct = 48 + Math.round(28 * done / Math.max(1, priorEventsWithWeek.length));
         if (done % 3 === 0) showLoader(pct, 'Prior weeks (box scores)', done + '/' + priorEventsWithWeek.length);
@@ -2680,7 +2712,9 @@ function scoredNonPassingTD(p) {
 // Returns array sorted by probability desc with _td and _scored attached.
 function buildTDCandidates(g, proj) {
   return g.players
-    .filter(p => ['QB','RB','WR','TE'].includes(p.position) && p.team)
+    // Roster guard: the player must belong to one of THIS game's two teams.
+    // (Catches any future data-crossing bug instantly instead of silently grading garbage.)
+    .filter(p => ['QB','RB','WR','TE'].includes(p.position) && (p.team === g.away.id || p.team === g.home.id))
     .map(p => {
       const isAway = p.team === g.away.id;
       const oppProfile = isAway ? proj.homeProfile : proj.awayProfile;
@@ -3564,7 +3598,7 @@ async function buildPriorWeeksUpTo(upTo) {
       const hs = +home.score, as = +away.score;
       if (isNaN(hs) || isNaN(as)) continue;
       let teamYds = {};
-      try { teamYds = extractTeamYardsFromSummary(await cachedJSON(ESPN.summary(ev.id))); } catch {}
+      try { teamYds = extractTeamYardsFromSummary(await fetchSummary(ev.id)); } catch {}
       const hY = teamYds[home.team.id], aY = teamYds[away.team.id];
       for (const [t, oId, pf, pa, my, opp, isH] of [
         [home.team.id, away.team.id, hs, as, hY, aY, true],
@@ -3591,7 +3625,7 @@ async function gradeWeekBlind(W) {
   if (sbW && sbW.events) {
     for (const ev of sbW.events) {
       let summary = null;
-      try { summary = await cachedJSON(ESPN.summary(ev.id)); } catch {}
+      try { summary = await fetchSummary(ev.id); } catch {}
       const game = buildGame(ev, summary);
       if (game && game.completed) weekGames.push(game);
     }
@@ -4475,6 +4509,7 @@ populateSeasonDropdown();
 setVersionLabels();
 loadSettings();
 loadCachedDKOdds();
+purgeStaleCache();
 logEvent('info', 'boot', 'Gridline ' + APP_VERSION + ' ready');
 
 document.getElementById('season').addEventListener('change', e => {
