@@ -615,6 +615,7 @@
   .gb-teams { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 700; font-size: 14px; }
   .gb-teams .at { color: var(--ink-faint); padding: 0 5px; }
   .gb-sub { padding: 9px 14px; background: var(--bg-3); font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); border-bottom: 1px solid var(--line); }
+  .gb-actual-first { display: block; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 10px; color: var(--ink-faint); margin-top: 2px; text-transform: none; letter-spacing: 0; }
   .gb-pick-row {
     display: grid; grid-template-columns: auto auto 1fr auto auto; gap: 10px; align-items: center;
     padding: 10px 14px; border-bottom: 1px solid var(--line);
@@ -937,7 +938,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V5</span>
+    <span class="ver-badge" id="ver-badge">V5.1</span>
     <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -1058,7 +1059,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V5</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V5.1</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1094,7 +1095,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V5';
+const APP_VERSION = 'V5.1';
 const CACHE_VERSION = 'v8';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -2153,6 +2154,60 @@ async function loadWeek() {
   }
 }
 
+// ----------------------------------------------------------------------------
+// First-TD scorer — parse the game's scoring plays in order and find the first
+// RUSHING or RECEIVING touchdown (passing TDs credit the receiver, who caught
+// it — that's a receiving TD for them; the passer gets NO credit). Returns the
+// scoring athlete's id/name, or null if none found / data unavailable.
+// ----------------------------------------------------------------------------
+function extractFirstTdScorer(summary) {
+  if (!summary) return null;
+  const plays = summary.scoringPlays || (summary.scoring && summary.scoring.plays) || null;
+  if (!Array.isArray(plays) || !plays.length) return null;
+
+  // Plays come in chronological order. Find first touchdown that isn't a
+  // defensive/special-teams score (those have no offensive rush/rec scorer we bet on).
+  for (const pl of plays) {
+    const typeTxt = ((pl.type && (pl.type.abbreviation || pl.type.text)) || pl.scoringType && pl.scoringType.name || '').toString().toLowerCase();
+    const text = (pl.text || '').toLowerCase();
+    const isTD = typeTxt.includes('td') || typeTxt.includes('touchdown') || /touchdown/.test(text);
+    if (!isTD) continue;
+
+    // Skip non rush/rec TDs: interception/fumble returns, kick/punt returns, safeties
+    if (/interception return|fumble return|kickoff return|punt return|blocked|safety/.test(text)) continue;
+
+    // Determine rush vs pass from the text: "pass from" = receiving TD, "run"/"rush" = rushing TD
+    const isReceiving = /pass from|reception|receiving|yd pass/.test(text);
+    const isRushing = /\brun\b|rush|yd run|scramble|sneak/.test(text) && !isReceiving;
+    if (!isReceiving && !isRushing) {
+      // Ambiguous — try athletesInvolved role below, else skip
+    }
+
+    // Identify the scorer. ESPN gives athletesInvolved (first is usually the scorer).
+    const ath = pl.athletesInvolved || pl.athletes || [];
+    let scorer = null;
+    if (Array.isArray(ath) && ath.length) {
+      // For a passing TD, athletesInvolved = [receiver, passer] (scorer first) in most payloads.
+      const a0 = ath[0];
+      if (a0) {
+        scorer = {
+          id: (a0.athlete && a0.athlete.id) || a0.id || null,
+          name: (a0.athlete && a0.athlete.displayName) || a0.displayName || null,
+        };
+      }
+    }
+    // Fallback: parse the leading name from the text ("J.Chase 24 yd pass from J.Burrow")
+    if ((!scorer || !scorer.id) && pl.text) {
+      const m = pl.text.match(/^([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)*)/);
+      if (m) scorer = { id: scorer && scorer.id, name: (scorer && scorer.name) || m[1] };
+    }
+    if (scorer && (scorer.id || scorer.name)) {
+      return { id: scorer.id ? String(scorer.id) : null, name: scorer.name || null, kind: isReceiving ? 'rec' : 'rush', text: pl.text || '' };
+    }
+  }
+  return null;
+}
+
 function buildGame(event, summary) {
   const comp = event.competitions && event.competitions[0];
   if (!comp) return null;
@@ -2179,6 +2234,7 @@ function buildGame(event, summary) {
     players: extractPlayersFromSummary(summary),
     teamYards: extractTeamYardsFromSummary(summary),
     weather: extractWeather(event, summary),
+    firstTdScorer: extractFirstTdScorer(summary),
   };
 }
 
@@ -2601,6 +2657,19 @@ function getPlayerActualYds(p, pos) {
 }
 
 // Anytime-TD probability — RUSHING or RECEIVING only. QB passing TDs do NOT count.
+// Did this candidate score the ACTUAL first rush/rec TD of the game?
+// Matches on athlete id when available, else on a normalized name.
+function isActualFirstTdScorer(cand, g) {
+  const fs = g.firstTdScorer;
+  if (!fs) return null; // unknown — data unavailable
+  if (fs.id && cand.id) return String(fs.id) === String(cand.id);
+  // Name fallback: compare last names + first initial, robust to "J.Chase" vs "Ja'Marr Chase"
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z]/g, '');
+  const last = s => { const p = (s || '').replace(/[.'']/g, ' ').trim().split(/\s+/); return norm(p[p.length - 1]); };
+  if (!fs.name || !cand.name) return false;
+  return last(fs.name) === last(cand.name) && last(fs.name).length > 2;
+}
+
 // A QB can still qualify via rushing (goal-line sneaks, scrambles).
 // A TD "hit" counts ONLY rushing or receiving TDs — never passing TDs.
 function scoredNonPassingTD(p) {
@@ -3454,13 +3523,17 @@ function gradeWeek() {
     if (locks.length) {
       props.push({ k: 'TD locks', v: lockHits + '/' + locks.length + ' scored', hit: lockHits === locks.length && locks.length > 0 });
     }
-    // First TD: our single top-probability pick; "hit" if that player scored a rush/rec TD
+    // First TD: our single top-probability pick is correct ONLY if that player
+    // scored the actual first rushing/receiving TD of the game (not just any TD).
     if (allCands.length) {
       const firstPick = allCands[0];
-      cats.firstTd.n++;
-      const fHit = firstPick._scored;
-      if (fHit) cats.firstTd.hit++;
-      props.push({ k: '1st TD', v: firstPick.name + ' ' + firstPick._td.prob + '% → ' + (fHit ? 'scored' : 'no'), hit: fHit });
+      const isFirst = isActualFirstTdScorer(firstPick, g);
+      if (isFirst !== null) { // only grade when we know who scored first
+        cats.firstTd.n++;
+        if (isFirst) cats.firstTd.hit++;
+        const actualName = g.firstTdScorer ? g.firstTdScorer.name : '—';
+        props.push({ k: '1st TD', v: firstPick.name + ' → actual: ' + actualName + (isFirst ? ' ✓' : ' ✗'), hit: isFirst });
+      }
     }
 
     perGame.push({ g, completed: true, props });
@@ -4163,7 +4236,10 @@ function renderGameBets(main) {
       totErr += Math.abs(actualTotal - proj.total);
       if (Math.abs(actualTotal - proj.total) <= HIT_TOTAL_TOL) totHitCount++;
       for (const c of locks) { lockN++; if (c._scored) lockHit++; }
-      if (firstPick) { firstN++; if (firstPick._scored) firstHit++; }
+      if (firstPick) {
+        const isFirst = isActualFirstTdScorer(firstPick, g);
+        if (isFirst !== null) { firstN++; if (isFirst) firstHit++; }
+      }
     }
 
     // winner badge
@@ -4201,13 +4277,18 @@ function renderGameBets(main) {
       const totalLambda = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
       const pAnyTd = 1 - Math.exp(-totalLambda);
       const pFirst = totalLambda > 0 ? Math.round(((firstPick._td.lambda || 0) / totalLambda) * pAnyTd * 100) : 0;
-      const result = !g.completed ? '<span class="gb-result na">—</span>'
-        : firstPick._scored ? '<span class="gb-result yes">✓ scored</span>' : '<span class="gb-result no">no TD</span>';
+      const isFirst = g.completed ? isActualFirstTdScorer(firstPick, g) : null;
+      let result;
+      if (!g.completed) result = '<span class="gb-result na">—</span>';
+      else if (isFirst === null) result = '<span class="gb-result na">n/a</span>';
+      else if (isFirst) result = '<span class="gb-result yes">✓ 1st</span>';
+      else result = '<span class="gb-result no">no</span>';
+      const actualNote = g.completed && g.firstTdScorer ? '<span class="gb-actual-first">actual 1st: ' + escapeHtml(g.firstTdScorer.name || '?') + '</span>' : '';
       firstRow =
         '<div class="gb-sub">First TD Pick · P(first) from λ share</div>' +
         '<div class="gb-firsttd">' +
           '<span class="gb-star">★</span>' +
-          '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span></div>' +
+          '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span>' + actualNote + '</div>' +
           '<div class="gb-prob">' + pFirst + '%</div>' +
           result +
         '</div>';
