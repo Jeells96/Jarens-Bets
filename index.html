@@ -429,6 +429,59 @@
     letter-spacing: 0.1em; vertical-align: 2px;
   }
   .pergame-block { display: flex; flex-direction: column; }
+  .fact-hist-row.tappable { cursor: pointer; }
+  .fact-hist-row.tappable:active { background: var(--bg-3); }
+  .wk-drill { background: var(--bg); border-top: 1px dashed var(--line); padding: 4px 0; }
+  .wk-drill-row {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+    padding: 7px 14px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 10.5px;
+    color: var(--ink-dim);
+    border-bottom: 1px solid var(--line);
+  }
+  .wk-drill-row:last-child { border-bottom: none; }
+  .wk-drill-row.is-hit .wk-drill-res { color: var(--accent); }
+  .wk-drill-row.is-miss .wk-drill-res { color: var(--hot); }
+  .wk-drill-game { color: var(--ink-faint); font-size: 9px; letter-spacing: 0.06em; white-space: nowrap; }
+  .wk-drill-desc { word-break: break-word; }
+  .wk-drill-res { font-weight: 700; }
+  .pg-game { border-bottom: 1px solid var(--line); }
+  .pg-game:last-child { border-bottom: none; }
+  .pg-head {
+    padding: 9px 14px; background: var(--bg-3);
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--ink);
+  }
+  .pg-row {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+    padding: 7px 14px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 10.5px;
+    color: var(--ink-dim); border-bottom: 1px solid var(--line);
+  }
+  .pg-row:last-child { border-bottom: none; }
+  .pg-row.is-hit { background: linear-gradient(90deg, rgba(212,255,58,0.04), transparent 60%); }
+  .pg-row.is-miss { background: linear-gradient(90deg, rgba(255,107,107,0.04), transparent 60%); }
+  .pg-row.is-hit .pg-res { color: var(--accent); }
+  .pg-row.is-miss .pg-res { color: var(--hot); }
+  .pg-k { color: var(--ink-faint); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+  .pg-v { word-break: break-word; }
+  .pg-res { font-weight: 700; }
+  .is-lock-hl { box-shadow: inset 3px 0 0 var(--accent); }
+  .is-lock-tag { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--hit-bg) !important; }
+  .bet-search-wrap { padding: 0 0 12px; }
+  .bet-search {
+    display: block; width: 100%;
+    background: var(--bg-2); color: var(--ink);
+    border: 1px solid var(--line-2); border-radius: 10px;
+    padding: 12px 14px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px;
+    -webkit-appearance: none;
+  }
+  .bet-search:focus { outline: none; border-color: var(--accent); }
+  .bet-search::placeholder { color: var(--ink-faint); }
+  .bet-search-results { display: flex; flex-direction: column; }
+  .bet-search-results .props-row { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; cursor: pointer; }
+  .bet-search-results .props-row:active { background: var(--bg-3); }
   .pergame-row { padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .pergame-row:last-child { border-bottom: none; }
   .pergame-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -983,7 +1036,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V5.3</span>
+    <span class="ver-badge" id="ver-badge">V5.4</span>
     <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -1007,7 +1060,6 @@
 
 <div class="tabs">
   <button class="tab active" data-tab="games">Games</button>
-  <button class="tab" data-tab="props">Props</button>
   <button class="tab" data-tab="gamebets">Bets</button>
   <button class="tab" data-tab="facts">Facts</button>
 </div>
@@ -1118,7 +1170,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V5.3</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V5.4</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1154,7 +1206,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V5.3';
+const APP_VERSION = 'V5.4';
 const CACHE_VERSION = 'v9';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -2081,10 +2133,9 @@ async function loadWeek() {
   state.expandedRows = {};
   state.factHistory = null;
   state.factHistoryLoading = false;
-  state.seasonScan = null;
   state.seasonScanLoading = false;
-  state.propTeamFilter = 'all';
-  state.propConfFilter = 'all';
+  state.scanWeekOpen = {};
+  state.betSearch = '';
   document.getElementById('load-btn').disabled = true;
   setStatus('loading', 'Loading Week ' + state.week + '…');
 
@@ -2865,10 +2916,10 @@ function tdProbability(p, oppDefRating, oppProfile, lgYds) {
 // ============================================================================
 function render() {
   const main = document.getElementById('main');
+  // Facts works pre-load: all-time record + season scan need no loaded week
+  if (state.activeTab === 'facts') return renderFacts(main);
   if (!state.loaded) return;
   if (state.activeTab === 'gamebets') return renderGameBets(main);
-  if (state.activeTab === 'props') return renderProps(main);
-  if (state.activeTab === 'facts') return renderFacts(main);
   return renderGames(main);
 }
 
@@ -2885,6 +2936,34 @@ const PROP_COLHEAD =
 // ============================================================================
 // Games tab
 // ============================================================================
+// Build search-result rows for a bet query (player or team). Uses the per-stat
+// prop pool + TD candidates; tapping a result opens that game's detail.
+function buildBetSearchResults(query) {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return '';
+  const all = gatherAllProps();
+  const matches = all.filter(r =>
+    r.name.toLowerCase().includes(q) || r.abbr.toLowerCase().includes(q) || r.oppAbbr.toLowerCase().includes(q)
+  ).slice(0, 40);
+  if (!matches.length) return '<div class="gb-empty">No bets match "' + escapeHtml(query) + '".</div>';
+  return matches.map(r => {
+    const isLock = r.conf >= lockTh('yards');
+    const actualCell = r.completed
+      ? '<div class="prop-actual ' + (r.hit ? 'hit' : 'miss') + '"><span class="cell-lbl">act</span>' + r.actual + ' ' + fmtSigned(r.delta, 0) + '</div>'
+      : '<div class="prop-actual na"><span class="cell-lbl">act</span>—</div>';
+    return '<div class="props-row search-hit ' + (r.completed ? (r.hit ? 'is-hit' : 'is-miss') : '') + (isLock ? ' is-lock-hl' : '') + '" data-opengame="' + escapeHtml(r.gameId) + '">' +
+      '<span class="pos-tag pos-' + r.position + '">' + r.position + '</span>' +
+      '<div class="props-name">' + escapeHtml(r.name) +
+        '<span class="prop-team">' + escapeHtml(r.abbr) + ' vs ' + escapeHtml(r.oppAbbr) + '</span>' +
+        '<span class="props-stattype">' + r.statType + (isLock ? ' 🔒' : '') + '</span>' +
+      '</div>' +
+      '<div class="props-conf"><span class="conf-pip conf-' + r.tier + '"></span>' + r.conf + '%</div>' +
+      '<div class="prop-proj"><span class="cell-lbl">proj</span>' + r.projYds + '<span class="unit">yd</span></div>' +
+      actualCell +
+    '</div>';
+  }).join('');
+}
+
 function renderGames(main) {
   if (!state.games.length) {
     main.innerHTML = '<div class="hint"><div class="title">No games</div></div>';
@@ -2896,12 +2975,44 @@ function renderGames(main) {
     state.openGameId = null;
   }
   let html = '<div class="games">';
+  html += '<div class="bet-search-wrap">' +
+    '<input type="search" id="bet-search" class="bet-search" placeholder="Search bets — player or team…" value="' + escapeHtml(state.betSearch || '') + '" autocomplete="off">' +
+  '</div>' +
+  '<div id="bet-search-results" class="bet-search-results">' + (state.betSearch ? buildBetSearchResults(state.betSearch) : '') + '</div>' +
+  '<div id="games-list-wrap"' + (state.betSearch && state.betSearch.trim().length >= 2 ? ' style="display:none"' : '') + '>';
   state.games.forEach((g, i) => {
     if (i > 0) html += '<div class="game-separator">game ' + (i + 1) + '</div>';
     html += renderGameCard(g);
   });
-  html += '</div>';
+  html += '</div></div>';
   main.innerHTML = html;
+
+  // Search: update results in place (no full render → the input keeps focus)
+  const searchInput = main.querySelector('#bet-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      state.betSearch = searchInput.value;
+      const resEl = document.getElementById('bet-search-results');
+      const listEl = document.getElementById('games-list-wrap');
+      const active = state.betSearch.trim().length >= 2;
+      if (resEl) {
+        resEl.innerHTML = active ? buildBetSearchResults(state.betSearch) : '';
+        resEl.querySelectorAll('[data-opengame]').forEach(row => {
+          row.addEventListener('click', () => {
+            state.openGameId = row.dataset.opengame;
+            render();
+          });
+        });
+      }
+      if (listEl) listEl.style.display = active ? 'none' : '';
+    });
+  }
+  main.querySelectorAll('#bet-search-results [data-opengame]').forEach(row => {
+    row.addEventListener('click', () => {
+      state.openGameId = row.dataset.opengame;
+      render();
+    });
+  });
 
   main.querySelectorAll('.game').forEach(el => {
     el.addEventListener('click', () => {
@@ -2926,14 +3037,15 @@ function renderGameCard(g) {
   const hd = g.completed ? g.home.score - proj.homePts : null;
 
   // Winner pick + correctness
+  const winProbPct = Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100;
   const projWinAbbr = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
   let winBadge, winClass = '';
   if (g.completed) {
     const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
     const correct = actualWinner !== 'tie' && proj.projWinner === actualWinner;
-    winBadge = '<span class="winner-tag ' + (correct ? 'correct' : 'wrong') + '">pick ' + escapeHtml(projWinAbbr) + (correct ? ' ✓' : ' ✗') + '</span>';
+    winBadge = '<span class="winner-tag ' + (correct ? 'correct' : 'wrong') + (winProbPct >= lockTh('winner') ? ' is-lock-tag' : '') + '">pick ' + escapeHtml(projWinAbbr) + ' ' + winProbPct.toFixed(0) + '%' + (correct ? ' ✓' : ' ✗') + '</span>';
   } else {
-    winBadge = '<span class="winner-tag">pick ' + escapeHtml(projWinAbbr) + '</span>';
+    winBadge = '<span class="winner-tag' + (winProbPct >= lockTh('winner') ? ' is-lock-tag' : '') + '">pick ' + escapeHtml(projWinAbbr) + ' ' + winProbPct.toFixed(0) + '%</span>';
     winClass = 'win-proj';
   }
 
@@ -3153,9 +3265,9 @@ function renderTeamYdsSection(g, proj, isOpen, expanded) {
           '</div>' : '');
 
       rows.push(
-        '<div class="prop-row ' + (isRowOpen ? 'expanded' : '') + (actualYds != null ? (hit ? ' is-hit' : ' is-miss') : '') + '" data-rowkey="' + rowKey + '">' +
+        '<div class="prop-row ' + (isRowOpen ? 'expanded' : '') + (actualYds != null ? (hit ? ' is-hit' : ' is-miss') : '') + (proj.conf >= lockTh('lines') ? ' is-lock-hl' : '') + '" data-rowkey="' + rowKey + '">' +
           '<span class="pos-tag pos-TM">' + escapeHtml(team.abbr) + '</span>' +
-          '<div class="prop-name">' + (cat === 'pass' ? 'Passing yards' : 'Rushing yards') + '</div>' +
+          '<div class="prop-name">' + (cat === 'pass' ? 'Passing yards' : 'Rushing yards') + '<span class="prop-team">conf ' + proj.conf + '%' + (proj.conf >= lockTh('lines') ? ' 🔒' : '') + '</span></div>' +
           '<div class="prop-proj">' + projYds + '<span class="unit">yd</span></div>' +
           (actualYds != null
             ? '<div class="prop-actual ' + (hit ? 'hit' : 'miss') + '">' + actualYds + ' ' + fmtSigned(delta, 0) + '</div>'
@@ -3237,9 +3349,9 @@ function renderPropsSection(g, proj, isOpen, expanded) {
           }
 
           rows.push(
-            '<div class="prop-row ' + (isRowOpen ? 'expanded' : '') + (g.completed ? (hit ? ' is-hit' : ' is-miss') : '') + '" data-rowkey="' + rowKey + '">' +
+            '<div class="prop-row ' + (isRowOpen ? 'expanded' : '') + (g.completed ? (hit ? ' is-hit' : ' is-miss') : '') + (proj.conf >= lockTh('yards') ? ' is-lock-hl' : '') + '" data-rowkey="' + rowKey + '">' +
               '<span class="pos-tag pos-' + pos + '">' + pos + '</span>' +
-              '<div class="prop-name">' + escapeHtml(p.name) + '<span class="prop-team">' + escapeHtml(p.abbr) + ' · ' + STAT_LABEL[stat] + '</span></div>' +
+              '<div class="prop-name">' + escapeHtml(p.name) + '<span class="prop-team">' + escapeHtml(p.abbr) + ' · ' + STAT_LABEL[stat] + ' · conf ' + proj.conf + '%' + (proj.conf >= lockTh('yards') ? ' 🔒' : '') + '</span></div>' +
               '<div class="prop-proj"><span class="cell-lbl">proj</span>' + projYds + '<span class="unit">yd</span></div>' +
               (g.completed
                 ? '<div class="prop-actual ' + (hit ? 'hit' : 'miss') + '"><span class="cell-lbl">act</span>' + actual + ' ' + fmtSigned(delta, 0) + '</div>'
@@ -3318,7 +3430,7 @@ function renderTDSection(g, proj, isOpen, expanded) {
     const oppAbbr = c.team === g.away.id ? g.home.abbr : g.away.abbr;
 
     return '' +
-      '<div class="td-row ' + (isRowOpen ? 'expanded' : '') + '" data-rowkey="' + rowKey + '">' +
+      '<div class="td-row ' + (isRowOpen ? 'expanded' : '') + (c._td.prob >= lockTh('anytimeTd') ? ' is-lock-hl' : '') + '" data-rowkey="' + rowKey + '">' +
         '<span class="pos-tag pos-' + c.position + '">' + c.position + '</span>' +
         '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + '</span></div>' +
         '<span class="td-conf-dot td-conf-' + tier + '"></span>' +
@@ -3548,89 +3660,104 @@ function attachDetailHandlers(g) {
 // ============================================================================
 // Facts tab
 // ============================================================================
+// ============================================================================
+// Grading — every potential bet becomes a raw UNIT carrying its own confidence
+// metric. Lock thresholds are applied at AGGREGATION time, so changing a
+// threshold instantly re-grades everything (current week, season scans, history)
+// without refetching anything.
+// ============================================================================
+const CAT_META = {
+  winner:     { label: 'Winner',              th: 'winner',    short: 'Winner' },
+  total:      { label: 'Game Total ±3',       th: 'lines',     short: 'Total' },
+  awayPts:    { label: 'Away Score ±3',       th: 'lines',     short: 'Away pts' },
+  homePts:    { label: 'Home Score ±3',       th: 'lines',     short: 'Home pts' },
+  teamPass:   { label: 'Team Pass Yds ±10',   th: 'lines',     short: 'Team pass' },
+  teamRush:   { label: 'Team Rush Yds ±10',   th: 'lines',     short: 'Team rush' },
+  playerPass: { label: 'Player Pass Yds ±10', th: 'yards',     short: 'Pass yds' },
+  playerRush: { label: 'Player Rush Yds ±10', th: 'yards',     short: 'Rush yds' },
+  playerRec:  { label: 'Player Rec Yds ±10',  th: 'yards',     short: 'Rec yds' },
+  anytimeTd:  { label: 'TD Locks (rush/rec)', th: 'anytimeTd', short: 'TD lock' },
+  firstTd:    { label: 'First TD Pick',       th: 'firstTd',   short: '1st TD' },
+};
+function catDesc(k) {
+  const t = lockTh(CAT_META[k].th);
+  const gate = t > 0 ? ' · locks ≥' + t + '%' : ' · all graded';
+  if (k === 'winner') return 'Projected winner correct' + gate;
+  if (k === 'anytimeTd') return 'Scored a rush/rec TD (never passing)' + gate;
+  if (k === 'firstTd') return 'Pick scored the actual first rush/rec TD' + gate;
+  if (['total','awayPts','homePts'].includes(k)) return 'Within ±' + HIT_TOTAL_TOL + ' pts' + gate;
+  return 'Within ±' + HIT_YDS_TOL + ' yds' + gate;
+}
+function unitQualifies(u) {
+  return u.metric >= lockTh(CAT_META[u.cat].th);
+}
+// Aggregate raw units into per-category records, applying CURRENT thresholds
+function aggregateUnits(units) {
+  const cats = {};
+  for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: CAT_META[k].label, desc: catDesc(k) };
+  for (const u of units) {
+    if (!cats[u.cat] || !unitQualifies(u)) continue;
+    cats[u.cat].n++;
+    if (u.hit) cats[u.cat].hit++;
+  }
+  return cats;
+}
+
+// Grade the loaded week into raw units (thresholds NOT applied here)
 function gradeWeek() {
-  const cats = {
-    winner:   { hit: 0, n: 0, label: 'Winner', desc: 'Projected winner matched the final result' },
-    total:    { hit: 0, n: 0, label: 'Game Total ±3', desc: 'Within ±' + HIT_TOTAL_TOL + ' pts' + (lockTh('lines') > 0 ? ' · conf ≥' + lockTh('lines') + '%' : '') },
-    awayPts:  { hit: 0, n: 0, label: 'Away Score ±3', desc: 'Within ±' + HIT_TOTAL_TOL + ' pts' + (lockTh('lines') > 0 ? ' · conf ≥' + lockTh('lines') + '%' : '') },
-    homePts:  { hit: 0, n: 0, label: 'Home Score ±3', desc: 'Within ±' + HIT_TOTAL_TOL + ' pts' + (lockTh('lines') > 0 ? ' · conf ≥' + lockTh('lines') + '%' : '') },
-    teamPass: { hit: 0, n: 0, label: 'Team Pass Yds ±10', desc: 'Within ±' + HIT_YDS_TOL + ' yds' + (lockTh('lines') > 0 ? ' · conf ≥' + lockTh('lines') + '%' : '') },
-    teamRush: { hit: 0, n: 0, label: 'Team Rush Yds ±10', desc: 'Within ±' + HIT_YDS_TOL + ' yds' + (lockTh('lines') > 0 ? ' · conf ≥' + lockTh('lines') + '%' : '') },
-    playerPass: { hit: 0, n: 0, label: 'Player Pass Yds ±10', desc: 'QB passing yards within ±' + HIT_YDS_TOL + (lockTh('yards') > 0 ? ' · conf ≥' + lockTh('yards') + '%' : '') },
-    playerRush: { hit: 0, n: 0, label: 'Player Rush Yds ±10', desc: 'Rushing yards within ±' + HIT_YDS_TOL + (lockTh('yards') > 0 ? ' · conf ≥' + lockTh('yards') + '%' : '') },
-    playerRec:  { hit: 0, n: 0, label: 'Player Rec Yds ±10', desc: 'Receiving yards within ±' + HIT_YDS_TOL + (lockTh('yards') > 0 ? ' · conf ≥' + lockTh('yards') + '%' : '') },
-    anytimeTd:{ hit: 0, n: 0, label: 'TD Locks (rush/rec)', desc: 'Each ≥' + lockTh('anytimeTd') + '% lock that scored a rush/rec TD' },
-    firstTd:  { hit: 0, n: 0, label: 'First TD Pick', desc: 'Pick scored the game\'s actual first rush/rec TD' + (lockTh('firstTd') > 0 ? ' · P(first) ≥' + lockTh('firstTd') + '%' : '') },
-  };
-  const perGame = [];
+  const units = [];
+  const gamesGraded = [];
 
   for (const g of state.games) {
-    if (!g.completed) {
-      perGame.push({ g, completed: false, props: [] });
-      continue;
-    }
+    if (!g.completed) { gamesGraded.push({ g, completed: false }); continue; }
     const proj = projectGame(g);
     if (!proj) continue;
-    const props = [];
+    const gm = g.away.abbr + '@' + g.home.abbr;
+    gamesGraded.push({ g, completed: true });
 
-    // Winner prediction — graded only when it's a LOCK (win prob ≥ threshold)
+    // Winner — metric = pick's win probability
     {
       const pickProb = Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100;
-      if (pickProb >= lockTh('winner')) {
-        const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
-        const correct = actualWinner !== 'tie' && proj.projWinner === actualWinner;
-        cats.winner.n++; if (correct) cats.winner.hit++;
+      const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
+      if (actualWinner !== 'tie') {
         const projAbbr = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
-        const actAbbr = actualWinner === 'tie' ? 'TIE' : (actualWinner === 'home' ? g.home.abbr : g.away.abbr);
-        props.push({ k: 'Winner', v: 'pick ' + projAbbr + ' (' + pickProb.toFixed(0) + '%) → ' + actAbbr, hit: correct });
+        const actAbbr = actualWinner === 'home' ? g.home.abbr : g.away.abbr;
+        units.push({ cat: 'winner', metric: pickProb, hit: proj.projWinner === actualWinner, game: gm,
+          desc: 'pick ' + projAbbr + ' (' + pickProb.toFixed(0) + '%) → ' + actAbbr });
       }
     }
 
-    // Game lines — graded only when model confidence meets the lines threshold
-    const linesQualify = proj.conf >= lockTh('lines');
-    if (linesQualify) {
-      {
-        const actual = g.away.score + g.home.score;
-        const delta = actual - proj.total;
-        const hit = Math.abs(delta) <= HIT_TOTAL_TOL;
-        cats.total.n++; if (hit) cats.total.hit++;
-        props.push({ k: 'Total', v: proj.total.toFixed(1) + ' → ' + actual + ' (' + fmtSigned(delta, 1) + ')', hit });
-      }
-      for (const item of [
-        ['Away', g.away.abbr, proj.awayPts, g.away.score, 'awayPts'],
-        ['Home', g.home.abbr, proj.homePts, g.home.score, 'homePts'],
-      ]) {
-        const [, team, projPts, actualPts, k] = item;
-        const delta = actualPts - projPts;
-        const hit = Math.abs(delta) <= HIT_TOTAL_TOL;
-        cats[k].n++; if (hit) cats[k].hit++;
-        props.push({ k: team + ' pts', v: projPts.toFixed(1) + ' → ' + actualPts + ' (' + fmtSigned(delta, 1) + ')', hit });
-      }
-      for (const side of ['away','home']) {
-        const team = g[side];
-        const ya = g.teamYards[team.id];
-        if (!ya) continue;
-        const projPass = side === 'away' ? proj.awayPassYds : proj.homePassYds;
-        const projRush = side === 'away' ? proj.awayRushYds : proj.homeRushYds;
-        {
-          const delta = ya.passYds - projPass;
-          const hit = Math.abs(delta) <= HIT_YDS_TOL;
-          cats.teamPass.n++; if (hit) cats.teamPass.hit++;
-          props.push({ k: team.abbr + ' pass', v: projPass + ' → ' + ya.passYds + ' (' + fmtSigned(delta, 0) + ')', hit });
-        }
-        {
-          const delta = ya.rushYds - projRush;
-          const hit = Math.abs(delta) <= HIT_YDS_TOL;
-          cats.teamRush.n++; if (hit) cats.teamRush.hit++;
-          props.push({ k: team.abbr + ' rush', v: projRush + ' → ' + ya.rushYds + ' (' + fmtSigned(delta, 0) + ')', hit });
-        }
-      }
+    // Game lines — metric = model confidence
+    {
+      const actual = g.away.score + g.home.score;
+      const delta = actual - proj.total;
+      units.push({ cat: 'total', metric: proj.conf, hit: Math.abs(delta) <= HIT_TOTAL_TOL, game: gm,
+        desc: proj.total.toFixed(1) + ' → ' + actual + ' (' + fmtSigned(delta, 1) + ') · conf ' + proj.conf + '%' });
+    }
+    for (const item of [
+      [g.away.abbr, proj.awayPts, g.away.score, 'awayPts'],
+      [g.home.abbr, proj.homePts, g.home.score, 'homePts'],
+    ]) {
+      const [abbr, projPts, actualPts, k] = item;
+      const delta = actualPts - projPts;
+      units.push({ cat: k, metric: proj.conf, hit: Math.abs(delta) <= HIT_TOTAL_TOL, game: gm,
+        desc: abbr + ' ' + projPts.toFixed(1) + ' → ' + actualPts + ' (' + fmtSigned(delta, 1) + ') · conf ' + proj.conf + '%' });
+    }
+    for (const side of ['away','home']) {
+      const team = g[side];
+      const ya = g.teamYards[team.id];
+      if (!ya) continue;
+      const projPass = side === 'away' ? proj.awayPassYds : proj.homePassYds;
+      const projRush = side === 'away' ? proj.awayRushYds : proj.homeRushYds;
+      units.push({ cat: 'teamPass', metric: proj.conf, hit: Math.abs(ya.passYds - projPass) <= HIT_YDS_TOL, game: gm,
+        desc: team.abbr + ' pass ' + projPass + ' → ' + ya.passYds + ' (' + fmtSigned(ya.passYds - projPass, 0) + ') · conf ' + proj.conf + '%' });
+      units.push({ cat: 'teamRush', metric: proj.conf, hit: Math.abs(ya.rushYds - projRush) <= HIT_YDS_TOL, game: gm,
+        desc: team.abbr + ' rush ' + projRush + ' → ' + ya.rushYds + ' (' + fmtSigned(ya.rushYds - projRush, 0) + ') · conf ' + proj.conf + '%' });
     }
 
-    // Player yard props — SEPARATE stats (pass / rush / rec), lock-gated by conf
-    if (proj.conf >= lockTh('yards')) {
+    // Player yard props — separate stats, metric = model confidence
+    {
       const statCat = { pass: 'playerPass', rush: 'playerRush', rec: 'playerRec' };
-      let playerHits = 0, playerN = 0;
       for (const pos of ['QB','RB','WR','TE']) {
         for (const side of ['away','home']) {
           const team = g[side];
@@ -3645,48 +3772,48 @@ function gradeWeek() {
               if (got.yds <= 0) continue;
               const actual = getPlayerStatActual(p, stat);
               const delta = actual - got.yds;
-              const hit = Math.abs(delta) <= HIT_YDS_TOL;
-              cats[statCat[stat]].n++; playerN++;
-              if (hit) { cats[statCat[stat]].hit++; playerHits++; }
+              units.push({ cat: statCat[stat], metric: proj.conf, hit: Math.abs(delta) <= HIT_YDS_TOL, game: gm,
+                desc: p.name + ' ' + STAT_LABEL[stat].toLowerCase() + ' ' + got.yds + ' → ' + actual + ' (' + fmtSigned(delta, 0) + ') · conf ' + proj.conf + '%' });
             }
           }
         }
       }
-      if (playerN > 0) {
-        props.push({ k: 'Player yds', v: playerHits + '/' + playerN + ' hit (pass/rush/rec)', hit: playerHits === playerN });
-      }
     }
 
-    // TD grading — uses the same builder/rules as the Game Bets tab
+    // Anytime TD candidates — metric = TD probability (every candidate stored;
+    // the threshold decides later which count as locks)
     const allCands = buildTDCandidates(g, proj);
-    const locks = allCands.filter(p => p._td.prob >= lockTh('anytimeTd'));
-    // Anytime: grade each lock individually (rush/rec only)
-    let lockHits = 0;
-    for (const c of locks) {
-      cats.anytimeTd.n++;
-      if (c._scored) { cats.anytimeTd.hit++; lockHits++; }
+    for (const c of allCands) {
+      if (c._td.prob <= 0) continue;
+      units.push({ cat: 'anytimeTd', metric: c._td.prob, hit: !!c._scored, game: gm,
+        desc: c.name + ' (' + c.position + ') ' + c._td.prob + '% → ' + (c._scored ? '✓ TD' : 'no') });
     }
-    if (locks.length) {
-      props.push({ k: 'TD locks', v: lockHits + '/' + locks.length + ' scored', hit: lockHits === locks.length && locks.length > 0 });
-    }
-    // First TD: top pick is correct ONLY if that player scored the actual first
-    // rush/rec TD. Graded only when P(first) meets the firstTd lock threshold.
+    // First TD — metric = P(first) via λ share
     if (allCands.length) {
       const firstPick = allCands[0];
       const totalLambda = allCands.reduce((s, c) => s + (c._td.lambda || 0), 0);
       const pFirst = totalLambda > 0 ? ((firstPick._td.lambda || 0) / totalLambda) * (1 - Math.exp(-totalLambda)) * 100 : 0;
       const isFirst = isActualFirstTdScorer(firstPick, g);
-      if (isFirst !== null && pFirst >= lockTh('firstTd')) {
-        cats.firstTd.n++;
-        if (isFirst) cats.firstTd.hit++;
+      if (isFirst !== null) {
         const actualName = g.firstTdScorer ? g.firstTdScorer.name : '—';
-        props.push({ k: '1st TD', v: firstPick.name + ' (' + pFirst.toFixed(0) + '%) → actual: ' + actualName + (isFirst ? ' ✓' : ' ✗'), hit: isFirst });
+        units.push({ cat: 'firstTd', metric: pFirst, hit: !!isFirst, game: gm,
+          desc: firstPick.name + ' (' + pFirst.toFixed(0) + '%) → actual: ' + actualName });
       }
     }
-
-    perGame.push({ g, completed: true, props });
   }
-  return { cats, perGame };
+
+  const cats = aggregateUnits(units);
+  // Per-game breakdown: each game's QUALIFYING locks (current thresholds)
+  const perGame = gamesGraded.map(entry => {
+    if (!entry.completed) return { g: entry.g, completed: false, props: [] };
+    const gm = entry.g.away.abbr + '@' + entry.g.home.abbr;
+    const props = units
+      .filter(u => u.game === gm && unitQualifies(u))
+      .map(u => ({ k: CAT_META[u.cat].short, v: u.desc, hit: u.hit }));
+    return { g: entry.g, completed: true, props };
+  });
+
+  return { units, cats, perGame };
 }
 
 // ----------------------------------------------------------------------------
@@ -3759,73 +3886,97 @@ async function loadFactHistory() {
 
   const savedWeek = state.week;
   const results = [];
-  let cumHit = 0, cumN = 0;
 
   try {
     for (let W = 1; W < savedWeek; W++) {
       const { graded, gameCount } = await gradeWeekBlind(W);
-      const hit = Object.values(graded.cats).reduce((s, c) => s + c.hit, 0);
-      const n = Object.values(graded.cats).reduce((s, c) => s + c.n, 0);
-      cumHit += hit; cumN += n;
-      results.push({ week: W, hit, n, pct: n ? (100 * hit / n) : 0, games: gameCount });
+      results.push({ week: W, games: gameCount, units: graded.units });
     }
   } catch (e) { console.warn('fact history error', e); }
 
-  state.factHistory = { weeks: results, cumPct: cumN ? (100 * cumHit / cumN) : 0, cumHit, cumN };
+  state.factHistory = { weeks: results };
   state.factHistoryLoading = false;
   render();
 }
 
-// All-time / full-season scan — walk every week 1..18 blind and aggregate by category.
+// All-time / full-season scan — walk every week 1..18 blind, storing RAW units.
+// Thresholds are applied at render, so changing a lock threshold re-grades the
+// whole stored season instantly with no refetch.
 async function scanFullSeason() {
   if (state.seasonScanLoading) return;
   state.seasonScanLoading = true;
   state.seasonScanProgress = 'Starting…';
   render();
 
-  // Aggregate category totals across the whole season
-  const aggCats = {};
   const weekResults = [];
-  let cumHit = 0, cumN = 0;
 
   try {
+    // Self-provision when run without loading a week first: the scan needs the
+    // prior-season aggregate (early-week projections) and the roster position map.
+    if (!state.priorSeason || !Object.keys(state.priorSeason).length) {
+      state.seasonScanProgress = 'Loading ' + (state.season - 1) + ' prior season…';
+      const prog0 = document.getElementById('scan-progress');
+      if (prog0) prog0.textContent = state.seasonScanProgress;
+      try {
+        const ps = await loadPriorSeasonAggregate(state.season - 1, () => {});
+        state.priorSeason = ps.teamSeason;
+        state.priorPlayerSeason = ps.playerSeason;
+      } catch (e) {
+        logEvent('warn', 'scan', 'prior season load failed: ' + e.message);
+        state.priorSeason = state.priorSeason || {};
+        state.priorPlayerSeason = state.priorPlayerSeason || {};
+      }
+    }
+    if (!state.positionById || !Object.keys(state.positionById).length) {
+      try {
+        const sb1 = await cachedJSON(ESPN.scoreboard(state.season, 1));
+        const ids = [];
+        for (const ev of (sb1.events || [])) {
+          const comp = ev.competitions && ev.competitions[0];
+          for (const c of ((comp && comp.competitors) || [])) {
+            if (c.team && c.team.id) ids.push(c.team.id);
+          }
+        }
+        await loadPositionMap(Array.from(new Set(ids)));
+      } catch (e) { logEvent('warn', 'scan', 'position map load failed: ' + e.message); }
+    }
+
     for (let W = 1; W <= 18; W++) {
       state.seasonScanProgress = 'Week ' + W + ' / 18';
-      // re-render just the progress without nuking the button handler context
       const prog = document.getElementById('scan-progress');
       if (prog) prog.textContent = state.seasonScanProgress; else render();
 
       const { graded, gameCount } = await gradeWeekBlind(W);
-      if (gameCount === 0) { weekResults.push({ week: W, hit: 0, n: 0, pct: 0, games: 0 }); continue; }
+      if (gameCount === 0) { weekResults.push({ week: W, games: 0, units: [] }); continue; }
 
-      // Push this week's blind-graded results to Firebase (debounced, non-blocking)
-      syncWeekAccuracy(graded.cats, W);
-
-      let wkHit = 0, wkN = 0;
-      for (const key in graded.cats) {
-        const c = graded.cats[key];
-        if (!aggCats[key]) aggCats[key] = { hit: 0, n: 0, label: c.label, desc: c.desc };
-        aggCats[key].hit += c.hit;
-        aggCats[key].n += c.n;
-        wkHit += c.hit; wkN += c.n;
-      }
-      cumHit += wkHit; cumN += wkN;
-      weekResults.push({ week: W, hit: wkHit, n: wkN, pct: wkN ? (100 * wkHit / wkN) : 0, games: gameCount });
+      // Push this week's results (at CURRENT thresholds) to Firebase
+      syncWeekAccuracy(aggregateUnits(graded.units), W);
+      weekResults.push({ week: W, games: gameCount, units: graded.units });
     }
   } catch (e) { console.warn('season scan error', e); }
 
   state.seasonScan = {
-    cats: aggCats,
+    season: state.season,
     weeks: weekResults,
-    cumPct: cumN ? (100 * cumHit / cumN) : 0,
-    cumHit, cumN,
     weeksWithGames: weekResults.filter(w => w.games > 0).length,
   };
-  // Push the whole-season summary too
-  syncSeasonSummary(state.seasonScan);
+  // Whole-season summary at current thresholds
+  syncSeasonSummary(seasonScanAggregate());
   state.seasonScanLoading = false;
   state.seasonScanProgress = '';
   render();
+}
+
+// Aggregate the stored season scan at CURRENT thresholds (called at render)
+function seasonScanAggregate() {
+  const ss = state.seasonScan;
+  if (!ss) return null;
+  const allUnits = [];
+  for (const w of ss.weeks) for (const u of w.units) allUnits.push(u);
+  const cats = aggregateUnits(allUnits);
+  let cumHit = 0, cumN = 0;
+  for (const k in cats) { cumHit += cats[k].hit; cumN += cats[k].n; }
+  return { cats, cumHit, cumN, cumPct: cumN ? 100 * cumHit / cumN : 0, weeksWithGames: ss.weeksWithGames };
 }
 
 // ----------------------------------------------------------------------------
@@ -3973,200 +4124,7 @@ async function loadFirebaseAccuracy() {
 }
 
 function renderFacts(main) {
-  const completed = state.games.filter(g => g.completed);
-  if (!completed.length) {
-    // Still offer the all-time season scan even with no completed games this week
-    let seasonBlock;
-    if (state.seasonScanLoading) {
-      seasonBlock = '<div class="gb-empty">Scanning every week blind… <span id="scan-progress">' + escapeHtml(state.seasonScanProgress) + '</span></div>';
-    } else if (state.seasonScan) {
-      const ss = state.seasonScan;
-      seasonBlock = '<div style="padding:12px 14px;font-family:ui-monospace,monospace;font-size:13px;color:var(--ink)">Season accuracy: <b style="color:var(--accent)">' + ss.cumPct.toFixed(0) + '%</b> (' + ss.cumHit + '/' + ss.cumN + ') across ' + ss.weeksWithGames + ' weeks.</div>' +
-        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Re-scan season</button></div>';
-    } else {
-      seasonBlock = '<div class="gb-empty">No completed games this week — but you can still grade the whole ' + state.season + ' season.</div>' +
-        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Scan full season</button></div>';
-    }
-    main.innerHTML =
-      '<div class="facts">' +
-        '<div class="fact-card">' +
-          '<div class="head">All-Time · Full Season Scan</div>' +
-          seasonBlock +
-        '</div>' +
-      '</div>';
-    const sb = main.querySelector('#season-scan-btn');
-    if (sb) sb.addEventListener('click', scanFullSeason);
-    return;
-  }
-  const graded = gradeWeek();
-  const cats = graded.cats;
-  const perGame = graded.perGame;
-  // Fire-and-forget: push this week's graded results to Firebase (debounced)
-  syncWeekAccuracy(cats);
-
-  const eligible = Object.entries(cats).filter(e => e[1].n > 0);
-  const best = eligible.length ? eligible.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
-
-  const overallHits = Object.values(cats).reduce((s, c) => s + c.hit, 0);
-  const overallN = Object.values(cats).reduce((s, c) => s + c.n, 0);
-  const overallPct = overallN ? (100 * overallHits / overallN) : 0;
-
-  const catRows = Object.entries(cats).map(entry => {
-    const key = entry[0], c = entry[1];
-    const pct = c.n ? (100 * c.hit / c.n) : 0;
-    const isBest = best && key === best[0];
-    return '' +
-      '<div class="fact-cat-row ' + (isBest ? 'best' : '') + '">' +
-        '<div class="fact-cat-top">' +
-          '<div class="fact-cat-name">' +
-            '<div class="n">' + escapeHtml(c.label) + (isBest ? '<span class="fact-best-pill">BEST</span>' : '') + '</div>' +
-            '<div class="desc">' + escapeHtml(c.desc) + '</div>' +
-          '</div>' +
-          '<div class="fact-cat-pct">' + (c.n ? pct.toFixed(0) + '%' : '—') + '</div>' +
-        '</div>' +
-        '<div class="fact-cat-bar-row">' +
-          '<div class="fact-cat-bar"><div class="fill" style="width:' + (c.n ? pct : 0) + '%"></div></div>' +
-          '<div class="fact-cat-frac">' + c.hit + '/' + c.n + '</div>' +
-        '</div>' +
-      '</div>';
-  }).join('');
-
-  const perGameHtml = perGame.map(pg => {
-    if (!pg.completed) {
-      return '' +
-        '<div class="pergame-row">' +
-          '<div class="pergame-head">' +
-            '<div class="pergame-teams">' + escapeHtml(pg.g.away.abbr) + '<span class="at">@</span>' + escapeHtml(pg.g.home.abbr) + '</div>' +
-            '<div class="pergame-summary" style="color:var(--ink-faint)">pending</div>' +
-          '</div>' +
-        '</div>';
-    }
-    const hits = pg.props.filter(p => p.hit).length;
-    const total = pg.props.length;
-    return '' +
-      '<div class="pergame-row">' +
-        '<div class="pergame-head">' +
-          '<div class="pergame-teams">' + escapeHtml(pg.g.away.abbr) + '<span class="at">@</span>' + escapeHtml(pg.g.home.abbr) + '</div>' +
-          '<div class="pergame-summary"><span style="color:var(--accent)">' + hits + '</span><span style="color:var(--ink-faint)">/' + total + '</span></div>' +
-        '</div>' +
-        '<div class="pergame-pills">' +
-          pg.props.map(p => '<span class="pill ' + (p.hit ? 'hit' : 'miss') + '" title="' + escapeHtml(p.v) + '">' + escapeHtml(p.k) + '</span>').join('') +
-        '</div>' +
-      '</div>';
-  }).join('');
-
-  // Historical accuracy across prior weeks (walk-forward)
-  let historyHtml;
-  if (state.week <= 1) {
-    historyHtml = '';
-  } else if (state.factHistoryLoading) {
-    historyHtml =
-      '<div class="fact-card">' +
-        '<div class="head">Historical Accuracy · Weeks 1–' + (state.week - 1) + '</div>' +
-        '<div class="gb-empty">Grading prior weeks (walk-forward, no leakage)…</div>' +
-      '</div>';
-  } else if (!state.factHistory) {
-    historyHtml =
-      '<div class="fact-card">' +
-        '<div class="head">Historical Accuracy · Weeks 1–' + (state.week - 1) + '</div>' +
-        '<div class="gb-empty">See how the model did on every prior week this season — each week projected blind, using only earlier data.</div>' +
-        '<div style="padding:0 14px 14px"><button class="fc-load" id="fact-hist-btn" style="margin:0">Run prior-week history</button></div>' +
-      '</div>';
-  } else {
-    const fh = state.factHistory;
-    const maxPct = Math.max(100, ...fh.weeks.map(w => w.pct));
-    const rows = fh.weeks.map(w =>
-      '<div class="fact-hist-row">' +
-        '<span class="fact-hist-wk">W' + w.week + '</span>' +
-        '<div class="fact-hist-bar"><div class="fill" style="width:' + (w.n ? (w.pct / maxPct * 100) : 0) + '%"></div></div>' +
-        '<span class="fact-hist-pct">' + (w.n ? w.pct.toFixed(0) + '%' : '—') + '</span>' +
-      '</div>'
-    ).join('');
-    historyHtml =
-      '<div class="fact-card">' +
-        '<div class="head">Historical Accuracy · Weeks 1–' + (state.week - 1) + ' · cumulative <span class="fact-hist-cum">' + fh.cumPct.toFixed(0) + '%</span> (' + fh.cumHit + '/' + fh.cumN + ')</div>' +
-        '<div class="fact-history">' + rows + '</div>' +
-        '<div class="setting-note" style="padding:10px 14px">Each week was projected using only the weeks before it (plus prior season) — no peeking at that week\'s results.</div>' +
-      '</div>';
-  }
-
-  // All-time / full-season scan (every week 1..18, blind)
-  let seasonHtml;
-  if (state.seasonScanLoading) {
-    seasonHtml =
-      '<div class="fact-card">' +
-        '<div class="head">All-Time · Full Season Scan</div>' +
-        '<div class="gb-empty">Scanning every week blind… <span id="scan-progress">' + escapeHtml(state.seasonScanProgress) + '</span></div>' +
-      '</div>';
-  } else if (!state.seasonScan) {
-    seasonHtml =
-      '<div class="fact-card">' +
-        '<div class="head">All-Time · Full Season Scan</div>' +
-        '<div class="gb-empty">Grade the model across the entire ' + state.season + ' season at once — every week projected blind, aggregated by category. (Heaviest on a cold cache.)</div>' +
-        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Scan full season</button></div>' +
-      '</div>';
-  } else {
-    const ss = state.seasonScan;
-    const catEntries = Object.entries(ss.cats).filter(e => e[1].n > 0);
-    const bestCat = catEntries.length ? catEntries.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
-    const catRowsAll = catEntries.map(entry => {
-      const c = entry[1];
-      const pct = c.n ? (100 * c.hit / c.n) : 0;
-      const isBest = bestCat && entry[0] === bestCat[0];
-      return '<div class="fact-cat-row ' + (isBest ? 'best' : '') + '">' +
-          '<div class="fact-cat-top">' +
-            '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + (isBest ? '<span class="fact-best-pill">BEST</span>' : '') + '</div></div>' +
-            '<div class="fact-cat-pct">' + pct.toFixed(0) + '%</div>' +
-          '</div>' +
-          '<div class="fact-cat-bar-row">' +
-            '<div class="fact-cat-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
-            '<div class="fact-cat-frac">' + c.hit + '/' + c.n + '</div>' +
-          '</div>' +
-        '</div>';
-    }).join('');
-    const maxPct = Math.max(100, ...ss.weeks.map(w => w.pct));
-    const wkRows = ss.weeks.filter(w => w.games > 0).map(w =>
-      '<div class="fact-hist-row">' +
-        '<span class="fact-hist-wk">W' + w.week + '</span>' +
-        '<div class="fact-hist-bar"><div class="fill" style="width:' + (w.pct / maxPct * 100) + '%"></div></div>' +
-        '<span class="fact-hist-pct">' + w.pct.toFixed(0) + '%</span>' +
-      '</div>'
-    ).join('');
-    seasonHtml =
-      '<div class="fact-card">' +
-        '<div class="head">All-Time · ' + state.season + ' Season · cumulative <span class="fact-hist-cum">' + ss.cumPct.toFixed(0) + '%</span> (' + ss.cumHit + '/' + ss.cumN + ') · ' + ss.weeksWithGames + ' weeks</div>' +
-        catRowsAll +
-        '<div class="gb-sub">By Week</div>' +
-        '<div class="fact-history">' + wkRows + '</div>' +
-        '<div style="padding:10px 14px"><button class="scan-btn" id="season-scan-btn">Re-scan season</button></div>' +
-      '</div>';
-  }
-
-  // Gridline vs DK card (only when DK odds present)
-  let vsDkHtml = '';
-  const dkGrade = gradeVsDK();
-  if (dkGrade) {
-    const dkRows = Object.entries(dkGrade).filter(e => e[1].n > 0).map(e => {
-      const c = e[1];
-      const gridPct = c.n ? Math.round(100 * c.gridWin / c.n) : 0;
-      const dkPct = c.n ? Math.round(100 * c.dkWin / c.n) : 0;
-      const winner = c.gridWin > c.dkWin ? 'Gridline' : (c.dkWin > c.gridWin ? 'DK' : 'tie');
-      const winCls = winner === 'Gridline' ? 'delta-hit' : (winner === 'DK' ? 'delta-miss' : '');
-      return '<div class="fact-cat-row">' +
-        '<div class="fact-cat-top">' +
-          '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + ' <span class="' + winCls + '" style="padding:1px 5px;border-radius:3px;font-family:ui-monospace,monospace;font-size:9px">' + winner + '</span></div>' +
-            '<div class="desc">Gridline ' + c.gridWin + '/' + c.n + ' (' + gridPct + '%) · DK ' + (c.dkWin || c.dkWin === 0 ? c.dkWin + '/' + c.n + ' (' + dkPct + '%)' : '—') + '</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    }).join('');
-    vsDkHtml = '<div class="fact-card">' +
-      '<div class="head">Gridline vs DraftKings</div>' +
-      (dkRows || '<div class="gb-empty">No DK-aligned completed games yet.</div>') +
-    '</div>';
-  }
-
-  // All-time synced record from Firebase (every graded week anyone has synced)
+  // ---- All-time synced record from Firebase (works with nothing loaded) ----
   let fsHtml;
   if (state.fsAccuracyLoading) {
     fsHtml = '<div class="fact-card"><div class="head">All-Time · Synced (Firebase)</div><div class="gb-empty">Loading synced record…</div></div>';
@@ -4200,37 +4158,190 @@ function renderFacts(main) {
     '</div>';
   }
 
-  main.innerHTML = '' +
-    '<div class="facts">' +
+  // ---- Season scan card: category chips + by-week bars + week drilldowns ----
+  let seasonHtml;
+  if (state.seasonScanLoading) {
+    seasonHtml =
+      '<div class="fact-card">' +
+        '<div class="head">Season Scan · ' + state.season + '</div>' +
+        '<div class="gb-empty">Scanning every week blind… <span id="scan-progress">' + escapeHtml(state.seasonScanProgress) + '</span></div>' +
+      '</div>';
+  } else if (!state.seasonScan || state.seasonScan.season !== state.season) {
+    seasonHtml =
+      '<div class="fact-card">' +
+        '<div class="head">Season Scan · ' + state.season + '</div>' +
+        '<div class="gb-empty">Grade the entire ' + state.season + ' season blind — every week projected using only earlier data. Lock thresholds re-grade this instantly whenever you change them.</div>' +
+        '<div style="padding:0 14px 14px"><button class="scan-btn" id="season-scan-btn">Scan full season</button></div>' +
+      '</div>';
+  } else {
+    const ss = state.seasonScan;
+    const agg = seasonScanAggregate();
+    const catEntries = Object.entries(agg.cats).filter(e => e[1].n > 0);
+    const bestCat = catEntries.length ? catEntries.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
+    const catRowsAll = catEntries.map(entry => {
+      const c = entry[1];
+      const pct = c.n ? (100 * c.hit / c.n) : 0;
+      const isBest = bestCat && entry[0] === bestCat[0];
+      return '<div class="fact-cat-row ' + (isBest ? 'best' : '') + '">' +
+          '<div class="fact-cat-top">' +
+            '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + (isBest ? '<span class="fact-best-pill">BEST</span>' : '') + '</div><div class="desc">' + escapeHtml(c.desc) + '</div></div>' +
+            '<div class="fact-cat-pct">' + pct.toFixed(0) + '%</div>' +
+          '</div>' +
+          '<div class="fact-cat-bar-row">' +
+            '<div class="fact-cat-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="fact-cat-frac">' + c.hit + '/' + c.n + '</div>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+
+    // Category selector chips for the by-week view
+    const selCat = state.scanCatFilter && CAT_META[state.scanCatFilter] ? state.scanCatFilter : 'anytimeTd';
+    const catChips = Object.keys(CAT_META).map(k =>
+      '<button class="chip ' + (selCat === k ? 'active' : '') + '" data-scancat="' + k + '">' + escapeHtml(CAT_META[k].short) + '</button>'
+    ).join('');
+
+    // Per-week bars for the SELECTED category + tap-to-expand lock lists
+    const wkRows = ss.weeks.filter(w => w.games > 0).map(w => {
+      const catUnits = w.units.filter(u => u.cat === selCat && unitQualifies(u));
+      const hit = catUnits.filter(u => u.hit).length;
+      const n = catUnits.length;
+      const pct = n ? (100 * hit / n) : 0;
+      const isOpen = !!(state.scanWeekOpen && state.scanWeekOpen[w.week]);
+      const drill = isOpen && n ? '<div class="wk-drill">' + catUnits.map(u =>
+        '<div class="wk-drill-row ' + (u.hit ? 'is-hit' : 'is-miss') + '">' +
+          '<span class="wk-drill-game">' + escapeHtml(u.game) + '</span>' +
+          '<span class="wk-drill-desc">' + escapeHtml(u.desc) + '</span>' +
+          '<span class="wk-drill-res">' + (u.hit ? '✓' : '✗') + '</span>' +
+        '</div>').join('') + '</div>'
+        : (isOpen ? '<div class="wk-drill"><div class="gb-empty" style="padding:8px 12px">No ' + escapeHtml(CAT_META[selCat].short) + ' locks this week at current threshold.</div></div>' : '');
+      return '<div class="fact-hist-row tappable" data-scanweek="' + w.week + '">' +
+          '<span class="fact-hist-wk">W' + w.week + ' ' + (isOpen ? '▾' : '▸') + '</span>' +
+          '<div class="fact-hist-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
+          '<span class="fact-hist-pct">' + (n ? pct.toFixed(0) + '% (' + hit + '/' + n + ')' : '—') + '</span>' +
+        '</div>' + drill;
+    }).join('');
+
+    seasonHtml =
+      '<div class="fact-card">' +
+        '<div class="head">Season Scan · ' + state.season + ' · cumulative <span class="fact-hist-cum">' + agg.cumPct.toFixed(0) + '%</span> (' + agg.cumHit + '/' + agg.cumN + ') · ' + agg.weeksWithGames + ' weeks · re-grades live with lock thresholds</div>' +
+        catRowsAll +
+        '<div class="gb-sub">By Week · tap a week to see its locks</div>' +
+        '<div class="chip-row" style="padding:10px 14px 4px">' + catChips + '</div>' +
+        '<div class="fact-history">' + wkRows + '</div>' +
+        '<div style="padding:10px 14px"><button class="scan-btn" id="season-scan-btn">Re-scan season</button></div>' +
+      '</div>';
+  }
+
+  // ---- This-week cards (only when a week is loaded with completed games) ----
+  let thisWeekHtml = '';
+  let heroHtml = '';
+  if (state.loaded && state.games.some(g => g.completed)) {
+    const graded = gradeWeek();
+    const cats = graded.cats;
+    syncWeekAccuracy(cats);
+
+    const eligible = Object.entries(cats).filter(e => e[1].n > 0);
+    const best = eligible.length ? eligible.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
+    const overallHits = Object.values(cats).reduce((s, c) => s + c.hit, 0);
+    const overallN = Object.values(cats).reduce((s, c) => s + c.n, 0);
+    const overallPct = overallN ? (100 * overallHits / overallN) : 0;
+
+    heroHtml =
       '<div class="fact-hero">' +
         '<div class="label">Best Category · ' + state.season + ' W' + state.week + '</div>' +
         '<div class="pct">' + (best ? Math.round(100 * best[1].hit / best[1].n) + '%' : '—') + '</div>' +
         '<div class="name">' + (best ? escapeHtml(best[1].label) : '—') + '</div>' +
-        '<div class="sub">' + (best ? best[1].hit + '/' + best[1].n + ' hits' : '') + '</div>' +
-      '</div>' +
+        '<div class="sub">' + (best ? best[1].hit + '/' + best[1].n + ' locks hit' : 'no locks graded at current thresholds') + '</div>' +
+      '</div>';
+
+    const catRows = Object.entries(cats).map(entry => {
+      const key = entry[0], c = entry[1];
+      const pct = c.n ? (100 * c.hit / c.n) : 0;
+      const isBest = best && key === best[0];
+      return '<div class="fact-cat-row ' + (isBest ? 'best' : '') + '">' +
+          '<div class="fact-cat-top">' +
+            '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + (isBest ? '<span class="fact-best-pill">BEST</span>' : '') + '</div><div class="desc">' + escapeHtml(c.desc) + '</div></div>' +
+            '<div class="fact-cat-pct">' + (c.n ? pct.toFixed(0) + '%' : '—') + '</div>' +
+          '</div>' +
+          '<div class="fact-cat-bar-row">' +
+            '<div class="fact-cat-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="fact-cat-frac">' + c.hit + '/' + c.n + '</div>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+
+    // Gridline vs DK card
+    let vsDkHtml = '';
+    const dkGrade = gradeVsDK();
+    if (dkGrade) {
+      const dkRows = Object.entries(dkGrade).filter(e => e[1].n > 0).map(e => {
+        const c = e[1];
+        const gridPct = c.n ? Math.round(100 * c.gridWin / c.n) : 0;
+        const dkPct = c.n ? Math.round(100 * c.dkWin / c.n) : 0;
+        const winner = c.gridWin > c.dkWin ? 'Gridline' : (c.dkWin > c.gridWin ? 'DK' : 'tie');
+        const winCls = winner === 'Gridline' ? 'delta-hit' : (winner === 'DK' ? 'delta-miss' : '');
+        return '<div class="fact-cat-row">' +
+          '<div class="fact-cat-top">' +
+            '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + ' <span class="' + winCls + '" style="padding:1px 5px;border-radius:3px;font-family:ui-monospace,monospace;font-size:9px">' + winner + '</span></div>' +
+              '<div class="desc">Gridline ' + c.gridWin + '/' + c.n + ' (' + gridPct + '%) · DK ' + c.dkWin + '/' + c.n + ' (' + dkPct + '%)</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+      vsDkHtml = '<div class="fact-card">' +
+        '<div class="head">Gridline vs DraftKings</div>' +
+        (dkRows || '<div class="gb-empty">No DK-aligned completed games yet.</div>') +
+      '</div>';
+    }
+
+    // Per-game locks breakdown
+    const perGameHtml = graded.perGame.map(pg => {
+      if (!pg.completed) return '';
+      const rows = pg.props.length ? pg.props.map(pr =>
+        '<div class="pg-row ' + (pr.hit ? 'is-hit' : 'is-miss') + '">' +
+          '<span class="pg-k">' + escapeHtml(pr.k) + '</span>' +
+          '<span class="pg-v">' + escapeHtml(pr.v) + '</span>' +
+          '<span class="pg-res">' + (pr.hit ? '✓' : '✗') + '</span>' +
+        '</div>').join('')
+        : '<div class="gb-empty" style="padding:8px 12px">No locks at current thresholds.</div>';
+      return '<div class="pg-game"><div class="pg-head">' + escapeHtml(pg.g.away.abbr) + ' @ ' + escapeHtml(pg.g.home.abbr) + '</div>' + rows + '</div>';
+    }).join('');
+
+    thisWeekHtml =
       vsDkHtml +
-      fsHtml +
-      seasonHtml +
       '<div class="fact-card">' +
-        '<div class="head">This Week · Accuracy by Category</div>' +
+        '<div class="head">This Week · Locks by Category (' + overallHits + '/' + overallN + ' · ' + overallPct.toFixed(0) + '%)</div>' +
         catRows +
       '</div>' +
       '<div class="fact-card">' +
-        '<div class="head">This Week · Overall ' + overallHits + '/' + overallN + ' (' + overallPct.toFixed(0) + '%)</div>' +
-      '</div>' +
-      historyHtml +
-      '<div class="fact-card">' +
-        '<div class="head">Per-Game Breakdown</div>' +
+        '<div class="head">Per-Game Locks</div>' +
         '<div class="pergame-block">' + perGameHtml + '</div>' +
-      '</div>' +
-    '</div>';
+      '</div>';
+  } else if (!state.loaded) {
+    thisWeekHtml = '<div class="fact-card"><div class="head">This Week</div><div class="gb-empty">Load a week to see its graded locks here. The all-time record and season scan above work without loading.</div></div>';
+  }
 
-  const histBtn = main.querySelector('#fact-hist-btn');
-  if (histBtn) histBtn.addEventListener('click', loadFactHistory);
+  main.innerHTML = '<div class="facts">' + heroHtml + fsHtml + seasonHtml + thisWeekHtml + '</div>';
+
   const scanBtn = main.querySelector('#season-scan-btn');
   if (scanBtn) scanBtn.addEventListener('click', scanFullSeason);
   const fsBtn = main.querySelector('#fs-acc-btn');
   if (fsBtn) fsBtn.addEventListener('click', loadFirebaseAccuracy);
+  main.querySelectorAll('.chip[data-scancat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.scanCatFilter = btn.dataset.scancat;
+      state.scanWeekOpen = {};
+      render();
+    });
+  });
+  main.querySelectorAll('[data-scanweek]').forEach(row => {
+    row.addEventListener('click', () => {
+      const wk = +row.dataset.scanweek;
+      if (!state.scanWeekOpen) state.scanWeekOpen = {};
+      state.scanWeekOpen[wk] = !state.scanWeekOpen[wk];
+      render();
+    });
+  });
 }
 
 // ============================================================================
@@ -4285,76 +4396,6 @@ function gatherAllProps() {
   return out;
 }
 
-function renderProps(main) {
-  if (!state.games.length) {
-    main.innerHTML = '<div class="hint"><div class="title">No games</div></div>';
-    return;
-  }
-  const all = gatherAllProps();
-
-  // Build team filter options from teams present
-  const teams = Array.from(new Set(state.games.flatMap(g => [g.away.abbr, g.home.abbr]))).sort();
-
-  // Apply filters
-  let rows = all.slice();
-  if (state.propTeamFilter !== 'all') rows = rows.filter(r => r.abbr === state.propTeamFilter);
-  if (state.propConfFilter !== 'all') rows = rows.filter(r => r.tier === state.propConfFilter);
-
-  // Sort: confidence desc, then projected yards desc
-  rows.sort((a, b) => (b.conf - a.conf) || (b.projYds - a.projYds));
-
-  // Filter chips
-  const teamChips = ['all'].concat(teams).map(t =>
-    '<button class="chip ' + (state.propTeamFilter === t ? 'active' : '') + '" data-team="' + escapeHtml(t) + '">' + (t === 'all' ? 'All teams' : escapeHtml(t)) + '</button>'
-  ).join('');
-  const confChips = [['all','All'],['high','High'],['med','Medium'],['low','Low']].map(c =>
-    '<button class="chip ' + (state.propConfFilter === c[0] ? 'active' : '') + '" data-conf="' + c[0] + '">' + c[1] + '</button>'
-  ).join('');
-
-  // Hit-rate summary for the current filter (completed only)
-  const done = rows.filter(r => r.completed);
-  const hits = done.filter(r => r.hit).length;
-  const summaryLine = done.length
-    ? hits + '/' + done.length + ' hit (' + Math.round(100 * hits / done.length) + '%) · ±' + HIT_YDS_TOL + ' yds · pass/rush/rec graded separately'
-    : rows.length + ' projected props · results show after games finish';
-
-  const propRows = rows.length ? rows.map(r => {
-    const confCell = '<div class="props-conf"><span class="conf-pip conf-' + r.tier + '"></span>' + r.conf + '%</div>';
-    const actualCell = r.completed
-      ? '<div class="prop-actual ' + (r.hit ? 'hit' : 'miss') + '"><span class="cell-lbl">act</span>' + r.actual + ' ' + fmtSigned(r.delta, 0) + '</div>'
-      : '<div class="prop-actual na"><span class="cell-lbl">act</span>—</div>';
-    return '<div class="props-row ' + (r.completed ? (r.hit ? 'is-hit' : 'is-miss') : '') + '">' +
-      '<span class="pos-tag pos-' + r.position + '">' + r.position + '</span>' +
-      '<div class="props-name">' + escapeHtml(r.name) +
-        '<span class="prop-team">' + escapeHtml(r.abbr) + ' vs ' + escapeHtml(r.oppAbbr) + '</span>' +
-        '<span class="props-stattype">' + r.statType + '</span>' +
-      '</div>' +
-      confCell +
-      '<div class="prop-proj"><span class="cell-lbl">proj</span>' + r.projYds + '<span class="unit">yd</span></div>' +
-      actualCell +
-    '</div>';
-  }).join('') : '<div class="gb-empty">No props match these filters.</div>';
-
-  main.innerHTML = '<div class="props-tab">' +
-    '<div class="props-filters">' +
-      '<div class="filter-group"><div class="filter-label">Team</div><div class="chip-row">' + teamChips + '</div></div>' +
-      '<div class="filter-group"><div class="filter-label">Confidence</div><div class="chip-row">' + confChips + '</div></div>' +
-    '</div>' +
-    '<div class="props-summary">' + summaryLine + '</div>' +
-    '<div class="props-colhead">' +
-      '<span>Pos</span><span>Player · stat</span><span title="model confidence">Conf</span>' +
-      '<span style="text-align:right">Proj</span><span style="text-align:right">Actual (Δ)</span>' +
-    '</div>' +
-    '<div class="props-list">' + propRows + '</div>' +
-  '</div>';
-
-  main.querySelectorAll('.chip[data-team]').forEach(btn => {
-    btn.addEventListener('click', () => { state.propTeamFilter = btn.dataset.team; render(); });
-  });
-  main.querySelectorAll('.chip[data-conf]').forEach(btn => {
-    btn.addEventListener('click', () => { state.propConfFilter = btn.dataset.conf; render(); });
-  });
-}
 
 // ============================================================================
 // Game Bets tab — TD predictions (anytime locks + first TD) with results,
@@ -4400,66 +4441,69 @@ function renderGameBets(main) {
       }
     }
 
-    // winner badge
+    // winner badge — shown ONLY when the pick qualifies as a lock
+    const winProbPct = Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100;
     const projWinAbbr = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
-    let winBadge;
-    if (g.completed) {
-      const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
-      const correct = actualWinner !== 'tie' && proj.projWinner === actualWinner;
-      winBadge = '<span class="winner-tag ' + (correct ? 'correct' : 'wrong') + '">pick ' + escapeHtml(projWinAbbr) + (correct ? ' ✓' : ' ✗') + '</span>';
-    } else {
-      winBadge = '<span class="winner-tag">pick ' + escapeHtml(projWinAbbr) + '</span>';
+    const winnerIsLock = winProbPct >= lockTh('winner');
+    let winBadge = '';
+    if (winnerIsLock) {
+      if (g.completed) {
+        const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
+        const correct = actualWinner !== 'tie' && proj.projWinner === actualWinner;
+        winBadge = '<span class="winner-tag ' + (correct ? 'correct' : 'wrong') + ' is-lock-tag">pick ' + escapeHtml(projWinAbbr) + ' ' + winProbPct.toFixed(0) + '%' + (correct ? ' ✓' : ' ✗') + '</span>';
+      } else {
+        winBadge = '<span class="winner-tag is-lock-tag">pick ' + escapeHtml(projWinAbbr) + ' ' + winProbPct.toFixed(0) + '%</span>';
+      }
     }
 
-    // anytime lock rows
-    let lockRows;
-    if (!locks.length) {
-      lockRows = '<div class="gb-empty">No ≥' + lockTh('anytimeTd') + '% locks for this game.</div>';
-    } else {
-      lockRows = locks.map(c => {
-        const result = !g.completed ? '<span class="gb-result na">—</span>'
-          : c._scored ? '<span class="gb-result yes">✓ TD</span>' : '<span class="gb-result no">no</span>';
-        return '<div class="gb-pick-row">' +
-          '<span class="pos-tag pos-' + c.position + '">' + c.position + '</span>' +
-          '<span class="gb-star" style="visibility:hidden">★</span>' +
-          '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + '</span></div>' +
-          '<div class="gb-prob">' + c._td.prob + '%</div>' +
-          result +
-        '</div>';
-      }).join('');
-    }
+    // anytime TD lock rows (already threshold-filtered)
+    const lockRows = locks.length ? locks.map(c => {
+      const result = !g.completed ? '<span class="gb-result na">—</span>'
+        : c._scored ? '<span class="gb-result yes">✓ TD</span>' : '<span class="gb-result no">no</span>';
+      return '<div class="gb-pick-row">' +
+        '<span class="pos-tag pos-' + c.position + '">' + c.position + '</span>' +
+        '<span class="gb-star" style="visibility:hidden">★</span>' +
+        '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + '</span></div>' +
+        '<div class="gb-prob">' + c._td.prob + '%</div>' +
+        result +
+      '</div>';
+    }).join('') : '';
 
-    // first TD pick row — P(first) = λ_i / Σλ × P(any TD in game) via Poisson
+    // first TD pick — shown ONLY when P(first) meets its lock threshold
     let firstRow = '';
     if (firstPick) {
       const totalLambda = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
       const pAnyTd = 1 - Math.exp(-totalLambda);
       const pFirst = totalLambda > 0 ? Math.round(((firstPick._td.lambda || 0) / totalLambda) * pAnyTd * 100) : 0;
-      const isFirst = g.completed ? isActualFirstTdScorer(firstPick, g) : null;
-      let result;
-      if (!g.completed) result = '<span class="gb-result na">—</span>';
-      else if (isFirst === null) result = '<span class="gb-result na">n/a</span>';
-      else if (isFirst) result = '<span class="gb-result yes">✓ 1st</span>';
-      else result = '<span class="gb-result no">no</span>';
-      const actualNote = g.completed && g.firstTdScorer ? '<span class="gb-actual-first">actual 1st: ' + escapeHtml(g.firstTdScorer.name || '?') + '</span>' : '';
-      firstRow =
-        '<div class="gb-sub">First TD Pick · P(first) from λ share</div>' +
-        '<div class="gb-firsttd">' +
-          '<span class="gb-star">★</span>' +
-          '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span>' + actualNote + '</div>' +
-          '<div class="gb-prob">' + pFirst + '%</div>' +
-          result +
-        '</div>';
+      if (pFirst >= lockTh('firstTd')) {
+        const isFirst = g.completed ? isActualFirstTdScorer(firstPick, g) : null;
+        let result;
+        if (!g.completed) result = '<span class="gb-result na">—</span>';
+        else if (isFirst === null) result = '<span class="gb-result na">n/a</span>';
+        else if (isFirst) result = '<span class="gb-result yes">✓ 1st</span>';
+        else result = '<span class="gb-result no">no</span>';
+        const actualNote = g.completed && g.firstTdScorer ? '<span class="gb-actual-first">actual 1st: ' + escapeHtml(g.firstTdScorer.name || '?') + '</span>' : '';
+        firstRow =
+          '<div class="gb-sub">First TD Pick · P(first) from λ share</div>' +
+          '<div class="gb-firsttd">' +
+            '<span class="gb-star">★</span>' +
+            '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span>' + actualNote + '</div>' +
+            '<div class="gb-prob">' + pFirst + '%</div>' +
+            result +
+          '</div>';
+      }
     }
 
+    // Locks-only view: a game with no qualifying locks gets one compact line
+    const hasAnyLock = !!(winBadge || lockRows || firstRow);
     return '<div class="gb-game">' +
       '<div class="gb-head">' +
         '<div class="gb-teams">' + escapeHtml(g.away.abbr) + '<span class="at">@</span>' + escapeHtml(g.home.abbr) + '</div>' +
         winBadge +
       '</div>' +
-      '<div class="gb-sub">Anytime TD Locks (≥' + lockTh('anytimeTd') + '%, rush/rec only)</div>' +
-      lockRows +
-      firstRow +
+      (hasAnyLock
+        ? (lockRows ? '<div class="gb-sub">Anytime TD Locks (≥' + lockTh('anytimeTd') + '%, rush/rec only)</div>' + lockRows : '') + firstRow
+        : '<div class="gb-empty">No locks for this game at current thresholds.</div>') +
     '</div>';
   }).join('');
 
@@ -4758,7 +4802,7 @@ document.querySelectorAll('.lock-th-row input').forEach(inp => {
     const note = document.getElementById('lock-th-note');
     if (note) note.textContent = 'Saved. Records re-grade with the new thresholds next time you view Facts / Bets.';
     logEvent('info', 'cfg', 'lock threshold ' + key + ' → ' + v + '%');
-    if (state.loaded) render();
+    render();
   });
 });
 document.getElementById('log-clear').addEventListener('click', clearEventLog);
