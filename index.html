@@ -468,6 +468,14 @@
   .pg-res { font-weight: 700; }
   .is-lock-hl { box-shadow: inset 3px 0 0 var(--accent); }
   .is-lock-tag { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--hit-bg) !important; }
+  .cat-rate {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 9px; font-weight: 400;
+    letter-spacing: 0.04em; text-transform: none;
+    color: var(--ink-faint);
+    opacity: 0.85;
+    white-space: nowrap;
+  }
   /* Result colors WIN over the lock highlight once a game is final */
   .winner-tag.is-lock-tag.wrong { border-color: var(--hot) !important; color: var(--hot) !important; background: rgba(255,107,107,0.10) !important; }
   .winner-tag.is-lock-tag.correct { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--hit-bg) !important; }
@@ -1039,7 +1047,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V5.5</span>
+    <span class="ver-badge" id="ver-badge">V5.6</span>
     <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -1173,7 +1181,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V5.5</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V5.6</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1209,7 +1217,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V5.5';
+const APP_VERSION = 'V5.6';
 const CACHE_VERSION = 'v9';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -3171,7 +3179,7 @@ function renderScoreSection(g, proj, isOpen) {
   return '' +
     '<div class="section ' + (isOpen ? 'open' : '') + '" data-section="score">' +
       '<div class="section-head">' +
-        '<div class="section-title">Score Projection Math</div>' +
+        '<div class="section-title">Score Projection Math' + catRateTag('winner') + catRateTag('total') + '</div>' +
         '<span class="section-caret">▾</span>' +
       '</div>' +
       '<div class="section-body">' +
@@ -3290,7 +3298,7 @@ function renderTeamYdsSection(g, proj, isOpen, expanded) {
   return '' +
     '<div class="section ' + (isOpen ? 'open' : '') + '" data-section="teamyds">' +
       '<div class="section-head">' +
-        '<div class="section-title">Team Yardage <span class="count">· 4 props</span></div>' +
+        '<div class="section-title">Team Yardage <span class="count">· 4 props</span>' + catRateTag('teamPass') + catRateTag('teamRush') + '</div>' +
         '<span class="section-caret">▾</span>' +
       '</div>' +
       '<div class="section-body">' +
@@ -3374,7 +3382,10 @@ function renderPropsSection(g, proj, isOpen, expanded) {
     }
     if (rows.length) {
       const subtitle = pos === 'QB' ? 'Passing & Rushing (separate)' : pos === 'RB' ? 'Rushing & Receiving (separate)' : pos === 'WR' ? 'Receiving (+ Rushing where relevant)' : 'Receiving yards';
-      groupsHtml.push('<div class="sub-head">' + pos + ' · ' + subtitle + '</div>' + rows.join(''));
+      const rateTags = pos === 'QB' ? catRateTag('playerPass') + catRateTag('playerRush')
+        : pos === 'RB' ? catRateTag('playerRush') + catRateTag('playerRec')
+        : catRateTag('playerRec');
+      groupsHtml.push('<div class="sub-head">' + pos + ' · ' + subtitle + rateTags + '</div>' + rows.join(''));
     }
   }
 
@@ -3466,7 +3477,7 @@ function renderTDSection(g, proj, isOpen, expanded) {
   return '' +
     '<div class="section ' + (isOpen ? 'open' : '') + '" data-section="td">' +
       '<div class="section-head">' +
-        '<div class="section-title">TD Likelihood <span class="count">· ' + candidates.length + ' picks</span></div>' +
+        '<div class="section-title">TD Likelihood <span class="count">· ' + candidates.length + ' picks</span>' + catRateTag('anytimeTd') + '</div>' +
         '<span class="section-caret">▾</span>' +
       '</div>' +
       '<div class="section-body">' +
@@ -3691,6 +3702,39 @@ function catDesc(k) {
   if (['total','awayPts','homePts'].includes(k)) return 'Within ±' + HIT_TOTAL_TOL + ' pts' + gate;
   return 'Within ±' + HIT_YDS_TOL + ' yds' + gate;
 }
+// Category entries sorted for display: All Locks pinned first, the rest by
+// success rate (desc), empty categories last.
+function sortedCatEntries(cats) {
+  const entries = Object.entries(cats);
+  const pinned = entries.filter(e => e[0] === 'allLocks');
+  const rest = entries.filter(e => e[0] !== 'allLocks').sort((a, b) => {
+    const ap = a[1].n ? a[1].hit / a[1].n : -1;
+    const bp = b[1].n ? b[1].hit / b[1].n : -1;
+    return (bp - ap) || (b[1].n - a[1].n);
+  });
+  return pinned.concat(rest);
+}
+
+// Faint historical success tag for a category — season scan first, then the
+// synced all-time record. Returns '' when neither has data.
+function catRate(catKey) {
+  const agg = seasonScanAggregate();
+  if (agg && agg.cats[catKey] && agg.cats[catKey].n > 0) {
+    const c = agg.cats[catKey];
+    return { pct: Math.round(100 * c.hit / c.n), n: c.n, src: 'season' };
+  }
+  const fa = state.fsAccuracy;
+  if (fa && !fa.error && fa.cats && fa.cats[catKey] && fa.cats[catKey].n > 0) {
+    const c = fa.cats[catKey];
+    return { pct: Math.round(100 * c.hit / c.n), n: c.n, src: 'all-time' };
+  }
+  return null;
+}
+function catRateTag(catKey) {
+  const r = catRate(catKey);
+  return r ? ' <span class="cat-rate">' + r.pct + '% hit · ' + r.n + ' ' + r.src + '</span>' : '';
+}
+
 function unitQualifies(u) {
   return u.metric >= lockTh(CAT_META[u.cat].th);
 }
@@ -3974,15 +4018,21 @@ async function scanFullSeason() {
   render();
 }
 
-// Aggregate the stored season scan at CURRENT thresholds (called at render)
+// Aggregate the stored season scan at CURRENT thresholds (called at render).
+// Memoized on scan identity + thresholds so repeated calls per render are free.
+let _ssAggMemo = { key: null, val: null };
 function seasonScanAggregate() {
   const ss = state.seasonScan;
   if (!ss) return null;
+  const key = ss.season + ':' + ss.weeks.length + ':' + JSON.stringify((state.settings && state.settings.lockThresholds) || {});
+  if (_ssAggMemo.key === key) return _ssAggMemo.val;
   const allUnits = [];
   for (const w of ss.weeks) for (const u of w.units) allUnits.push(u);
   const cats = aggregateUnits(allUnits);
   const cumHit = cats.allLocks.hit, cumN = cats.allLocks.n;
-  return { cats, cumHit, cumN, cumPct: cumN ? 100 * cumHit / cumN : 0, weeksWithGames: ss.weeksWithGames };
+  const val = { cats, cumHit, cumN, cumPct: cumN ? 100 * cumHit / cumN : 0, weeksWithGames: ss.weeksWithGames };
+  _ssAggMemo = { key, val };
+  return val;
 }
 
 // ----------------------------------------------------------------------------
@@ -4136,7 +4186,7 @@ function renderFacts(main) {
     fsHtml = '<div class="fact-card"><div class="head">All-Time · Synced (Firebase)</div><div class="gb-empty">Loading synced record…</div></div>';
   } else if (state.fsAccuracy && !state.fsAccuracy.error) {
     const fa = state.fsAccuracy;
-    const faRows = Object.entries(fa.cats).filter(e => e[1].n > 0).map(entry => {
+    const faRows = sortedCatEntries(fa.cats).filter(e => e[1].n > 0).map(entry => {
       const c = entry[1];
       const pct = c.n ? (100 * c.hit / c.n) : 0;
       return '<div class="fact-cat-row">' +
@@ -4182,7 +4232,7 @@ function renderFacts(main) {
   } else {
     const ss = state.seasonScan;
     const agg = seasonScanAggregate();
-    const catEntries = Object.entries(agg.cats).filter(e => e[1].n > 0);
+    const catEntries = sortedCatEntries(agg.cats).filter(e => e[1].n > 0);
     const bestCat = (() => { const c = catEntries.filter(e => e[0] !== 'allLocks'); return c.length ? c.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null; })();
     const catRowsAll = catEntries.map(entry => {
       const c = entry[1];
@@ -4262,7 +4312,7 @@ function renderFacts(main) {
         '<div class="sub">' + (best ? best[1].hit + '/' + best[1].n + ' locks hit' : 'no locks graded at current thresholds') + '</div>' +
       '</div>';
 
-    const catRows = Object.entries(cats).map(entry => {
+    const catRows = sortedCatEntries(cats).map(entry => {
       const key = entry[0], c = entry[1];
       const pct = c.n ? (100 * c.hit / c.n) : 0;
       const isBest = best && key === best[0];
@@ -4506,7 +4556,7 @@ function renderGameBets(main) {
         else result = '<span class="gb-result no">no</span>';
         const actualNote = g.completed && g.firstTdScorer ? '<span class="gb-actual-first">actual 1st: ' + escapeHtml(g.firstTdScorer.name || '?') + '</span>' : '';
         firstRow =
-          '<div class="gb-sub">First TD Pick · P(first) from λ share</div>' +
+          '<div class="gb-sub">First TD Pick · P(first) from λ share' + catRateTag('firstTd') + '</div>' +
           '<div class="gb-firsttd">' +
             '<span class="gb-star">★</span>' +
             '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span>' + actualNote + '</div>' +
@@ -4521,10 +4571,10 @@ function renderGameBets(main) {
     return '<div class="gb-game">' +
       '<div class="gb-head">' +
         '<div class="gb-teams">' + escapeHtml(g.away.abbr) + '<span class="at">@</span>' + escapeHtml(g.home.abbr) + '</div>' +
-        winBadge +
+        (winBadge ? winBadge + catRateTag('winner') : '') +
       '</div>' +
       (hasAnyLock
-        ? (lockRows ? '<div class="gb-sub">Anytime TD Locks (≥' + lockTh('anytimeTd') + '%, rush/rec only)</div>' + lockRows : '') + firstRow
+        ? (lockRows ? '<div class="gb-sub">Anytime TD Locks (≥' + lockTh('anytimeTd') + '%, rush/rec only)' + catRateTag('anytimeTd') + '</div>' + lockRows : '') + firstRow
         : '<div class="gb-empty">No locks for this game at current thresholds.</div>') +
     '</div>';
   }).join('');
