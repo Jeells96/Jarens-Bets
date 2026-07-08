@@ -468,6 +468,9 @@
   .pg-res { font-weight: 700; }
   .is-lock-hl { box-shadow: inset 3px 0 0 var(--accent); }
   .is-lock-tag { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--hit-bg) !important; }
+  /* Result colors WIN over the lock highlight once a game is final */
+  .winner-tag.is-lock-tag.wrong { border-color: var(--hot) !important; color: var(--hot) !important; background: rgba(255,107,107,0.10) !important; }
+  .winner-tag.is-lock-tag.correct { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--hit-bg) !important; }
   .bet-search-wrap { padding: 0 0 12px; }
   .bet-search {
     display: block; width: 100%;
@@ -1036,7 +1039,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V5.4</span>
+    <span class="ver-badge" id="ver-badge">V5.5</span>
     <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -1170,7 +1173,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V5.4</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V5.5</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1206,7 +1209,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V5.4';
+const APP_VERSION = 'V5.5';
 const CACHE_VERSION = 'v9';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -3695,12 +3698,16 @@ function unitQualifies(u) {
 function aggregateUnits(units) {
   const cats = {};
   for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: CAT_META[k].label, desc: catDesc(k) };
+  const all = { hit: 0, n: 0, label: 'All Locks', desc: 'Every qualifying lock across all categories combined' };
   for (const u of units) {
     if (!cats[u.cat] || !unitQualifies(u)) continue;
     cats[u.cat].n++;
     if (u.hit) cats[u.cat].hit++;
+    all.n++;
+    if (u.hit) all.hit++;
   }
-  return cats;
+  // Rebuild with All Locks pinned FIRST so every consumer lists it at the top
+  return Object.assign({ allLocks: all }, cats);
 }
 
 // Grade the loaded week into raw units (thresholds NOT applied here)
@@ -3809,7 +3816,7 @@ function gradeWeek() {
     const gm = entry.g.away.abbr + '@' + entry.g.home.abbr;
     const props = units
       .filter(u => u.game === gm && unitQualifies(u))
-      .map(u => ({ k: CAT_META[u.cat].short, v: u.desc, hit: u.hit }));
+      .map(u => ({ k: CAT_META[u.cat].short, v: u.desc, hit: u.hit, cat: u.cat }));
     return { g: entry.g, completed: true, props };
   });
 
@@ -3974,8 +3981,7 @@ function seasonScanAggregate() {
   const allUnits = [];
   for (const w of ss.weeks) for (const u of w.units) allUnits.push(u);
   const cats = aggregateUnits(allUnits);
-  let cumHit = 0, cumN = 0;
-  for (const k in cats) { cumHit += cats[k].hit; cumN += cats[k].n; }
+  const cumHit = cats.allLocks.hit, cumN = cats.allLocks.n;
   return { cats, cumHit, cumN, cumPct: cumN ? 100 * cumHit / cumN : 0, weeksWithGames: ss.weeksWithGames };
 }
 
@@ -4177,7 +4183,7 @@ function renderFacts(main) {
     const ss = state.seasonScan;
     const agg = seasonScanAggregate();
     const catEntries = Object.entries(agg.cats).filter(e => e[1].n > 0);
-    const bestCat = catEntries.length ? catEntries.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
+    const bestCat = (() => { const c = catEntries.filter(e => e[0] !== 'allLocks'); return c.length ? c.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null; })();
     const catRowsAll = catEntries.map(entry => {
       const c = entry[1];
       const pct = c.n ? (100 * c.hit / c.n) : 0;
@@ -4194,15 +4200,17 @@ function renderFacts(main) {
         '</div>';
     }).join('');
 
-    // Category selector chips for the by-week view
-    const selCat = state.scanCatFilter && CAT_META[state.scanCatFilter] ? state.scanCatFilter : 'anytimeTd';
-    const catChips = Object.keys(CAT_META).map(k =>
-      '<button class="chip ' + (selCat === k ? 'active' : '') + '" data-scancat="' + k + '">' + escapeHtml(CAT_META[k].short) + '</button>'
+    // Category selector chips for the by-week view (All Locks first)
+    const scanCatKeys = ['allLocks'].concat(Object.keys(CAT_META));
+    const selCat = state.scanCatFilter && scanCatKeys.includes(state.scanCatFilter) ? state.scanCatFilter : 'allLocks';
+    const scanCatShort = (k) => k === 'allLocks' ? 'All Locks' : CAT_META[k].short;
+    const catChips = scanCatKeys.map(k =>
+      '<button class="chip ' + (selCat === k ? 'active' : '') + '" data-scancat="' + k + '">' + escapeHtml(scanCatShort(k)) + '</button>'
     ).join('');
 
     // Per-week bars for the SELECTED category + tap-to-expand lock lists
     const wkRows = ss.weeks.filter(w => w.games > 0).map(w => {
-      const catUnits = w.units.filter(u => u.cat === selCat && unitQualifies(u));
+      const catUnits = w.units.filter(u => (selCat === 'allLocks' || u.cat === selCat) && unitQualifies(u));
       const hit = catUnits.filter(u => u.hit).length;
       const n = catUnits.length;
       const pct = n ? (100 * hit / n) : 0;
@@ -4210,10 +4218,10 @@ function renderFacts(main) {
       const drill = isOpen && n ? '<div class="wk-drill">' + catUnits.map(u =>
         '<div class="wk-drill-row ' + (u.hit ? 'is-hit' : 'is-miss') + '">' +
           '<span class="wk-drill-game">' + escapeHtml(u.game) + '</span>' +
-          '<span class="wk-drill-desc">' + escapeHtml(u.desc) + '</span>' +
+          '<span class="wk-drill-desc">' + (selCat === 'allLocks' ? '<b style="color:var(--ink)">' + escapeHtml(CAT_META[u.cat].short) + '</b> · ' : '') + escapeHtml(u.desc) + '</span>' +
           '<span class="wk-drill-res">' + (u.hit ? '✓' : '✗') + '</span>' +
         '</div>').join('') + '</div>'
-        : (isOpen ? '<div class="wk-drill"><div class="gb-empty" style="padding:8px 12px">No ' + escapeHtml(CAT_META[selCat].short) + ' locks this week at current threshold.</div></div>' : '');
+        : (isOpen ? '<div class="wk-drill"><div class="gb-empty" style="padding:8px 12px">No ' + escapeHtml(scanCatShort(selCat)) + ' locks this week at current threshold.</div></div>' : '');
       return '<div class="fact-hist-row tappable" data-scanweek="' + w.week + '">' +
           '<span class="fact-hist-wk">W' + w.week + ' ' + (isOpen ? '▾' : '▸') + '</span>' +
           '<div class="fact-hist-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
@@ -4240,10 +4248,10 @@ function renderFacts(main) {
     const cats = graded.cats;
     syncWeekAccuracy(cats);
 
-    const eligible = Object.entries(cats).filter(e => e[1].n > 0);
+    const eligible = Object.entries(cats).filter(e => e[1].n > 0 && e[0] !== 'allLocks');
     const best = eligible.length ? eligible.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
-    const overallHits = Object.values(cats).reduce((s, c) => s + c.hit, 0);
-    const overallN = Object.values(cats).reduce((s, c) => s + c.n, 0);
+    const overallHits = cats.allLocks.hit;
+    const overallN = cats.allLocks.n;
     const overallPct = overallN ? (100 * overallHits / overallN) : 0;
 
     heroHtml =
@@ -4294,10 +4302,17 @@ function renderFacts(main) {
       '</div>';
     }
 
-    // Per-game locks breakdown
+    // Per-game locks breakdown — filterable by bet category
+    const pgKeys = ['all'].concat(Object.keys(CAT_META));
+    const pgSel = state.pgCatFilter && pgKeys.includes(state.pgCatFilter) ? state.pgCatFilter : 'all';
+    const pgChips = pgKeys.map(k =>
+      '<button class="chip ' + (pgSel === k ? 'active' : '') + '" data-pgcat="' + k + '">' + (k === 'all' ? 'All' : escapeHtml(CAT_META[k].short)) + '</button>'
+    ).join('');
     const perGameHtml = graded.perGame.map(pg => {
       if (!pg.completed) return '';
-      const rows = pg.props.length ? pg.props.map(pr =>
+      const shown = pgSel === 'all' ? pg.props : pg.props.filter(pr => pr.cat === pgSel);
+      if (pgSel !== 'all' && !shown.length) return '';
+      const rows = shown.length ? shown.map(pr =>
         '<div class="pg-row ' + (pr.hit ? 'is-hit' : 'is-miss') + '">' +
           '<span class="pg-k">' + escapeHtml(pr.k) + '</span>' +
           '<span class="pg-v">' + escapeHtml(pr.v) + '</span>' +
@@ -4305,7 +4320,7 @@ function renderFacts(main) {
         '</div>').join('')
         : '<div class="gb-empty" style="padding:8px 12px">No locks at current thresholds.</div>';
       return '<div class="pg-game"><div class="pg-head">' + escapeHtml(pg.g.away.abbr) + ' @ ' + escapeHtml(pg.g.home.abbr) + '</div>' + rows + '</div>';
-    }).join('');
+    }).join('') || '<div class="gb-empty">No games have ' + (pgSel === 'all' ? '' : escapeHtml(CAT_META[pgSel].short) + ' ') + 'locks at current thresholds.</div>';
 
     thisWeekHtml =
       vsDkHtml +
@@ -4315,6 +4330,7 @@ function renderFacts(main) {
       '</div>' +
       '<div class="fact-card">' +
         '<div class="head">Per-Game Locks</div>' +
+        '<div class="chip-row" style="padding:10px 14px 4px">' + pgChips + '</div>' +
         '<div class="pergame-block">' + perGameHtml + '</div>' +
       '</div>';
   } else if (!state.loaded) {
@@ -4331,6 +4347,12 @@ function renderFacts(main) {
     btn.addEventListener('click', () => {
       state.scanCatFilter = btn.dataset.scancat;
       state.scanWeekOpen = {};
+      render();
+    });
+  });
+  main.querySelectorAll('.chip[data-pgcat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.pgCatFilter = btn.dataset.pgcat;
       render();
     });
   });
@@ -4513,11 +4535,15 @@ function renderGameBets(main) {
   const winRate = winN ? Math.round(100 * winHit / winN) : 0;
   const lockRate = lockN ? Math.round(100 * lockHit / lockN) : 0;
   const firstRate = firstN ? Math.round(100 * firstHit / firstN) : 0;
+  // All Locks — every qualifying lock across every category (same as Facts)
+  const allLocksCat = gradedGames ? aggregateUnits(gradeWeek().units).allLocks : { hit: 0, n: 0 };
+  const allLocksRate = allLocksCat.n ? Math.round(100 * allLocksCat.hit / allLocksCat.n) : 0;
 
   const summaryCard =
     '<div class="gb-summary-card">' +
-      '<div class="gb-sub" style="border-bottom:1px solid var(--line)">This week\'s results' + (gradedGames ? '' : ' · games not final yet') + '</div>' +
+      '<div class="gb-sub" style="border-bottom:1px solid var(--line)">This week\'s results · locks only</div>' +
       '<div class="summary-grid" style="padding:14px">' +
+        '<div class="stat"><div class="val" style="color:var(--accent)">' + (allLocksCat.n ? allLocksRate + '%' : '—') + '</div><div class="lbl">All Locks (' + allLocksCat.hit + '/' + allLocksCat.n + ')</div></div>' +
         '<div class="stat"><div class="val">' + (winN ? winRate + '%' : '—') + '</div><div class="lbl">Winners (' + winHit + '/' + winN + ')</div></div>' +
         '<div class="stat"><div class="val">' + (lockN ? lockRate + '%' : '—') + '</div><div class="lbl">TD Locks (' + lockHit + '/' + lockN + ')</div></div>' +
         '<div class="stat"><div class="val">' + (firstN ? firstRate + '%' : '—') + '</div><div class="lbl">1st TD (' + firstHit + '/' + firstN + ')</div></div>' +
