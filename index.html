@@ -800,6 +800,39 @@
   .dk-quota-value.low { color: var(--warn); }
   .dk-quota-value.critical { color: var(--hot); }
 
+  /* ---- V5: member paywall ---- */
+  .paywall {
+    position: fixed; inset: 0; z-index: 500;
+    background:
+      radial-gradient(ellipse 100% 60% at 50% 0%, rgba(212,255,58,0.06), transparent 60%),
+      radial-gradient(ellipse 80% 40% at 90% 30%, rgba(111,224,255,0.04), transparent 60%),
+      var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .paywall.hidden { display: none; }
+  .paywall-inner { width: 100%; max-width: 320px; text-align: center; }
+  .paywall-logo {
+    font-family: ui-serif, Georgia, serif;
+    font-weight: 700; font-size: 42px; letter-spacing: -0.02em;
+    color: var(--ink); margin-bottom: 4px;
+  }
+  .paywall-logo::first-letter { color: var(--accent); }
+  .paywall-tag {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 28px;
+  }
+  .paywall .pin-input { margin-bottom: 12px; }
+  .paywall-error {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px; color: var(--hot); min-height: 16px; margin-top: 10px;
+  }
+  .paywall-foot {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 10px; color: var(--ink-faint); margin-top: 18px;
+  }
+
   .fb-config {
     width: 100%;
     background: var(--bg-3);
@@ -889,11 +922,23 @@
 </head>
 <body>
 
+<!-- Member paywall — shown until a valid member (or admin) PIN is entered -->
+<div class="paywall" id="paywall">
+  <div class="paywall-inner">
+    <div class="paywall-logo">Gridline</div>
+    <div class="paywall-tag">Members Only · Fable Engine V5</div>
+    <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="member-pin-input" class="pin-input" autocomplete="off" placeholder="••••" />
+    <button class="pin-submit-btn" id="member-pin-submit">Enter</button>
+    <div class="paywall-error" id="member-pin-error"></div>
+    <div class="paywall-foot" id="paywall-status">Checking member access…</div>
+  </div>
+</div>
+
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V4.2</span>
-    <div class="tag">NFL · Projection Engine</div>
+    <span class="ver-badge" id="ver-badge">V5</span>
+    <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
   <div class="controls">
@@ -984,18 +1029,23 @@
         </div>
       </div>
 
-      <!-- Firebase (separate top-level section so it's always reachable) -->
+      <!-- Member access (paywall PIN, synced via Firestore) -->
       <div class="setting-section">
-        <div class="setting-label" style="margin-bottom:6px">Firebase config (optional)</div>
-        <div class="setting-note">For cross-device coordination of the Thursday DK pull. Without Firebase, each device may pull once per Thursday (still way under the 500/month quota for a small group). Paste your Firebase Realtime Database config JSON.</div>
-        <textarea id="fb-config" class="fb-config" placeholder='Paste Firebase config JSON, e.g.:
-{
-  "apiKey": "...",
-  "projectId": "...",
-  "databaseURL": "https://....firebaseio.com"
-}'></textarea>
-        <button class="scan-btn" id="fb-save" style="margin-top:8px">Save Firebase config</button>
+        <div class="setting-label" style="margin-bottom:6px">Member PIN (paywall)</div>
+        <div class="setting-note">The 4-digit PIN members use to enter the site. Synced through Firebase so every device sees the same PIN. Admin PIN (2325) always works as a master key.</div>
+        <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="member-pin-set" class="pin-input" style="font-size:18px;margin-top:8px" autocomplete="off" placeholder="Set member PIN" />
+        <button class="scan-btn" id="member-pin-save" style="margin-top:8px">Save member PIN → Firebase</button>
+        <div class="setting-note" id="member-pin-status"></div>
         <div class="setting-note" id="fb-status"></div>
+      </div>
+
+      <!-- Accuracy sync -->
+      <div class="setting-section">
+        <div class="setting-row">
+          <label class="setting-label">Sync accuracy to Firebase</label>
+          <label class="switch"><input type="checkbox" id="acc-sync-toggle"><span class="slider"></span></label>
+        </div>
+        <div class="setting-note">When on, graded weekly results (hit rates per stat category) are written to Firebase automatically, building a shared all-time track record.</div>
       </div>
 
       <!-- Event log -->
@@ -1008,7 +1058,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V4.2</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V5</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1044,7 +1094,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V4.2';
+const APP_VERSION = 'V5';
 const CACHE_VERSION = 'v8';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -1058,9 +1108,82 @@ const ODDS_API = {
   cacheMs: 1000 * 60 * 60 * 12, // 12h cache for odds responses (matches main cache)
 };
 const ALL_MARKETS = ['h2h','spreads','totals','player_pass_yds','player_rush_yds','player_reception_yds','player_anytime_td'];
-const SETTINGS_PIN = '2325';
+const SETTINGS_PIN = '2325';          // admin PIN — settings + master key for the paywall
 const SETTINGS_LS_KEY = 'gl_settings_v1';
 const EVENT_LOG_MAX = 200;
+
+// Firebase (Firestore) — project nflbets-45561. Used via REST (no SDK needed).
+// NOTE: config values are public by design in client apps; rules control access.
+const FIREBASE = {
+  apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g',
+  projectId: 'nflbets-45561',
+};
+const FS_BASE = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE.projectId + '/databases/(default)/documents';
+
+// ---- Firestore REST helpers (encode/decode + get/set/list) ----
+function fsEncodeValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (typeof v === 'string') return { stringValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(fsEncodeValue) } };
+  if (typeof v === 'object') {
+    const fields = {};
+    for (const k in v) fields[k] = fsEncodeValue(v[k]);
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(v) };
+}
+function fsDecodeValue(fv) {
+  if (fv == null) return null;
+  if ('stringValue' in fv) return fv.stringValue;
+  if ('integerValue' in fv) return +fv.integerValue;
+  if ('doubleValue' in fv) return fv.doubleValue;
+  if ('booleanValue' in fv) return fv.booleanValue;
+  if ('nullValue' in fv) return null;
+  if ('mapValue' in fv) {
+    const out = {};
+    const f = (fv.mapValue && fv.mapValue.fields) || {};
+    for (const k in f) out[k] = fsDecodeValue(f[k]);
+    return out;
+  }
+  if ('arrayValue' in fv) return ((fv.arrayValue && fv.arrayValue.values) || []).map(fsDecodeValue);
+  return null;
+}
+function fsDecodeDoc(doc) {
+  const out = {};
+  const f = (doc && doc.fields) || {};
+  for (const k in f) out[k] = fsDecodeValue(f[k]);
+  return out;
+}
+async function fsGetDoc(path) {
+  const url = FS_BASE + '/' + path + '?key=' + FIREBASE.apiKey;
+  const res = await fetch(url);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Firestore GET ' + path + ' HTTP ' + res.status);
+  return fsDecodeDoc(await res.json());
+}
+async function fsSetDoc(path, obj) {
+  // PATCH creates-or-merges the named fields
+  const fields = {};
+  const masks = [];
+  for (const k in obj) { fields[k] = fsEncodeValue(obj[k]); masks.push('updateMask.fieldPaths=' + encodeURIComponent(k)); }
+  const url = FS_BASE + '/' + path + '?key=' + FIREBASE.apiKey + '&' + masks.join('&');
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) throw new Error('Firestore SET ' + path + ' HTTP ' + res.status);
+  return true;
+}
+async function fsListDocs(collectionPath, pageSize) {
+  const url = FS_BASE + '/' + collectionPath + '?key=' + FIREBASE.apiKey + '&pageSize=' + (pageSize || 100);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Firestore LIST ' + collectionPath + ' HTTP ' + res.status);
+  const data = await res.json();
+  return (data.documents || []).map(d => ({ id: d.name.split('/').pop(), data: fsDecodeDoc(d) }));
+}
 
 const HIT_TOTAL_TOL = 3;     // game total / score: ±3
 const HIT_YDS_TOL   = 10;    // any yards prop: ±10
@@ -1068,6 +1191,22 @@ const TD_LOCK_THRESHOLD = 50;
 const PRIOR_BLEND_TAPER_WEEK = 8; // by week 8, prior season weight = 0
 const LEAGUE_AVG_PTS_FALLBACK = 22.5;
 const LEAGUE_AVG_YDS_FALLBACK = 340;
+
+// ---- V5 model constants (Fable engine) ----
+const RECENCY_DECAY = 0.88;        // per-week exponential decay on team game weights
+const PLAYER_RECENCY_DECAY = 0.90; // per-week decay on player game weights
+const RATING_ITERATIONS = 4;       // opponent-adjustment passes
+const SHRINK_K_TEAM = 3;           // rating shrinkage: n/(n+K) toward league avg
+const SHRINK_K_PLAYER = 2;
+const HFA_PRIOR = 1.1;             // prior for home-field pts (per side), shrunk-to
+const MARGIN_SIGMA = 13.5;         // SD of NFL margins for win probability
+// Normal CDF (Abramowitz–Stegun erf approximation)
+function normCdf(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - p : p;
+}
 
 // Default season = current NFL season year. The NFL season is referenced by its
 // starting year; a new season's schedule typically appears in spring. We treat
@@ -1168,7 +1307,7 @@ const state = {
     dkEnabled: false,                  // master DK toggle
     dkMarkets: {},                     // { h2h: true, spreads: true, ... } — all default off per user
     dkAutoPullEnabled: true,           // auto Thursday-morning pull (when dkEnabled)
-    firebaseConfig: '',                // raw JSON string
+    accSyncEnabled: true,              // write graded accuracy to Firestore
     settingsUnlocked: false,           // session-only (not persisted)
   },
   dkOdds: null,                        // { fetchedAt, games: [{ home, away, markets: {...} }] }
@@ -1196,7 +1335,7 @@ function loadSettings() {
     if (!raw) return;
     const obj = JSON.parse(raw);
     // Only copy known keys to avoid pulling in stale junk
-    const allowed = ['weatherEnabled','dkEnabled','dkMarkets','dkAutoPullEnabled','firebaseConfig'];
+    const allowed = ['weatherEnabled','dkEnabled','dkMarkets','dkAutoPullEnabled','accSyncEnabled'];
     for (const k of allowed) {
       if (obj[k] !== undefined) state.settings[k] = obj[k];
     }
@@ -1222,7 +1361,7 @@ function saveSettings() {
       dkEnabled: state.settings.dkEnabled,
       dkMarkets: state.settings.dkMarkets,
       dkAutoPullEnabled: state.settings.dkAutoPullEnabled,
-      firebaseConfig: state.settings.firebaseConfig,
+      accSyncEnabled: state.settings.accSyncEnabled,
     };
     localStorage.setItem(SETTINGS_LS_KEY, JSON.stringify(persistable));
   } catch (e) { logEvent('warn', 'settings', 'save failed: ' + e.message); }
@@ -1449,35 +1588,25 @@ async function maybeAutoPullDK() {
   if (!isThursdayLocal()) { logEvent('info', 'DK', 'auto: not Thursday'); return; }
 
   const today = todayDateString();
-  // Local dedupe first — fast path even without Firebase
+  // Local dedupe first — fast path
   const localStamp = localStorage.getItem('gl_dk_thursday_pulled');
   if (localStamp === today) {
     logEvent('info', 'DK', 'auto: this device already pulled today');
     return;
   }
 
-  // If Firebase configured, check the shared marker
-  const fbCfg = parseFirebaseConfig();
-  if (fbCfg) {
-    try {
-      const sharedDate = await firebaseGetThursdayMarker(fbCfg);
-      if (sharedDate === today) {
-        logEvent('info', 'DK', 'auto: Firebase says someone already pulled today');
-        localStorage.setItem('gl_dk_thursday_pulled', today);
-        return;
-      }
-      logEvent('info', 'DK', 'auto: claiming Firebase Thursday marker');
-      const claimed = await firebaseClaimThursdayMarker(fbCfg, today);
-      if (!claimed) {
-        logEvent('info', 'DK', 'auto: another device claimed first');
-        localStorage.setItem('gl_dk_thursday_pulled', today);
-        return;
-      }
-    } catch (e) {
-      logEvent('warn', 'DK', 'Firebase coordination failed; falling back to local-only: ' + e.message);
+  // Firestore shared marker (project is built in — always available)
+  try {
+    const doc = await fsGetDoc('gridline/dkPull');
+    if (doc && doc.lastThursday === today) {
+      logEvent('info', 'DK', 'auto: Firestore says someone already pulled today');
+      localStorage.setItem('gl_dk_thursday_pulled', today);
+      return;
     }
-  } else {
-    logEvent('info', 'DK', 'auto: no Firebase config; per-device dedupe only');
+    logEvent('info', 'DK', 'auto: claiming Firestore Thursday marker');
+    await fsSetDoc('gridline/dkPull', { lastThursday: today, claimedAt: Date.now() });
+  } catch (e) {
+    logEvent('warn', 'DK', 'Firestore coordination failed; falling back to local-only: ' + e.message);
   }
 
   try {
@@ -1487,36 +1616,29 @@ async function maybeAutoPullDK() {
 }
 
 // ----------------------------------------------------------------------------
-// Firebase Realtime Database — minimal REST integration (no SDK required)
-// User pastes a config blob; we use databaseURL + apiKey to read/write a tiny doc.
+// Member PIN (paywall) — synced via Firestore doc gridline/config.memberPin.
+// Admin PIN (2325) always works as a master key. The Firestore copy is cached
+// locally so members can get in even if Firestore is briefly unreachable.
 // ----------------------------------------------------------------------------
-function parseFirebaseConfig() {
-  const raw = (state.settings.firebaseConfig || '').trim();
-  if (!raw) return null;
+async function fetchMemberPin() {
   try {
-    const cfg = JSON.parse(raw);
-    if (!cfg.databaseURL) return null;
-    return cfg;
-  } catch { return null; }
+    const doc = await fsGetDoc('gridline/config');
+    if (doc && doc.memberPin) {
+      localStorage.setItem('gl_member_pin_cache', String(doc.memberPin));
+      logEvent('info', 'auth', 'member PIN synced from Firestore');
+      return String(doc.memberPin);
+    }
+    logEvent('warn', 'auth', 'no member PIN set in Firestore yet');
+    return null;
+  } catch (e) {
+    logEvent('warn', 'auth', 'member PIN fetch failed: ' + e.message);
+    return null;
+  }
 }
-async function firebaseGetThursdayMarker(cfg) {
-  const url = cfg.databaseURL.replace(/\/$/, '') + '/gridline/lastThursdayPull.json';
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('fb get HTTP ' + res.status);
-  const v = await res.json();
-  return v; // either a date string or null
-}
-async function firebaseClaimThursdayMarker(cfg, dateStr) {
-  // Best-effort claim: PUT the date. With open rules, last-write-wins; with security rules
-  // gating by date inequality this becomes truly atomic. For our purposes, the local
-  // dedupe + this best-effort write keeps redundant pulls down to ~1 per Thursday.
-  const url = cfg.databaseURL.replace(/\/$/, '') + '/gridline/lastThursdayPull.json';
-  // Re-check, then write
-  const cur = await firebaseGetThursdayMarker(cfg);
-  if (cur === dateStr) return false;
-  const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dateStr) });
-  if (!res.ok) throw new Error('fb put HTTP ' + res.status);
-  return true;
+async function saveMemberPin(pin) {
+  await fsSetDoc('gridline/config', { memberPin: String(pin), updatedAt: Date.now() });
+  localStorage.setItem('gl_member_pin_cache', String(pin));
+  logEvent('info', 'auth', 'member PIN saved to Firestore');
 }
 
 // ============================================================================
@@ -1907,10 +2029,10 @@ async function loadWeek() {
           if (!home || !away) continue;
           const hs = +home.score, as = +away.score;
           if (isNaN(hs) || isNaN(as)) continue;
-          for (const [t, ptsFor, ptsAg] of [[home.team.id, hs, as], [away.team.id, as, hs]]) {
+          for (const [t, oppId, ptsFor, ptsAg, isHome] of [[home.team.id, away.team.id, hs, as, true], [away.team.id, home.team.id, as, hs, false]]) {
             if (!state.priorWeeks[t]) state.priorWeeks[t] = [];
             state.priorWeeks[t].push({
-              week: w, eventId: ev.id, ptsFor, ptsAgainst: ptsAg,
+              week: w, eventId: ev.id, oppId, isHome, ptsFor, ptsAgainst: ptsAg,
               passYds: null, rushYds: null,
               passYdsAg: null, rushYdsAg: null,
             });
@@ -1973,17 +2095,16 @@ async function loadWeek() {
           if (!state.priorPlayer[p.id]) {
             state.priorPlayer[p.id] = {
               name: p.name, team: p.team, abbr: p.abbr, position: p.position,
-              passYds: 0, rushYds: 0, recYds: 0,
-              passTds: 0, rushTds: 0, recTds: 0,
-              games: 0,
+              rows: [], // per-week rows so historical grading can rewind player data
             };
           }
           const has = (p.passYds + p.rushYds + p.recYds + p.passTds + p.rushTds + p.recTds) > 0;
           if (has) {
-            const a = state.priorPlayer[p.id];
-            a.passYds += p.passYds; a.rushYds += p.rushYds; a.recYds += p.recYds;
-            a.passTds += p.passTds; a.rushTds += p.rushTds; a.recTds += p.recTds;
-            a.games++;
+            state.priorPlayer[p.id].rows.push({
+              week: w,
+              passYds: p.passYds, rushYds: p.rushYds, recYds: p.recYds,
+              passTds: p.passTds, rushTds: p.rushTds, recTds: p.recTds,
+            });
           }
         }
       });
@@ -2212,76 +2333,148 @@ function blendedTeamProfile(teamId) {
   };
 }
 
+// ============================================================================
+// V5 ratings engine — opponent-adjusted, recency-weighted, shrunk to the mean.
+// off[t]  = weighted avg of (ptsFor − lg − oppDefRating)   (positive = good O)
+// def[t]  = weighted avg of (ptsAllowed − lg − oppOffRating) (positive = bad D)
+// Iterated so beating soft schedules stops inflating ratings. Blended with
+// prior season (taper to week 8) and shrunk by n/(n+K) for small samples.
+// ============================================================================
+let _ratingsCache = { key: null, ratings: null };
+function computeRatings() {
+  let rows = 0; for (const t in state.priorWeeks) rows += state.priorWeeks[t].length;
+  const key = state.season + ':' + state.week + ':' + rows;
+  if (_ratingsCache.key === key) return _ratingsCache.ratings;
+
+  const lg = leagueAvgPts();
+  const teams = Object.keys(state.priorWeeks);
+  const off = {}, def = {};
+  teams.forEach(t => { off[t] = 0; def[t] = 0; });
+  const rowWeight = (row) => Math.pow(RECENCY_DECAY, Math.max(0, (state.week - 1) - row.week));
+
+  for (let iter = 0; iter < RATING_ITERATIONS; iter++) {
+    const nextOff = {}, nextDef = {};
+    for (const t of teams) {
+      let sumOff = 0, sumDef = 0, sumW = 0;
+      for (const row of state.priorWeeks[t]) {
+        const wt = rowWeight(row);
+        const oppDef = (row.oppId != null && def[row.oppId] != null) ? def[row.oppId] : 0;
+        const oppOff = (row.oppId != null && off[row.oppId] != null) ? off[row.oppId] : 0;
+        sumOff += wt * (row.ptsFor - lg - oppDef);
+        sumDef += wt * (row.ptsAgainst - lg - oppOff);
+        sumW += wt;
+      }
+      nextOff[t] = sumW ? sumOff / sumW : 0;
+      nextDef[t] = sumW ? sumDef / sumW : 0;
+    }
+    for (const t of teams) { off[t] = nextOff[t]; def[t] = nextDef[t]; }
+  }
+
+  // Prior-season ratings + blend + shrinkage
+  const pw = priorSeasonWeight();
+  const psTeams = Object.keys(state.priorSeason);
+  let lgPrior = lg;
+  if (psTeams.length) {
+    lgPrior = psTeams.reduce((s, t) => s + state.priorSeason[t].ptsForAvg, 0) / psTeams.length;
+  }
+  const byTeam = {};
+  const allTeams = new Set(teams.concat(psTeams));
+  for (const t of allTeams) {
+    const n = (state.priorWeeks[t] || []).length;
+    const shrink = n / (n + SHRINK_K_TEAM);
+    const curOff = (off[t] || 0) * shrink;
+    const curDef = (def[t] || 0) * shrink;
+    const ps = state.priorSeason[t];
+    const priorOff = ps ? ps.ptsForAvg - lgPrior : 0;
+    const priorDef = ps ? ps.ptsAgAvg - lgPrior : 0;
+    byTeam[t] = {
+      off: (1 - pw) * curOff + pw * priorOff,
+      def: (1 - pw) * curDef + pw * priorDef,
+      games: n, shrink, curOff, curDef, priorOff, priorDef, priorW: pw,
+    };
+  }
+
+  // Home-field advantage estimated from this season's data, shrunk toward prior
+  let hmSum = 0, hmN = 0;
+  for (const t of teams) {
+    for (const row of state.priorWeeks[t]) {
+      if (row.isHome) { hmSum += (row.ptsFor - row.ptsAgainst); hmN++; }
+    }
+  }
+  const rawHfa = hmN ? (hmSum / hmN) / 2 : HFA_PRIOR;
+  const hfa = (hmN / (hmN + 30)) * rawHfa + (30 / (hmN + 30)) * HFA_PRIOR;
+
+  const ratings = { byTeam, hfa, lg, hfaSample: hmN };
+  _ratingsCache = { key, ratings };
+  return ratings;
+}
+
+function teamRating(teamId) {
+  const r = computeRatings();
+  return r.byTeam[teamId] || { off: 0, def: 0, games: 0, shrink: 0, curOff: 0, curDef: 0, priorOff: 0, priorDef: 0, priorW: priorSeasonWeight() };
+}
+
 function projectGame(g) {
   if (!g.away || !g.home) return null;
   const lgPts = leagueAvgPts();
   const lgYds = leagueAvgYds();
+  const ratings = computeRatings();
+  const ra = teamRating(g.away.id);
+  const rh = teamRating(g.home.id);
+  const hfa = ratings.hfa;
+  const wx = weatherFactors(g);
+
+  // Expected points: lg + own offense rating + opponent defense rating ± HFA
+  const awayPts = Math.max(3, lgPts + ra.off + rh.def - hfa);
+  const homePts = Math.max(3, lgPts + rh.off + ra.def + hfa);
+  const margin = homePts - awayPts;
+  const winProbHome = normCdf(margin / MARGIN_SIGMA);
+
+  // Yard profiles (own vs opponent-allowed, recency handled upstream) for pass/rush split
   const a = blendedTeamProfile(g.away.id);
   const h = blendedTeamProfile(g.home.id);
-  const homeFactor = 1.03, awayFactor = 0.97;
-
-  if (!a && !h) {
-    const wx0 = weatherFactors(g);
-    const awayPts0 = lgPts * awayFactor, homePts0 = lgPts * homeFactor;
-    return {
-      lgPts, lgYds,
-      awayPts: awayPts0, homePts: homePts0,
-      total: awayPts0 + homePts0,
-      awayPassYds: Math.round(lgYds.pass * awayFactor * wx0.pass),
-      awayRushYds: Math.round(lgYds.rush * awayFactor * wx0.rush),
-      homePassYds: Math.round(lgYds.pass * homeFactor * wx0.pass),
-      homeRushYds: Math.round(lgYds.rush * homeFactor * wx0.rush),
-      awayProfile: null, homeProfile: null,
-      conf: 25, hasPriors: false,
-      weather: wx0,
-      projWinner: homePts0 >= awayPts0 ? 'home' : 'away',
-    };
-  }
-
   const awayProf = a || { ptsFor: lgPts, ptsAg: lgPts, passYds: lgYds.pass, rushYds: lgYds.rush, passYdsAg: lgYds.pass, rushYdsAg: lgYds.rush, games: 0, priorBlendWeight: 0, curWeight: 1, curProfile: null, last: null };
   const homeProf = h || { ptsFor: lgPts, ptsAg: lgPts, passYds: lgYds.pass, rushYds: lgYds.rush, passYdsAg: lgYds.pass, rushYdsAg: lgYds.rush, games: 0, priorBlendWeight: 0, curWeight: 1, curProfile: null, last: null };
 
-  const aOff = awayProf.ptsFor - lgPts;
-  const hOff = homeProf.ptsFor - lgPts;
-  const aDef = awayProf.ptsAg - lgPts;
-  const hDef = homeProf.ptsAg - lgPts;
-
-  const awayPts = (lgPts + 0.5 * aOff + 0.5 * hDef) * awayFactor;
-  const homePts = (lgPts + 0.5 * hOff + 0.5 * aDef) * homeFactor;
-
-  const wx = weatherFactors(g);
-
-  const projTeamYds = (own, oppAllowed, factor) => {
-    const lg = lgYds;
-    const ownPass = own.passYds != null ? own.passYds : lg.pass;
-    const ownRush = own.rushYds != null ? own.rushYds : lg.rush;
-    const oppPass = oppAllowed.passYdsAg != null ? oppAllowed.passYdsAg : lg.pass;
-    const oppRush = oppAllowed.rushYdsAg != null ? oppAllowed.rushYdsAg : lg.rush;
-    const passProj = (0.5 * ownPass + 0.5 * oppPass) * wx.pass;
-    const rushProj = (0.5 * ownRush + 0.5 * oppRush) * wx.rush;
-    return { pass: Math.round(passProj * factor), rush: Math.round(rushProj * factor) };
+  // Scale yards to the points environment: a team projected above its baseline
+  // scoring should also project above its baseline yardage (damped 60%).
+  const envScale = (projPts, baselinePts) => {
+    if (!baselinePts || baselinePts <= 0) return 1;
+    return Math.max(0.8, Math.min(1.25, 1 + 0.6 * (projPts / baselinePts - 1)));
   };
-  const awayYdsP = projTeamYds(awayProf, homeProf, awayFactor);
-  const homeYdsP = projTeamYds(homeProf, awayProf, homeFactor);
+  const projTeamYds = (own, oppAllowed, myProjPts, myBaseline) => {
+    const ownPass = own.passYds != null ? own.passYds : lgYds.pass;
+    const ownRush = own.rushYds != null ? own.rushYds : lgYds.rush;
+    const oppPass = oppAllowed.passYdsAg != null ? oppAllowed.passYdsAg : lgYds.pass;
+    const oppRush = oppAllowed.rushYdsAg != null ? oppAllowed.rushYdsAg : lgYds.rush;
+    const env = envScale(myProjPts, myBaseline);
+    const passProj = (0.55 * ownPass + 0.45 * oppPass) * wx.pass * env;
+    const rushProj = (0.55 * ownRush + 0.45 * oppRush) * wx.rush * env;
+    return { pass: Math.round(passProj), rush: Math.round(rushProj), env };
+  };
+  const awayYdsP = projTeamYds(awayProf, homeProf, awayPts, awayProf.ptsFor);
+  const homeYdsP = projTeamYds(homeProf, awayProf, homePts, homeProf.ptsFor);
 
-  const minGames = Math.min(awayProf.games || 0, homeProf.games || 0);
-  const conf = Math.min(95, Math.round(35 + minGames * 6 + (state.priorSeason[g.away.id] && state.priorSeason[g.home.id] ? 10 : 0)));
-
-  const projWinner = homePts >= awayPts ? 'home' : 'away';
+  const minGames = Math.min(ra.games || 0, rh.games || 0);
+  const hasPrior = !!(state.priorSeason[g.away.id] && state.priorSeason[g.home.id]);
+  const conf = Math.min(95, Math.round(30 + minGames * 5 + (hasPrior ? 12 : 0) + Math.min(10, Math.abs(margin))));
 
   return {
     lgPts, lgYds,
     awayPts, homePts,
     total: awayPts + homePts,
+    margin, winProbHome,
     awayPassYds: awayYdsP.pass,
     awayRushYds: awayYdsP.rush,
     homePassYds: homeYdsP.pass,
     homeRushYds: homeYdsP.rush,
-    aOff, aDef, hOff, hDef,
+    awayEnv: awayYdsP.env, homeEnv: homeYdsP.env,
+    aOff: ra.off, aDef: ra.def, hOff: rh.off, hDef: rh.def,
+    ratingA: ra, ratingH: rh, hfa, hfaSample: ratings.hfaSample,
     awayProfile: awayProf, homeProfile: homeProf,
-    conf, hasPriors: true,
+    conf, hasPriors: (ra.games > 0 || rh.games > 0 || hasPrior),
     weather: wx,
-    projWinner,
+    projWinner: homePts >= awayPts ? 'home' : 'away',
   };
 }
 
@@ -2290,17 +2483,29 @@ function projectPlayer(p) {
   const last = state.priorPlayerSeason[p.id];
   const w = priorSeasonWeight();
 
+  // WALK-FORWARD SAFE: only use rows from weeks BEFORE the projected week.
+  // state.week is rewound during historical grading, so filtering here keeps
+  // player data blind to the week being graded (and anything after it).
   let curAvg = null;
-  if (cur && cur.games) {
-    curAvg = {
-      passYds: cur.passYds / cur.games,
-      rushYds: cur.rushYds / cur.games,
-      recYds:  cur.recYds  / cur.games,
-      passTds: cur.passTds / cur.games,
-      rushTds: cur.rushTds / cur.games,
-      recTds:  cur.recTds  / cur.games,
-      games: cur.games,
-    };
+  let usedRows = [];
+  if (cur && cur.rows && cur.rows.length) {
+    usedRows = cur.rows.filter(r => r.week < state.week);
+    if (usedRows.length) {
+      // Exponential recency weighting: latest games count most
+      let sumW = 0;
+      const acc = { passYds: 0, rushYds: 0, recYds: 0, passTds: 0, rushTds: 0, recTds: 0 };
+      for (const r of usedRows) {
+        const wt = Math.pow(PLAYER_RECENCY_DECAY, Math.max(0, (state.week - 1) - r.week));
+        sumW += wt;
+        for (const k in acc) acc[k] += wt * r[k];
+      }
+      curAvg = { games: usedRows.length };
+      for (const k in acc) curAvg[k] = sumW ? acc[k] / sumW : 0;
+      // Shrink toward zero-usage baseline for tiny samples (1-game wonders)
+      const shrink = usedRows.length / (usedRows.length + SHRINK_K_PLAYER);
+      for (const k of ['passYds','rushYds','recYds','passTds','rushTds','recTds']) curAvg[k] *= (0.5 + 0.5 * shrink);
+      curAvg.shrink = shrink;
+    }
   }
   const lastAvg = last ? last.perGame : null;
 
@@ -2319,7 +2524,7 @@ function projectPlayer(p) {
     blended = Object.assign({}, lastAvg); mode = 'prior';
   }
 
-  return { blended, curAvg, lastAvg, w, mode };
+  return { blended, curAvg, lastAvg, w, mode, usedGames: usedRows.length };
 }
 
 // Opponent defense multiplier for a given yard category.
@@ -2417,39 +2622,45 @@ function buildTDCandidates(g, proj) {
     .sort((a, b) => b._td.prob - a._td.prob);
 }
 
+// V5 Poisson anytime-TD model. QB passing TDs never count; QBs qualify via rushing.
+// λ per channel = blend of (a) the player's TD rate and (b) yardage-implied TDs
+// (~1 scrimmage TD per 95 yds), each scaled by the opponent's channel defense.
+// P(anytime TD) = 1 − e^(−λ). λ is also used for first-TD share math.
 function tdProbability(p, oppDefRating, oppProfile, lgYds) {
   const proj = projectPlayer(p);
   const b = proj.blended || { passYds: 0, rushYds: 0, recYds: 0, rushTds: 0, recTds: 0 };
-  // Volume that can produce a rushing/receiving TD
-  let base = 0;
-  if (p.position === 'QB') {
-    // QBs only via rushing — low unless a rushing QB
-    base = Math.min(35, 4 + b.rushYds / 6 + (b.rushTds || 0) * 30);
-  } else if (p.position === 'RB') {
-    base = Math.min(75, 14 + b.rushYds / 4 + b.recYds / 8 + ((b.rushTds || 0) + (b.recTds || 0)) * 22);
-  } else if (p.position === 'WR') {
-    base = Math.min(62, 9 + b.recYds / 3 + (b.recTds || 0) * 22);
-  } else if (p.position === 'TE') {
-    base = Math.min(55, 7 + b.recYds / 3 + (b.recTds || 0) * 22);
-  }
-  // Opponent defense: use rush-defense for RB/QB, pass-defense for WR/TE
-  let defAdj = 0;
+
+  const rushMx = oppDefenseMultiplier(oppProfile, 'rush', lgYds || { pass: 230, rush: 110 });
+  const passMx = oppDefenseMultiplier(oppProfile, 'pass', lgYds || { pass: 230, rush: 110 });
+
+  const lambdaRushNeutral = 0.6 * (b.rushTds || 0) + 0.4 * (b.rushYds || 0) / 95;
+  const lambdaRecNeutral  = 0.6 * (b.recTds  || 0) + 0.4 * (b.recYds  || 0) / 95;
+  const lambdaNeutral = lambdaRushNeutral + lambdaRecNeutral;
+
+  const lambda = lambdaRushNeutral * rushMx.mult + lambdaRecNeutral * passMx.mult;
+
+  const probNeutral = (1 - Math.exp(-lambdaNeutral)) * 100;
+  const prob = Math.max(0, Math.min(95, (1 - Math.exp(-lambda)) * 100));
+  const defAdj = prob - probNeutral;
+
   let defNote = 'no opp data';
   if (oppProfile && lgYds) {
-    const useRush = (p.position === 'RB' || p.position === 'QB');
-    const allowed = useRush ? oppProfile.rushYdsAg : oppProfile.passYdsAg;
-    const lgAvg = useRush ? lgYds.rush : lgYds.pass;
-    if (allowed != null && lgAvg) {
-      const ratio = allowed / lgAvg;            // >1 soft defense
-      defAdj = Math.max(-12, Math.min(12, (ratio - 1) * 40));
-      defNote = (useRush ? 'rush-D ' : 'pass-D ') + Math.round(allowed) + ' vs lg ' + Math.round(lgAvg);
+    const useRush = lambdaRushNeutral >= lambdaRecNeutral;
+    const mx = useRush ? rushMx : passMx;
+    if (mx.oppAllowed != null) {
+      defNote = (useRush ? 'rush-D ' : 'pass-D ') + Math.round(mx.oppAllowed) + ' vs lg ' + Math.round(mx.lgAvg) + ' (×' + mx.mult.toFixed(2) + ')';
     }
-  } else if (oppDefRating != null) {
-    defAdj = Math.max(-12, Math.min(12, oppDefRating * 1.2));
-    defNote = 'overall def rating';
   }
-  const finalProb = Math.max(0, Math.min(95, base + defAdj));
-  return { base: Math.round(base), defAdj: Math.round(defAdj), defNote, prob: Math.round(finalProb), proj, scoreWeight: finalProb };
+
+  return {
+    base: Math.round(probNeutral),
+    defAdj: Math.round(defAdj),
+    defNote,
+    prob: Math.round(prob),
+    lambda,
+    proj,
+    scoreWeight: prob,
+  };
 }
 
 // ============================================================================
@@ -2661,23 +2872,27 @@ function renderScoreSection(g, proj, isOpen) {
             '<div class="sg-k">League avg pts</div>' +
             cell(lgPts.toFixed(1)) + cell(lgPts.toFixed(1)) +
 
-            '<div class="sg-k">Off rating (vs lg)</div>' +
-            cell(fmtSigned(ap ? ap.ptsFor - lgPts : null, 2)) +
-            cell(fmtSigned(hp ? hp.ptsFor - lgPts : null, 2)) +
+            '<div class="sg-k">Off rating (opp-adjusted)</div>' +
+            cell(fmtSigned(proj.aOff, 2)) +
+            cell(fmtSigned(proj.hOff, 2)) +
 
-            '<div class="sg-k">Def rating (vs lg)</div>' +
-            cell(fmtSigned(ap ? ap.ptsAg - lgPts : null, 2)) +
-            cell(fmtSigned(hp ? hp.ptsAg - lgPts : null, 2)) +
+            '<div class="sg-k">Opp def rating</div>' +
+            cell(fmtSigned(proj.hDef, 2)) +
+            cell(fmtSigned(proj.aDef, 2)) +
 
-            '<div class="sg-k">Net matchup edge</div>' +
-            cell(fmtSigned(0.5 * (ap ? ap.ptsFor - lgPts : 0) + 0.5 * (hp ? hp.ptsAg - lgPts : 0), 2)) +
-            cell(fmtSigned(0.5 * (hp ? hp.ptsFor - lgPts : 0) + 0.5 * (ap ? ap.ptsAg - lgPts : 0), 2)) +
+            '<div class="sg-k">Home-field (' + (proj.hfaSample || 0) + 'g est.)</div>' +
+            cell(fmtSigned(-proj.hfa, 2)) + cell(fmtSigned(proj.hfa, 2)) +
 
-            '<div class="sg-k">Home/Away factor</div>' +
-            cell('×0.97') + cell('×1.03') +
+            '<div class="sg-k">Rating sample / shrink</div>' +
+            cell((proj.ratingA.games || 0) + 'g ×' + (proj.ratingA.shrink || 0).toFixed(2)) +
+            cell((proj.ratingH.games || 0) + 'g ×' + (proj.ratingH.shrink || 0).toFixed(2)) +
 
             '<div class="sg-row-head">Projection</div>' +
             cell(proj.awayPts.toFixed(1)) + cell(proj.homePts.toFixed(1)) +
+
+            '<div class="sg-k">Win probability</div>' +
+            cell(((1 - proj.winProbHome) * 100).toFixed(0) + '%') +
+            cell((proj.winProbHome * 100).toFixed(0) + '%') +
 
             (g.completed ?
               '<div class="sg-row-head">Actual</div>' +
@@ -2688,7 +2903,9 @@ function renderScoreSection(g, proj, isOpen) {
           '</div>' +
           '<div class="math" style="background:transparent;padding:12px 0 0">' +
             '<div class="m-formula">' +
-              'points = (lg + 0.5·own_off + 0.5·opp_def) × home/away factor<br>' +
+              'points = lg + own_off + opp_def ± HFA · ratings are opponent-adjusted (' + RATING_ITERATIONS + ' passes),<br>' +
+              'recency-weighted (×' + RECENCY_DECAY + '/wk) and shrunk n/(n+' + SHRINK_K_TEAM + ') toward league avg<br>' +
+              'win prob = Φ(margin / ' + MARGIN_SIGMA + ')<br>' +
               'data sources: ' + (state.week > 1 ? 'weeks 1–' + (state.week - 1) + ' of ' + state.season + ' + all of ' + (state.season - 1) : 'all of ' + (state.season - 1) + ' (no prior weeks this season)') + '<br>' +
               'prior season blend weight: ' + (priorSeasonWeight() * 100).toFixed(0) + '% (Wk ' + state.week + ')<br>' +
               'within ±' + HIT_TOTAL_TOL + ' = HIT' +
@@ -2707,7 +2924,7 @@ function renderTeamYdsSection(g, proj, isOpen, expanded) {
     const projRush = side === 'away' ? proj.awayRushYds : proj.homeRushYds;
     const own = side === 'away' ? proj.awayProfile : proj.homeProfile;
     const opp = side === 'away' ? proj.homeProfile : proj.awayProfile;
-    const factorTxt = side === 'home' ? '×1.03 (home)' : '×0.97 (away)';
+    const env = side === 'away' ? (proj.awayEnv || 1) : (proj.homeEnv || 1);
 
     for (const cat of ['pass','rush']) {
       const projYds = cat === 'pass' ? projPass : projRush;
@@ -2720,14 +2937,16 @@ function renderTeamYdsSection(g, proj, isOpen, expanded) {
       const ownAvg = own ? (cat === 'pass' ? own.passYds : own.rushYds) : null;
       const oppAllowed = opp ? (cat === 'pass' ? opp.passYdsAg : opp.rushYdsAg) : null;
       const lg = cat === 'pass' ? proj.lgYds.pass : proj.lgYds.rush;
-      const blend = (((ownAvg != null ? ownAvg : lg) + (oppAllowed != null ? oppAllowed : lg)) / 2);
+      const blend = 0.55 * (ownAvg != null ? ownAvg : lg) + 0.45 * (oppAllowed != null ? oppAllowed : lg);
+      const wxMult = cat === 'pass' ? (proj.weather ? proj.weather.pass : 1) : (proj.weather ? proj.weather.rush : 1);
 
       const mathRows =
         '<div class="m-row"><span class="k">League avg ' + cat + ' yds/g</span><span class="v">' + lg.toFixed(0) + '</span></div>' +
         '<div class="m-row"><span class="k">' + escapeHtml(team.abbr) + ' own ' + cat + ' yds/g</span><span class="v">' + (ownAvg != null ? ownAvg.toFixed(0) : '—') + '</span></div>' +
         '<div class="m-row"><span class="k">Opp allowed ' + cat + ' yds/g</span><span class="v">' + (oppAllowed != null ? oppAllowed.toFixed(0) : '—') + '</span></div>' +
-        '<div class="m-row"><span class="k">50/50 blend</span><span class="v">' + blend.toFixed(0) + '</span></div>' +
-        '<div class="m-row"><span class="k">Home/away</span><span class="v">' + factorTxt + '</span></div>' +
+        '<div class="m-row"><span class="k">55/45 blend (own/opp)</span><span class="v">' + blend.toFixed(0) + '</span></div>' +
+        '<div class="m-row"><span class="k">Scoring environment</span><span class="v">×' + env.toFixed(2) + '</span></div>' +
+        '<div class="m-row"><span class="k">Weather</span><span class="v">×' + wxMult.toFixed(2) + '</span></div>' +
         '<div class="m-row total"><span class="k">Projection</span><span class="v">' + projYds + '</span></div>' +
         (actualYds != null ?
           '<div class="m-actual">' +
@@ -2808,7 +3027,7 @@ function renderPropsSection(g, proj, isOpen, expanded) {
         } else {
           breakdown =
             '<div class="m-row"><span class="k">Mode</span><span class="v">' + (ppr.mode === 'blend' ? 'this season + last season' : ppr.mode === 'cur' ? 'this season only' : 'last season only') + '</span></div>' +
-            (ppr.curAvg ? '<div class="m-row"><span class="k">This season per-game (' + ppr.curAvg.games + 'g)</span><span class="v">' + parts.map(k => ppr.curAvg[k].toFixed(1) + ' ' + partLabel(k)).join(' + ') + '</span></div>' : '') +
+            (ppr.curAvg ? '<div class="m-row"><span class="k">This season wtd/game (' + ppr.curAvg.games + 'g, recency ×' + PLAYER_RECENCY_DECAY + '/wk' + (ppr.curAvg.shrink != null ? ', shrink ' + (0.5 + 0.5 * ppr.curAvg.shrink).toFixed(2) : '') + ')</span><span class="v">' + parts.map(k => ppr.curAvg[k].toFixed(1) + ' ' + partLabel(k)).join(' + ') + '</span></div>' : '') +
             (ppr.lastAvg ? '<div class="m-row"><span class="k">Last season per-game</span><span class="v">' + parts.map(k => ppr.lastAvg[k].toFixed(1) + ' ' + partLabel(k)).join(' + ') + '</span></div>' : '') +
             (ppr.curAvg && ppr.lastAvg ? '<div class="m-row"><span class="k">Blend weight</span><span class="v">' + ((1 - ppr.w) * 100).toFixed(0) + '% cur · ' + (ppr.w * 100).toFixed(0) + '% prior</span></div>' : '') +
             '<div class="m-row total"><span class="k">Projected ' + projType.toLowerCase() + '</span><span class="v">' + projYds + '</span></div>';
@@ -3274,13 +3493,13 @@ async function buildPriorWeeksUpTo(upTo) {
       let teamYds = {};
       try { teamYds = extractTeamYardsFromSummary(await cachedJSON(ESPN.summary(ev.id))); } catch {}
       const hY = teamYds[home.team.id], aY = teamYds[away.team.id];
-      for (const [t, pf, pa, my, opp] of [
-        [home.team.id, hs, as, hY, aY],
-        [away.team.id, as, hs, aY, hY],
+      for (const [t, oId, pf, pa, my, opp, isH] of [
+        [home.team.id, away.team.id, hs, as, hY, aY, true],
+        [away.team.id, home.team.id, as, hs, aY, hY, false],
       ]) {
         if (!pw[t]) pw[t] = [];
         pw[t].push({
-          week: pwk, eventId: ev.id, ptsFor: pf, ptsAgainst: pa,
+          week: pwk, eventId: ev.id, oppId: oId, isHome: isH, ptsFor: pf, ptsAgainst: pa,
           passYds: my ? my.passYds : null, rushYds: my ? my.rushYds : null,
           passYdsAg: opp ? opp.passYds : null, rushYdsAg: opp ? opp.rushYds : null,
         });
@@ -3358,6 +3577,9 @@ async function scanFullSeason() {
       const { graded, gameCount } = await gradeWeekBlind(W);
       if (gameCount === 0) { weekResults.push({ week: W, hit: 0, n: 0, pct: 0, games: 0 }); continue; }
 
+      // Push this week's blind-graded results to Firebase (debounced, non-blocking)
+      syncWeekAccuracy(graded.cats, W);
+
       let wkHit = 0, wkN = 0;
       for (const key in graded.cats) {
         const c = graded.cats[key];
@@ -3378,6 +3600,8 @@ async function scanFullSeason() {
     cumHit, cumN,
     weeksWithGames: weekResults.filter(w => w.games > 0).length,
   };
+  // Push the whole-season summary too
+  syncSeasonSummary(state.seasonScan);
   state.seasonScanLoading = false;
   state.seasonScanProgress = '';
   render();
@@ -3447,6 +3671,86 @@ function gradeVsDK() {
   return cats;
 }
 
+// ----------------------------------------------------------------------------
+// Accuracy → Firebase sync. One doc per graded week: accuracy/{season}_W{week}
+// with per-category {hit, n}. Debounced: identical payloads aren't re-written.
+// ----------------------------------------------------------------------------
+const _accSyncMemo = {};
+function catsToPlain(cats) {
+  const out = {};
+  for (const k in cats) out[k] = { hit: cats[k].hit, n: cats[k].n, label: cats[k].label || k };
+  return out;
+}
+async function syncWeekAccuracy(cats, weekOverride) {
+  if (!state.settings.accSyncEnabled) return;
+  const wk = weekOverride != null ? weekOverride : state.week;
+  const plain = catsToPlain(cats);
+  const totalN = Object.values(plain).reduce((s, c) => s + c.n, 0);
+  if (!totalN) return; // nothing graded — don't write empty docs
+  const docId = state.season + '_W' + String(wk).padStart(2, '0');
+  const fingerprint = JSON.stringify(plain);
+  if (_accSyncMemo[docId] === fingerprint) return; // unchanged since last write
+  try {
+    await fsSetDoc('accuracy/' + docId, {
+      season: state.season, week: wk, updatedAt: Date.now(), cats: plain,
+    });
+    _accSyncMemo[docId] = fingerprint;
+    logEvent('info', 'sync', 'accuracy ' + docId + ' → Firebase (' + totalN + ' graded)');
+  } catch (e) {
+    logEvent('warn', 'sync', 'accuracy write failed (' + docId + '): ' + e.message);
+  }
+}
+async function syncSeasonSummary(ss) {
+  if (!state.settings.accSyncEnabled || !ss) return;
+  try {
+    await fsSetDoc('accuracy/' + state.season + '_summary', {
+      season: state.season, updatedAt: Date.now(),
+      cumHit: ss.cumHit, cumN: ss.cumN, cumPct: Math.round(ss.cumPct * 10) / 10,
+      weeksWithGames: ss.weeksWithGames,
+      cats: catsToPlain(ss.cats),
+    });
+    logEvent('info', 'sync', 'season summary → Firebase (' + ss.cumN + ' graded)');
+  } catch (e) {
+    logEvent('warn', 'sync', 'summary write failed: ' + e.message);
+  }
+}
+
+// All-time from Firebase: aggregate every accuracy/{season}_W## doc anyone wrote.
+async function loadFirebaseAccuracy() {
+  if (state.fsAccuracyLoading) return;
+  state.fsAccuracyLoading = true;
+  render();
+  try {
+    const docs = await fsListDocs('accuracy', 300);
+    const weekly = docs.filter(d => /_W\d+$/.test(d.id));
+    const agg = {};
+    let cumHit = 0, cumN = 0;
+    const seasons = new Set();
+    for (const d of weekly) {
+      if (d.data.season != null) seasons.add(d.data.season);
+      const cats = d.data.cats || {};
+      for (const k in cats) {
+        if (!agg[k]) agg[k] = { hit: 0, n: 0, label: cats[k].label || k };
+        agg[k].hit += cats[k].hit || 0;
+        agg[k].n += cats[k].n || 0;
+        cumHit += cats[k].hit || 0;
+        cumN += cats[k].n || 0;
+      }
+    }
+    state.fsAccuracy = {
+      cats: agg, cumHit, cumN,
+      cumPct: cumN ? 100 * cumHit / cumN : 0,
+      weeks: weekly.length, seasons: seasons.size,
+    };
+    logEvent('info', 'sync', 'loaded ' + weekly.length + ' synced week docs from Firebase');
+  } catch (e) {
+    state.fsAccuracy = { error: e.message };
+    logEvent('err', 'sync', 'all-time load failed: ' + e.message);
+  }
+  state.fsAccuracyLoading = false;
+  render();
+}
+
 function renderFacts(main) {
   const completed = state.games.filter(g => g.completed);
   if (!completed.length) {
@@ -3476,6 +3780,8 @@ function renderFacts(main) {
   const graded = gradeWeek();
   const cats = graded.cats;
   const perGame = graded.perGame;
+  // Fire-and-forget: push this week's graded results to Firebase (debounced)
+  syncWeekAccuracy(cats);
 
   const eligible = Object.entries(cats).filter(e => e[1].n > 0);
   const best = eligible.length ? eligible.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
@@ -3639,6 +3945,40 @@ function renderFacts(main) {
     '</div>';
   }
 
+  // All-time synced record from Firebase (every graded week anyone has synced)
+  let fsHtml;
+  if (state.fsAccuracyLoading) {
+    fsHtml = '<div class="fact-card"><div class="head">All-Time · Synced (Firebase)</div><div class="gb-empty">Loading synced record…</div></div>';
+  } else if (state.fsAccuracy && !state.fsAccuracy.error) {
+    const fa = state.fsAccuracy;
+    const faRows = Object.entries(fa.cats).filter(e => e[1].n > 0).map(entry => {
+      const c = entry[1];
+      const pct = c.n ? (100 * c.hit / c.n) : 0;
+      return '<div class="fact-cat-row">' +
+          '<div class="fact-cat-top">' +
+            '<div class="fact-cat-name"><div class="n">' + escapeHtml(c.label) + '</div></div>' +
+            '<div class="fact-cat-pct">' + pct.toFixed(0) + '%</div>' +
+          '</div>' +
+          '<div class="fact-cat-bar-row">' +
+            '<div class="fact-cat-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="fact-cat-frac">' + c.hit + '/' + c.n + '</div>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+    fsHtml = '<div class="fact-card">' +
+      '<div class="head">All-Time · Synced (Firebase) · <span class="fact-hist-cum">' + fa.cumPct.toFixed(0) + '%</span> (' + fa.cumHit + '/' + fa.cumN + ') · ' + fa.weeks + ' week' + (fa.weeks === 1 ? '' : 's') + (fa.seasons > 1 ? ' · ' + fa.seasons + ' seasons' : '') + '</div>' +
+      (faRows || '<div class="gb-empty">No synced weeks yet — grade a week or run a season scan with sync on.</div>') +
+      '<div style="padding:10px 14px"><button class="chip" id="fs-acc-btn" style="width:100%">Refresh synced record</button></div>' +
+    '</div>';
+  } else {
+    const errNote = state.fsAccuracy && state.fsAccuracy.error ? '<div class="gb-empty" style="color:var(--hot)">Load failed: ' + escapeHtml(state.fsAccuracy.error) + '</div>' : '<div class="gb-empty">Shared track record built from every graded week synced to Firebase — by you or anyone in the group.</div>';
+    fsHtml = '<div class="fact-card">' +
+      '<div class="head">All-Time · Synced (Firebase)</div>' +
+      errNote +
+      '<div style="padding:0 14px 14px"><button class="scan-btn" id="fs-acc-btn">Load synced record</button></div>' +
+    '</div>';
+  }
+
   main.innerHTML = '' +
     '<div class="facts">' +
       '<div class="fact-hero">' +
@@ -3648,6 +3988,7 @@ function renderFacts(main) {
         '<div class="sub">' + (best ? best[1].hit + '/' + best[1].n + ' hits' : '') + '</div>' +
       '</div>' +
       vsDkHtml +
+      fsHtml +
       seasonHtml +
       '<div class="fact-card">' +
         '<div class="head">This Week · Accuracy by Category</div>' +
@@ -3667,6 +4008,8 @@ function renderFacts(main) {
   if (histBtn) histBtn.addEventListener('click', loadFactHistory);
   const scanBtn = main.querySelector('#season-scan-btn');
   if (scanBtn) scanBtn.addEventListener('click', scanFullSeason);
+  const fsBtn = main.querySelector('#fs-acc-btn');
+  if (fsBtn) fsBtn.addEventListener('click', loadFirebaseAccuracy);
 }
 
 // ============================================================================
@@ -3852,17 +4195,20 @@ function renderGameBets(main) {
       }).join('');
     }
 
-    // first TD pick row
+    // first TD pick row — P(first) = λ_i / Σλ × P(any TD in game) via Poisson
     let firstRow = '';
     if (firstPick) {
+      const totalLambda = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
+      const pAnyTd = 1 - Math.exp(-totalLambda);
+      const pFirst = totalLambda > 0 ? Math.round(((firstPick._td.lambda || 0) / totalLambda) * pAnyTd * 100) : 0;
       const result = !g.completed ? '<span class="gb-result na">—</span>'
         : firstPick._scored ? '<span class="gb-result yes">✓ scored</span>' : '<span class="gb-result no">no TD</span>';
       firstRow =
-        '<div class="gb-sub">First TD Pick</div>' +
+        '<div class="gb-sub">First TD Pick · P(first) from λ share</div>' +
         '<div class="gb-firsttd">' +
           '<span class="gb-star">★</span>' +
           '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span></div>' +
-          '<div class="gb-prob">' + firstPick._td.prob + '%</div>' +
+          '<div class="gb-prob">' + pFirst + '%</div>' +
           result +
         '</div>';
     }
@@ -3979,7 +4325,7 @@ function syncSettingsUI() {
     cb.checked = !!state.settings.dkMarkets[cb.dataset.market];
   });
   document.getElementById('dk-detail').style.display = state.settings.dkEnabled ? '' : 'none';
-  const fb = document.getElementById('fb-config'); if (fb) fb.value = state.settings.firebaseConfig || '';
+  const acc = document.getElementById('acc-sync-toggle'); if (acc) acc.checked = !!state.settings.accSyncEnabled;
   updateDkQuotaEstimate();
   updateDkLastPullLabel();
   updateDkQuotaCard();
@@ -4031,10 +4377,16 @@ function updateDkLastPullLabel() {
 function updateFirebaseStatus() {
   const el = document.getElementById('fb-status');
   if (!el) return;
-  const cfg = parseFirebaseConfig();
-  if (!cfg) { el.textContent = 'No valid Firebase config — using per-device dedupe only.'; el.style.color = 'var(--ink-faint)'; return; }
-  el.textContent = '✓ Firebase configured (project: ' + (cfg.projectId || cfg.databaseURL) + ')';
-  el.style.color = 'var(--accent)';
+  el.textContent = 'Firebase: ' + FIREBASE.projectId + ' (built in)';
+  el.style.color = 'var(--ink-faint)';
+  // Live-check reachability in the background
+  fsGetDoc('gridline/config').then(doc => {
+    el.textContent = '✓ Firebase connected (' + FIREBASE.projectId + ')' + (doc && doc.memberPin ? ' · member PIN is set' : ' · no member PIN set yet');
+    el.style.color = 'var(--accent)';
+  }).catch(e => {
+    el.textContent = '✗ Firebase unreachable: ' + e.message;
+    el.style.color = 'var(--hot)';
+  });
 }
 
 populateWeekDropdown();
@@ -4126,13 +4478,31 @@ document.getElementById('dk-quota-check').addEventListener('click', async () => 
     setTimeout(() => { btn.textContent = 'Refresh quota only (1 call)'; btn.disabled = false; }, 2200);
   }
 });
-document.getElementById('fb-save').addEventListener('click', () => {
-  const v = document.getElementById('fb-config').value;
-  state.settings.firebaseConfig = v;
-  saveSettings();
-  const ok = !!parseFirebaseConfig();
-  logEvent(ok ? 'info' : 'warn', 'cfg', 'Firebase config ' + (ok ? 'valid' : 'invalid (need JSON with databaseURL)'));
-  updateFirebaseStatus();
+document.getElementById('member-pin-save').addEventListener('click', async () => {
+  const inp = document.getElementById('member-pin-set');
+  const statusEl = document.getElementById('member-pin-status');
+  const pin = (inp.value || '').replace(/\D/g, '');
+  if (pin.length !== 4) {
+    statusEl.textContent = 'PIN must be exactly 4 digits.';
+    statusEl.style.color = 'var(--hot)';
+    return;
+  }
+  statusEl.textContent = 'Saving…';
+  statusEl.style.color = 'var(--ink-faint)';
+  try {
+    await saveMemberPin(pin);
+    statusEl.textContent = '✓ Member PIN saved & synced (' + pin + ')';
+    statusEl.style.color = 'var(--accent)';
+    inp.value = '';
+  } catch (e) {
+    statusEl.textContent = '✗ Save failed: ' + e.message;
+    statusEl.style.color = 'var(--hot)';
+    logEvent('err', 'auth', 'member PIN save failed: ' + e.message);
+  }
+});
+document.getElementById('acc-sync-toggle').addEventListener('change', e => {
+  state.settings.accSyncEnabled = e.target.checked; saveSettings();
+  logEvent('info', 'cfg', 'accuracy sync → ' + (e.target.checked ? 'on' : 'off'));
 });
 document.getElementById('log-clear').addEventListener('click', clearEventLog);
 
@@ -4146,6 +4516,65 @@ document.querySelectorAll('.tab').forEach(tab => {
     render();
   });
 });
+
+// ============================================================================
+// Member paywall gate
+// ============================================================================
+function hidePaywall() {
+  document.getElementById('paywall').classList.add('hidden');
+  sessionStorage.setItem('gl_member_ok', '1');
+  logEvent('info', 'auth', 'member access granted');
+}
+async function initPaywall() {
+  // Already verified this session? Skip the gate.
+  if (sessionStorage.getItem('gl_member_ok') === '1') {
+    document.getElementById('paywall').classList.add('hidden');
+    logEvent('info', 'auth', 'member access (session)');
+    return;
+  }
+  const statusEl = document.getElementById('paywall-status');
+  // Fetch the synced member PIN in the background; fall back to local cache.
+  let memberPin = localStorage.getItem('gl_member_pin_cache') || null;
+  statusEl.textContent = memberPin ? 'Member access · synced' : 'Checking member access…';
+  fetchMemberPin().then(pin => {
+    if (pin) {
+      memberPin = pin;
+      statusEl.textContent = 'Member access · synced';
+    } else if (!memberPin) {
+      statusEl.textContent = 'No member PIN set yet — admin PIN required';
+    }
+  }).catch(() => {
+    statusEl.textContent = memberPin ? 'Offline — using cached PIN' : 'Offline — admin PIN required';
+  });
+
+  const tryEnter = () => {
+    const inp = document.getElementById('member-pin-input');
+    const err = document.getElementById('member-pin-error');
+    const v = (inp.value || '').replace(/\D/g, '');
+    if (v.length < 4) return;
+    // Re-read cache in case fetch completed after handler setup
+    const currentMemberPin = memberPin || localStorage.getItem('gl_member_pin_cache');
+    if (v === SETTINGS_PIN || (currentMemberPin && v === currentMemberPin)) {
+      hidePaywall();
+    } else {
+      err.textContent = 'Incorrect PIN';
+      inp.value = '';
+      logEvent('warn', 'auth', 'member PIN incorrect');
+    }
+  };
+  document.getElementById('member-pin-submit').addEventListener('click', tryEnter);
+  document.getElementById('member-pin-input').addEventListener('input', e => {
+    const cleaned = (e.target.value || '').replace(/\D/g, '').slice(0, 4);
+    if (cleaned !== e.target.value) e.target.value = cleaned;
+    document.getElementById('member-pin-error').textContent = '';
+    if (cleaned.length === 4) tryEnter();
+  });
+  document.getElementById('member-pin-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') tryEnter();
+  });
+  setTimeout(() => { const i = document.getElementById('member-pin-input'); if (i) i.focus(); }, 300);
+}
+initPaywall();
 
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
 setTimeout(() => { maybeAutoPullDK().catch(e => logEvent('err', 'DK', 'auto-pull err: ' + e.message)); }, 600);
