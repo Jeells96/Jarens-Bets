@@ -468,6 +468,14 @@
   .pg-res { font-weight: 700; }
   .is-lock-hl { box-shadow: inset 3px 0 0 var(--accent); }
   .is-lock-tag { border-color: var(--accent) !important; color: var(--accent) !important; background: var(--hit-bg) !important; }
+  .inj-tag {
+    display: inline-block;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 8px; font-weight: 800;
+    color: #ffb347; border: 1px solid rgba(255,179,71,0.5);
+    border-radius: 3px; padding: 0 4px; margin-left: 4px;
+    vertical-align: 1px;
+  }
   .cat-rate {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 9px; font-weight: 400;
@@ -794,6 +802,34 @@
     font-size: 14px; font-weight: 700;
   }
   .lock-th-row input:focus { outline: none; border-color: var(--accent); }
+  .lock-tune-row { display: flex; gap: 8px; margin-top: 8px; align-items: stretch; }
+  .tune-select {
+    flex: 1; min-width: 0;
+    background: var(--bg-3); color: var(--ink);
+    border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 9px 10px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px;
+    -webkit-appearance: none;
+  }
+  .lock-tune-row input {
+    width: 84px; text-align: center;
+    background: var(--bg); color: var(--accent);
+    border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 9px 6px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; font-weight: 700;
+  }
+  .lock-tune-row input:focus { outline: none; border-color: var(--accent); }
+  .tune-result { margin-top: 8px; }
+  .tune-preview {
+    background: var(--bg-3); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 10px 12px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px;
+    color: var(--ink-dim); line-height: 1.6;
+  }
+  .tune-preview .tp-big { color: var(--accent); font-size: 14px; font-weight: 800; }
+  .tune-preview .tp-warn { color: #ffb347; }
+  .tune-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .tune-actions .chip { flex: 1; }
 
   /* All-time / season scan */
   .scan-btn {
@@ -1047,7 +1083,7 @@
 <header>
   <div class="brand">
     <div class="logo">Gridline</div>
-    <span class="ver-badge" id="ver-badge">V5.6</span>
+    <span class="ver-badge" id="ver-badge">V6.0</span>
     <div class="tag">NFL · Fable Engine</div>
     <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
@@ -1111,9 +1147,9 @@
 
         <div id="dk-detail" style="display:none">
           <div class="dk-quota-card" id="dk-quota-card">
-            <div class="dk-quota-label">API quota remaining (this month)</div>
+            <div class="dk-quota-label">API calls used (this month)</div>
             <div class="dk-quota-value" id="dk-quota-value">— / —</div>
-            <div class="setting-note" id="dk-quota-meta">Updates after each pull.</div>
+            <div class="setting-note" id="dk-quota-meta">Updates after each pull or background run.</div>
           </div>
           <div class="setting-note" style="color:var(--ink);margin-top:8px"><b>Markets</b> (each toggle = +1 API call per game)</div>
           <div class="market-grid">
@@ -1128,7 +1164,7 @@
           <div class="setting-note" id="dk-quota-est"></div>
 
           <div class="setting-row" style="margin-top:10px">
-            <label class="setting-label">Auto-pull on Thursdays</label>
+            <label class="setting-label">Background auto-pull (GitHub: Thu 12pm · Sun 6am · Mon 12pm PT)</label>
             <label class="switch"><input type="checkbox" id="dk-auto-toggle"><span class="slider"></span></label>
           </div>
           <div class="setting-note" id="dk-last-pull"></div>
@@ -1168,7 +1204,29 @@
           <label class="lock-th-row"><span>Player yards · min model conf %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="yards"></label>
           <label class="lock-th-row"><span>Game lines · min model conf %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="lines"></label>
         </div>
+        <div class="setting-note" style="margin-top:12px">Hit tolerances — how close a projection must land to count as correct. Applies to scores/totals (pts) and every yardage prop (yds). Changing these re-grades all records instantly.</div>
+        <div class="lock-th-grid">
+          <label class="lock-th-row"><span>Scores &amp; totals · ± points</span><input type="number" min="0.5" max="50" step="0.5" inputmode="decimal" data-hittol="pts"></label>
+          <label class="lock-th-row"><span>Yardage props · ± yards</span><input type="number" min="1" max="50" inputmode="numeric" data-hittol="yds"></label>
+        </div>
         <div class="setting-note" id="lock-th-note"></div>
+        <div class="lock-tune">
+          <div class="setting-note" style="margin-top:12px">Auto-tune: pick a category and a target hit rate. I'll sweep every threshold against your graded record, propose the closest match, and show the sample size before you apply anything.</div>
+          <div class="lock-tune-row">
+            <select id="tune-key" class="tune-select">
+              <option value="winner">Winner pick</option>
+              <option value="anytimeTd">Anytime TD</option>
+              <option value="firstTd">First TD</option>
+              <option value="yards">Player yards</option>
+              <option value="lines">Game lines</option>
+              <option value="tolPts">± points (scores/totals)</option>
+              <option value="tolYds">± yards (yardage props)</option>
+            </select>
+            <input type="number" id="tune-target" min="1" max="99" inputmode="numeric" placeholder="target %">
+            <button class="chip" id="tune-find">Find</button>
+          </div>
+          <div id="tune-result" class="tune-result"></div>
+        </div>
       </div>
 
       <!-- Event log -->
@@ -1181,7 +1239,7 @@
         <div id="event-log" class="event-log"></div>
       </div>
 
-      <div class="ver-line">Build <b id="ver-line-num">V5.6</b> · Gridline projection engine</div>
+      <div class="ver-line">Build <b id="ver-line-num">V6.0</b> · Gridline projection engine</div>
     </div>
   </div>
 </div>
@@ -1217,7 +1275,7 @@ const ESPN = {
     `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
 };
 
-const APP_VERSION = 'V5.6';
+const APP_VERSION = 'V6.0';
 const CACHE_VERSION = 'v9';
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -1321,6 +1379,15 @@ const LOCK_DEFAULTS = {
   yards: 0,        // min model confidence % for player yard props
   lines: 0,        // min model confidence % for totals / scores / team yards
 };
+// Hit tolerances — what counts as "correct" for score/yardage projections.
+// Editable in Settings and tunable to a target success rate, exactly like
+// lock thresholds. pts: game totals & team scores. yds: every yardage prop.
+const TOL_DEFAULTS = { pts: HIT_TOTAL_TOL, yds: HIT_YDS_TOL };
+function hitTol(key) {
+  const ht = (state.settings && state.settings.hitTol) || {};
+  const v = +ht[key];
+  return isFinite(v) && ht[key] !== '' && ht[key] != null && v > 0 ? Math.min(50, v) : TOL_DEFAULTS[key];
+}
 function lockTh(key) {
   const lt = (state.settings && state.settings.lockThresholds) || {};
   const v = +lt[key];
@@ -1479,6 +1546,7 @@ const state = {
     dkAutoPullEnabled: true,           // auto Thursday-morning pull (when dkEnabled)
     accSyncEnabled: true,              // write graded accuracy to Firestore
     lockThresholds: {},                // per-category lock thresholds (see LOCK_DEFAULTS)
+    hitTol: {},                        // ± tolerances for correct (see TOL_DEFAULTS)
     settingsUnlocked: false,           // session-only (not persisted)
   },
   dkOdds: null,                        // { fetchedAt, games: [{ home, away, markets: {...} }] }
@@ -1506,7 +1574,7 @@ function loadSettings() {
     if (!raw) return;
     const obj = JSON.parse(raw);
     // Only copy known keys to avoid pulling in stale junk
-    const allowed = ['weatherEnabled','dkEnabled','dkMarkets','dkAutoPullEnabled','accSyncEnabled','lockThresholds'];
+    const allowed = ['weatherEnabled','dkEnabled','dkMarkets','dkAutoPullEnabled','accSyncEnabled','lockThresholds','hitTol'];
     for (const k of allowed) {
       if (obj[k] !== undefined) state.settings[k] = obj[k];
     }
@@ -1534,6 +1602,7 @@ function saveSettings() {
       dkAutoPullEnabled: state.settings.dkAutoPullEnabled,
       accSyncEnabled: state.settings.accSyncEnabled,
       lockThresholds: state.settings.lockThresholds,
+      hitTol: state.settings.hitTol,
     };
     localStorage.setItem(SETTINGS_LS_KEY, JSON.stringify(persistable));
   } catch (e) { logEvent('warn', 'settings', 'save failed: ' + e.message); }
@@ -1734,6 +1803,42 @@ async function pullDKOdds(reason) {
   }
 }
 
+// Adopt odds pulled in the background by the GitHub Action (Firestore doc
+// gridline/dkOdds). Only adopts when newer than what this device already has.
+async function loadRemoteDKOdds() {
+  try {
+    const doc = await fsGetDoc('gridline/dkOdds');
+    if (!doc || !doc.json) return;
+    const localAt = (state.dkOdds && state.dkOdds.fetchedAt) || 0;
+    if (doc.fetchedAt <= localAt) return;
+    const parsed = JSON.parse(doc.json);
+    state.dkOdds = parsed;
+    state.dkLastPullAt = doc.fetchedAt;
+    localStorage.setItem('gl_dk_last_pull', String(doc.fetchedAt));
+    try { localStorage.setItem('gl_dk_odds', doc.json); } catch {}
+    logEvent('info', 'DK', 'adopted background odds (' + Object.keys(parsed.byEvent || {}).length + ' events, ' + (parsed.reason || '?') + ')');
+    if (state.loaded) render();
+  } catch (e) { logEvent('warn', 'DK', 'background odds check failed: ' + e.message); }
+}
+
+// Pull the background quota + heartbeat status for the Settings card
+async function loadRemoteDKStatus() {
+  try {
+    const [q, hb] = await Promise.all([
+      fsGetDoc('gridline/dkQuota').catch(() => null),
+      fsGetDoc('gridline/heartbeat').catch(() => null),
+    ]);
+    if (q && q.used >= 0) {
+      state.dkQuotaUsed = q.used;
+      state.dkQuotaRemaining = q.remaining >= 0 ? q.remaining : state.dkQuotaRemaining;
+      state.dkQuotaCheckedAt = q.at || state.dkQuotaCheckedAt;
+    }
+    state.dkHeartbeatAt = hb && hb.at ? hb.at : null;
+    updateDkQuotaCard();
+  } catch (e) { logEvent('warn', 'DK', 'status check failed: ' + e.message); }
+}
+
+
 function loadCachedDKOdds() {
   try {
     const raw = localStorage.getItem('gl_dk_odds');
@@ -1744,48 +1849,6 @@ function loadCachedDKOdds() {
   } catch (e) { logEvent('warn', 'DK', 'cached odds parse failed: ' + e.message); }
 }
 
-// ----------------------------------------------------------------------------
-// Thursday auto-pull logic (with optional Firebase coordination)
-// ----------------------------------------------------------------------------
-function isThursdayLocal(d) { return (d || new Date()).getDay() === 4; }
-function todayDateString(d) {
-  d = d || new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-
-async function maybeAutoPullDK() {
-  if (!state.settings.dkEnabled) { logEvent('info', 'DK', 'auto: master DK toggle off'); return; }
-  if (!state.settings.dkAutoPullEnabled) { logEvent('info', 'DK', 'auto: auto-pull toggle off'); return; }
-  if (!selectedMarkets().length) { logEvent('info', 'DK', 'auto: no markets enabled'); return; }
-  if (!isThursdayLocal()) { logEvent('info', 'DK', 'auto: not Thursday'); return; }
-
-  const today = todayDateString();
-  // Local dedupe first — fast path
-  const localStamp = localStorage.getItem('gl_dk_thursday_pulled');
-  if (localStamp === today) {
-    logEvent('info', 'DK', 'auto: this device already pulled today');
-    return;
-  }
-
-  // Firestore shared marker (project is built in — always available)
-  try {
-    const doc = await fsGetDoc('gridline/dkPull');
-    if (doc && doc.lastThursday === today) {
-      logEvent('info', 'DK', 'auto: Firestore says someone already pulled today');
-      localStorage.setItem('gl_dk_thursday_pulled', today);
-      return;
-    }
-    logEvent('info', 'DK', 'auto: claiming Firestore Thursday marker');
-    await fsSetDoc('gridline/dkPull', { lastThursday: today, claimedAt: Date.now() });
-  } catch (e) {
-    logEvent('warn', 'DK', 'Firestore coordination failed; falling back to local-only: ' + e.message);
-  }
-
-  try {
-    await pullDKOdds('auto-thursday');
-    localStorage.setItem('gl_dk_thursday_pulled', today);
-  } catch {}
-}
 
 // ----------------------------------------------------------------------------
 // Member PIN (paywall) — synced via Firestore doc gridline/config.memberPin.
@@ -2147,6 +2210,7 @@ async function loadWeek() {
   state.seasonScanLoading = false;
   state.scanWeekOpen = {};
   state.betSearch = '';
+  loadRemoteDKOdds(); // adopt newer background odds if the Action pulled since
   document.getElementById('load-btn').disabled = true;
   setStatus('loading', 'Loading Week ' + state.week + '…');
 
@@ -2429,6 +2493,7 @@ function buildGame(event, summary) {
     teamYards: extractTeamYardsFromSummary(summary),
     weather: extractWeather(event, summary),
     firstTdScorer: extractFirstTdScorer(summary),
+    injuries: extractInjuries(summary),
   };
 }
 
@@ -2796,6 +2861,72 @@ function oppDefenseMultiplier(oppProfile, cat, lgYds) {
 // ----------------------------------------------------------------------------
 const STAT_LABEL = { pass: 'Pass yds', rush: 'Rush yds', rec: 'Rec yds' };
 
+// League-typical weekly standard deviations per position/stat — the prior that
+// small player samples get shrunk toward. Derived from historical NFL weekly
+// spreads; these drive honest ±10 hit probabilities.
+const SIGMA_PRIOR = {
+  QB:  { pass: 65, rush: 14, rec: 20 },
+  RB:  { pass: 30, rush: 28, rec: 18 },
+  WR:  { pass: 30, rush: 8,  rec: 30 },
+  TE:  { pass: 30, rush: 8,  rec: 22 },
+};
+
+// Weighted weekly std-dev of one stat for one player (walk-forward safe),
+// shrunk toward the positional prior for small samples.
+function playerStatSigma(p, stat, pos) {
+  const prior = (SIGMA_PRIOR[pos] || SIGMA_PRIOR.WR)[stat] || 25;
+  const cur = state.priorPlayer[p.id];
+  const rows = cur && cur.rows ? cur.rows.filter(r => r.week < state.week) : [];
+  if (rows.length < 2) return { sigma: prior, n: rows.length, playerSigma: null };
+  const key = stat + 'Yds';
+  let sumW = 0, mean = 0;
+  const w = rows.map(r => Math.pow(PLAYER_RECENCY_DECAY, Math.max(0, (state.week - 1) - r.week)));
+  rows.forEach((r, i) => { sumW += w[i]; mean += w[i] * r[key]; });
+  mean = sumW ? mean / sumW : 0;
+  let varSum = 0;
+  rows.forEach((r, i) => { varSum += w[i] * Math.pow(r[key] - mean, 2); });
+  const playerSigma = Math.sqrt(sumW ? varSum / sumW : 0);
+  const shrink = rows.length / (rows.length + 3);
+  const sigma = Math.max(5, shrink * playerSigma + (1 - shrink) * prior);
+  return { sigma, n: rows.length, playerSigma };
+}
+
+// Per-prop confidence = modeled probability the actual lands within ±10 of the
+// projection: 2Φ(10/σ) − 1. Injury status degrades it. THIS is what the lock
+// threshold for player yards gates on.
+function propConfidence(p, stat, pos, injuryStatus) {
+  const sg = playerStatSigma(p, stat, pos);
+  let conf = (2 * normCdf(hitTol('yds') / sg.sigma) - 1) * 100;
+  if (injuryStatus === 'questionable') conf *= 0.75;
+  conf = Math.max(5, Math.min(95, Math.round(conf)));
+  return { conf, sigma: sg.sigma, sampleN: sg.n, playerSigma: sg.playerSigma };
+}
+
+// ---- Injuries from the game summary (free — we already fetch it) ----
+// Returns { athleteId: { status: 'out'|'questionable', label } }
+function extractInjuries(summary) {
+  const out = {};
+  const blocks = (summary && summary.injuries) || [];
+  const OUT_WORDS = ['out', 'injured reserve', 'ir', 'doubtful', 'suspension', 'physically unable', 'pup', 'non football'];
+  for (const blk of blocks) {
+    for (const inj of (blk.injuries || [])) {
+      const a = inj.athlete || {};
+      if (!a.id) continue;
+      const raw = String(inj.status || (inj.type && inj.type.description) || '').toLowerCase();
+      if (!raw) continue;
+      let status = null;
+      if (OUT_WORDS.some(wd => raw.includes(wd))) status = 'out';
+      else if (raw.includes('questionable') || raw.includes('day-to-day')) status = 'questionable';
+      if (status) out[String(a.id)] = { status, label: inj.status || raw };
+    }
+  }
+  return out;
+}
+function playerInjury(g, p) {
+  const inj = g.injuries && g.injuries[String(p.id)];
+  return inj ? inj.status : null;
+}
+
 // Which stat lines we project for a position
 function statLinesForPosition(pos, blended) {
   if (pos === 'QB') return ['pass', 'rush'];
@@ -2871,12 +3002,22 @@ function buildTDCandidates(g, proj) {
     // Roster guard: the player must belong to one of THIS game's two teams.
     // (Catches any future data-crossing bug instantly instead of silently grading garbage.)
     .filter(p => ['QB','RB','WR','TE'].includes(p.position) && (p.team === g.away.id || p.team === g.home.id))
+    // Injury gate: for UPCOMING games, players ruled OUT can't be bet — drop them.
+    // Completed games are ungated (the box score is the truth of who played).
+    .filter(p => g.completed || playerInjury(g, p) !== 'out')
     .map(p => {
+      const inj = playerInjury(g, p);
       const isAway = p.team === g.away.id;
       const oppProfile = isAway ? proj.homeProfile : proj.awayProfile;
       const oppDefRating = oppProfile ? oppProfile.ptsAg - proj.lgPts : 0;
       const td = tdProbability(p, oppDefRating, oppProfile, proj.lgYds);
-      return Object.assign({}, p, { _td: td, _scored: scoredNonPassingTD(p) });
+      // Questionable (pregame): damp λ 15% and recompute the Poisson probability
+      if (inj === 'questionable' && !g.completed) {
+        td.lambda = (td.lambda || 0) * 0.85;
+        td.prob = Math.round((1 - Math.exp(-td.lambda)) * 100);
+        td.injNote = 'questionable — λ ×0.85';
+      }
+      return Object.assign({}, p, { _td: td, _scored: scoredNonPassingTD(p), _inj: inj });
     })
     .sort((a, b) => b._td.prob - a._td.prob);
 }
@@ -2966,7 +3107,7 @@ function buildBetSearchResults(query) {
       '<span class="pos-tag pos-' + r.position + '">' + r.position + '</span>' +
       '<div class="props-name">' + escapeHtml(r.name) +
         '<span class="prop-team">' + escapeHtml(r.abbr) + ' vs ' + escapeHtml(r.oppAbbr) + '</span>' +
-        '<span class="props-stattype">' + r.statType + (isLock ? ' 🔒' : '') + '</span>' +
+        '<span class="props-stattype">' + r.statType + (isLock ? ' 🔒' : '') + (r.inj === 'questionable' ? ' <span class="inj-tag">Q</span>' : '') + '</span>' +
       '</div>' +
       '<div class="props-conf"><span class="conf-pip conf-' + r.tier + '"></span>' + r.conf + '%</div>' +
       '<div class="prop-proj"><span class="cell-lbl">proj</span>' + r.projYds + '<span class="unit">yd</span></div>' +
@@ -3073,8 +3214,8 @@ function renderGameCard(g) {
   }
 
   // Per-team actual score color
-  const awayHit = ad != null && Math.abs(ad) <= HIT_TOTAL_TOL;
-  const homeHit = hd != null && Math.abs(hd) <= HIT_TOTAL_TOL;
+  const awayHit = ad != null && Math.abs(ad) <= hitTol('pts');
+  const homeHit = hd != null && Math.abs(hd) <= hitTol('pts');
 
   return '' +
     '<div class="game ' + winClass + '" data-id="' + escapeHtml(g.id) + '">' +
@@ -3086,20 +3227,20 @@ function renderGameCard(g) {
         '</div>' +
         '<div class="total-proj">' +
           '<div class="num">' + proj.total.toFixed(1) + '</div>' +
-          '<div class="lbl">Proj Total' + (actualTotal != null ? ' · act ' + actualTotal + ' ' + deltaBadge(totalDelta, HIT_TOTAL_TOL, 1) : '') + '</div>' +
+          '<div class="lbl">Proj Total' + (actualTotal != null ? ' · act ' + actualTotal + ' ' + deltaBadge(totalDelta, hitTol('pts'), 1) : '') + '</div>' +
         '</div>' +
       '</div>' +
       '<div class="team-totals">' +
         '<div class="tt away">' +
           '<div class="team">' + escapeHtml(g.away.abbr) + (proj.projWinner === 'away' ? ' ▸' : '') + '</div>' +
           '<div class="pts">' + proj.awayPts.toFixed(1) + '</div>' +
-          (g.completed ? '<div class="actual-line">act <b style="color:' + (awayHit ? 'var(--accent)' : 'var(--hot)') + '">' + g.away.score + '</b> ' + deltaBadge(ad, HIT_TOTAL_TOL, 1) + '</div>' : '') +
+          (g.completed ? '<div class="actual-line">act <b style="color:' + (awayHit ? 'var(--accent)' : 'var(--hot)') + '">' + g.away.score + '</b> ' + deltaBadge(ad, hitTol('pts'), 1) + '</div>' : '') +
         '</div>' +
         '<div class="divider"></div>' +
         '<div class="tt home">' +
           '<div class="team">' + (proj.projWinner === 'home' ? '◂ ' : '') + escapeHtml(g.home.abbr) + '</div>' +
           '<div class="pts">' + proj.homePts.toFixed(1) + '</div>' +
-          (g.completed ? '<div class="actual-line">act <b style="color:' + (homeHit ? 'var(--accent)' : 'var(--hot)') + '">' + g.home.score + '</b> ' + deltaBadge(hd, HIT_TOTAL_TOL, 1) + '</div>' : '') +
+          (g.completed ? '<div class="actual-line">act <b style="color:' + (homeHit ? 'var(--accent)' : 'var(--hot)') + '">' + g.home.score + '</b> ' + deltaBadge(hd, hitTol('pts'), 1) + '</div>' : '') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -3146,9 +3287,9 @@ function renderGameDetail(main, g) {
         (g.completed ?
           '<div class="hero-actual-row">' +
             '<span class="actual-label">Actual</span>' +
-            '<span><b>' + g.away.score + '</b> ' + deltaBadge(aDelta, HIT_TOTAL_TOL, 1) +
-              ' &nbsp;·&nbsp; <b>' + actualTotal + '</b> ' + deltaBadge(totalDelta, HIT_TOTAL_TOL, 1) +
-              ' &nbsp;·&nbsp; <b>' + g.home.score + '</b> ' + deltaBadge(hDelta, HIT_TOTAL_TOL, 1) + '</span>' +
+            '<span><b>' + g.away.score + '</b> ' + deltaBadge(aDelta, hitTol('pts'), 1) +
+              ' &nbsp;·&nbsp; <b>' + actualTotal + '</b> ' + deltaBadge(totalDelta, hitTol('pts'), 1) +
+              ' &nbsp;·&nbsp; <b>' + g.home.score + '</b> ' + deltaBadge(hDelta, hitTol('pts'), 1) + '</span>' +
           '</div>' : '') +
       '</div>' +
       renderScoreSection(g, proj, sec.score) +
@@ -3173,8 +3314,8 @@ function renderScoreSection(g, proj, isOpen) {
 
   const ad = g.completed ? g.away.score - proj.awayPts : null;
   const hd = g.completed ? g.home.score - proj.homePts : null;
-  const aHit = ad != null && Math.abs(ad) <= HIT_TOTAL_TOL;
-  const hHit = hd != null && Math.abs(hd) <= HIT_TOTAL_TOL;
+  const aHit = ad != null && Math.abs(ad) <= hitTol('pts');
+  const hHit = hd != null && Math.abs(hd) <= hitTol('pts');
 
   return '' +
     '<div class="section ' + (isOpen ? 'open' : '') + '" data-section="score">' +
@@ -3228,7 +3369,7 @@ function renderScoreSection(g, proj, isOpen) {
               'win prob = Φ(margin / ' + MARGIN_SIGMA + ')<br>' +
               'data sources: ' + (state.week > 1 ? 'weeks 1–' + (state.week - 1) + ' of ' + state.season + ' + all of ' + (state.season - 1) : 'all of ' + (state.season - 1) + ' (no prior weeks this season)') + '<br>' +
               'prior season blend weight: ' + (priorSeasonWeight() * 100).toFixed(0) + '% (Wk ' + state.week + ')<br>' +
-              'within ±' + HIT_TOTAL_TOL + ' = HIT' +
+              'within ±' + hitTol('pts') + ' = HIT' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -3250,7 +3391,7 @@ function renderTeamYdsSection(g, proj, isOpen, expanded) {
       const projYds = cat === 'pass' ? projPass : projRush;
       const actualYds = g.teamYards[team.id] ? (cat === 'pass' ? g.teamYards[team.id].passYds : g.teamYards[team.id].rushYds) : null;
       const delta = actualYds != null ? actualYds - projYds : null;
-      const hit = delta != null ? Math.abs(delta) <= HIT_YDS_TOL : null;
+      const hit = delta != null ? Math.abs(delta) <= hitTol('yds') : null;
       const rowKey = 'ty-' + side + '-' + cat;
       const isRowOpen = !!expanded[rowKey];
 
@@ -3272,7 +3413,7 @@ function renderTeamYdsSection(g, proj, isOpen, expanded) {
           '<div class="m-actual">' +
             '<div class="m-row"><span class="k">Actual</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + actualYds + '</span></div>' +
             '<div class="m-row"><span class="k">Δ vs proj</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + fmtSigned(delta, 0) + '</span></div>' +
-            '<div class="m-row"><span class="k">Hit (±' + HIT_YDS_TOL + ')</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + (hit ? 'YES' : 'NO') + '</span></div>' +
+            '<div class="m-row"><span class="k">Hit (±' + hitTol('yds') + ')</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + (hit ? 'YES' : 'NO') + '</span></div>' +
           '</div>' : '');
 
       rows.push(
@@ -3317,21 +3458,25 @@ function renderPropsSection(g, proj, isOpen, expanded) {
     for (const side of ['away','home']) {
       const team = g[side];
       const ctx = playerProjContext(g, proj, side);
-      const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos);
+      const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos)
+        // Injury gate: OUT players are unbettable pre-game (box score governs completed games)
+        .filter(p => g.completed || playerInjury(g, p) !== 'out');
       teamPlayers.sort((a, b) => playerProjVolume(b, pos, ctx) - playerProjVolume(a, pos, ctx));
       const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
       const tops = teamPlayers.slice(0, limit);
 
       for (const p of tops) {
         const ppr = projectPlayer(p);
+        const inj = playerInjury(g, p);
         for (const stat of statLinesForPosition(pos, ppr.blended)) {
           const got = getPlayerStatProj(p, stat, ctx);
           if (got.yds <= 0 && !g.completed) continue; // skip empty pre-game projections
+          const pc = propConfidence(p, stat, pos, g.completed ? null : inj);
           totalRows++;
           const projYds = got.yds;
           const actual = getPlayerStatActual(p, stat);
           const delta = g.completed ? actual - projYds : null;
-          const hit = delta != null ? Math.abs(delta) <= HIT_YDS_TOL : null;
+          const hit = delta != null ? Math.abs(delta) <= hitTol('yds') : null;
           const rowKey = 'pp-' + pos + '-' + p.id + '-' + stat;
           const isRowOpen = !!expanded[rowKey];
           const baseKey = stat + 'Yds';
@@ -3348,6 +3493,8 @@ function renderPropsSection(g, proj, isOpen, expanded) {
               '<div class="m-row"><span class="k">Opp ' + (stat === 'rush' ? 'rush' : 'pass') + '-D</span><span class="v">×' + got.mx.mult.toFixed(2) + '</span></div>' +
               '<div class="m-row"><span class="k">Weather</span><span class="v">×' + got.wxMult.toFixed(2) + '</span></div>' +
               '<div class="m-row"><span class="k">Environment</span><span class="v">×' + got.envMult.toFixed(2) + '</span></div>' +
+              '<div class="m-row"><span class="k">Weekly volatility σ (' + pc.sampleN + 'g' + (pc.playerSigma != null ? ', player ' + pc.playerSigma.toFixed(0) : '') + ', shrunk to pos prior)</span><span class="v">' + pc.sigma.toFixed(0) + ' yds</span></div>' +
+              '<div class="m-row"><span class="k">P(±' + hitTol('yds') + ' hit) = 2Φ(' + hitTol('yds') + '/σ)−1' + (!g.completed && inj === 'questionable' ? ' ×0.75 questionable' : '') + '</span><span class="v">' + pc.conf + '%</span></div>' +
               '<div class="m-row total"><span class="k">Projected ' + statTitle[stat].toLowerCase() + '</span><span class="v">' + projYds + '</span></div>';
           }
           if (g.completed) {
@@ -3355,14 +3502,14 @@ function renderPropsSection(g, proj, isOpen, expanded) {
               '<div class="m-actual">' +
                 '<div class="m-row"><span class="k">Actual ' + statTitle[stat].toLowerCase() + '</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + actual + '</span></div>' +
                 '<div class="m-row"><span class="k">Δ vs proj</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + fmtSigned(delta, 0) + '</span></div>' +
-                '<div class="m-row"><span class="k">Hit (±' + HIT_YDS_TOL + ')</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + (hit ? 'YES' : 'NO') + '</span></div>' +
+                '<div class="m-row"><span class="k">Hit (±' + hitTol('yds') + ')</span><span class="v" style="color:' + (hit ? 'var(--accent)' : 'var(--hot)') + '">' + (hit ? 'YES' : 'NO') + '</span></div>' +
               '</div>';
           }
 
           rows.push(
-            '<div class="prop-row ' + (isRowOpen ? 'expanded' : '') + (g.completed ? (hit ? ' is-hit' : ' is-miss') : '') + (proj.conf >= lockTh('yards') ? ' is-lock-hl' : '') + '" data-rowkey="' + rowKey + '">' +
+            '<div class="prop-row ' + (isRowOpen ? 'expanded' : '') + (g.completed ? (hit ? ' is-hit' : ' is-miss') : '') + (pc.conf >= lockTh('yards') && lockTh('yards') > 0 ? ' is-lock-hl' : '') + '" data-rowkey="' + rowKey + '">' +
               '<span class="pos-tag pos-' + pos + '">' + pos + '</span>' +
-              '<div class="prop-name">' + escapeHtml(p.name) + '<span class="prop-team">' + escapeHtml(p.abbr) + ' · ' + STAT_LABEL[stat] + ' · conf ' + proj.conf + '%' + (proj.conf >= lockTh('yards') ? ' 🔒' : '') + '</span></div>' +
+              '<div class="prop-name">' + escapeHtml(p.name) + '<span class="prop-team">' + escapeHtml(p.abbr) + ' · ' + STAT_LABEL[stat] + ' · conf ' + pc.conf + '%' + (pc.conf >= lockTh('yards') && lockTh('yards') > 0 ? ' 🔒' : '') + (!g.completed && inj === 'questionable' ? ' <span class="inj-tag">Q</span>' : '') + '</span></div>' +
               '<div class="prop-proj"><span class="cell-lbl">proj</span>' + projYds + '<span class="unit">yd</span></div>' +
               (g.completed
                 ? '<div class="prop-actual ' + (hit ? 'hit' : 'miss') + '"><span class="cell-lbl">act</span>' + actual + ' ' + fmtSigned(delta, 0) + '</div>'
@@ -3373,7 +3520,7 @@ function renderPropsSection(g, proj, isOpen, expanded) {
               '<div class="math">' +
                 '<div class="m-title">' + escapeHtml(p.name) + ' · ' + statTitle[stat] + '</div>' +
                 breakdown +
-                '<div class="m-formula">±' + HIT_YDS_TOL + ' of projection counts as a HIT · pass/rush/rec graded separately</div>' +
+                '<div class="m-formula">±' + hitTol('yds') + ' of projection counts as a HIT · pass/rush/rec graded separately</div>' +
               '</div>' +
             '</div>'
           );
@@ -3446,7 +3593,7 @@ function renderTDSection(g, proj, isOpen, expanded) {
     return '' +
       '<div class="td-row ' + (isRowOpen ? 'expanded' : '') + (c._td.prob >= lockTh('anytimeTd') ? ' is-lock-hl' : '') + '" data-rowkey="' + rowKey + '">' +
         '<span class="pos-tag pos-' + c.position + '">' + c.position + '</span>' +
-        '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + '</span></div>' +
+        '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + (!g.completed && c._inj === 'questionable' ? ' <span class="inj-tag">Q</span>' : '') + '</span></div>' +
         '<span class="td-conf-dot td-conf-' + tier + '"></span>' +
         '<div class="td-pct">' + c._td.prob + '%</div>' +
         result +
@@ -3699,8 +3846,8 @@ function catDesc(k) {
   if (k === 'winner') return 'Projected winner correct' + gate;
   if (k === 'anytimeTd') return 'Scored a rush/rec TD (never passing)' + gate;
   if (k === 'firstTd') return 'Pick scored the actual first rush/rec TD' + gate;
-  if (['total','awayPts','homePts'].includes(k)) return 'Within ±' + HIT_TOTAL_TOL + ' pts' + gate;
-  return 'Within ±' + HIT_YDS_TOL + ' yds' + gate;
+  if (['total','awayPts','homePts'].includes(k)) return 'Within ±' + hitTol('pts') + ' pts' + gate;
+  return 'Within ±' + hitTol('yds') + ' yds' + gate;
 }
 // Category entries sorted for display: All Locks pinned first, the rest by
 // success rate (desc), empty categories last.
@@ -3735,20 +3882,111 @@ function catRateTag(catKey) {
   return r ? ' <span class="cat-rate">' + r.pct + '% hit · ' + r.n + ' ' + r.src + '</span>' : '';
 }
 
+// ---- Threshold auto-tune ----
+// Pool of graded units for one threshold key, from the richest source available.
+function unitsForThresholdKey(thKey) {
+  let units = [], src = null;
+  if (state.seasonScan && state.seasonScan.season === state.season) {
+    for (const w of state.seasonScan.weeks) for (const u of w.units) {
+      if (CAT_META[u.cat] && CAT_META[u.cat].th === thKey) units.push(u);
+    }
+    src = state.season + ' season scan';
+  } else if (state.loaded && state.games.some(g => g.completed)) {
+    units = gradeWeek().units.filter(u => CAT_META[u.cat] && CAT_META[u.cat].th === thKey);
+    src = 'W' + state.week + ' only';
+  }
+  return { units, src };
+}
+
+// Find the threshold whose resulting hit rate lands closest to targetPct.
+// Ties prefer the larger sample (lower threshold). Returns null when no data.
+function findThresholdForTarget(thKey, targetPct) {
+  const { units, src } = unitsForThresholdKey(thKey);
+  if (!units.length) return null;
+  // Sort by metric desc; suffix arrays make every candidate threshold O(1)
+  const sorted = units.slice().sort((a, b) => b.metric - a.metric);
+  const hitsPrefix = [0];
+  for (let i = 0; i < sorted.length; i++) hitsPrefix.push(hitsPrefix[i] + (sorted[i].hit ? 1 : 0));
+  let best = null;
+  for (let t = 0; t <= 95; t++) {
+    // count of units with metric >= t  (sorted desc → first idx where metric < t)
+    let lo = 0, hi = sorted.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid].metric >= t) lo = mid + 1; else hi = mid; }
+    const n = lo;
+    if (!n) break;
+    const hit = hitsPrefix[n];
+    const rate = 100 * hit / n;
+    const diff = Math.abs(rate - targetPct);
+    if (!best || diff < best.diff - 1e-9 || (Math.abs(diff - best.diff) < 1e-9 && n > best.n)) {
+      best = { t, rate, hit, n, diff, src };
+    }
+  }
+  return best;
+}
+
+// Find the ± tolerance whose hit rate lands closest to targetPct. Unlike lock
+// thresholds, tolerance doesn't change WHICH bets qualify — only how forgiving
+// "correct" is — so the sample size stays constant and the rate is monotonic.
+// Only units that stored a raw miss distance (adelta) can be tuned; older
+// stored scans need a re-scan first.
+function findToleranceForTarget(tolKey, targetPct) {
+  let units = [], src = null;
+  if (state.seasonScan && state.seasonScan.season === state.season) {
+    for (const w of state.seasonScan.weeks) for (const u of w.units) units.push(u);
+    src = state.season + ' season scan';
+  } else if (state.loaded && state.games.some(g => g.completed)) {
+    units = gradeWeek().units;
+    src = 'W' + state.week + ' only';
+  }
+  const pool = units.filter(u => TOL_KEY_BY_CAT[u.cat] === tolKey && u.adelta != null && unitQualifies(u));
+  if (!pool.length) return null;
+  const step = tolKey === 'pts' ? 0.5 : 1;
+  const maxT = tolKey === 'pts' ? 21 : 40;
+  let best = null;
+  for (let t = step; t <= maxT; t += step) {
+    const hit = pool.reduce((c, u) => c + (u.adelta <= t ? 1 : 0), 0);
+    const rate = 100 * hit / pool.length;
+    const diff = Math.abs(rate - targetPct);
+    // ties prefer the STRICTER (smaller) tolerance
+    if (!best || diff < best.diff - 1e-9) best = { t, rate, hit, n: pool.length, diff, src };
+  }
+  return best;
+}
+
 function unitQualifies(u) {
   return u.metric >= lockTh(CAT_META[u.cat].th);
+}
+// Which tolerance governs a category ('pts' | 'yds' | null for binary bets)
+const TOL_KEY_BY_CAT = {
+  total: 'pts', awayPts: 'pts', homePts: 'pts',
+  teamPass: 'yds', teamRush: 'yds',
+  playerPass: 'yds', playerRush: 'yds', playerRec: 'yds',
+};
+// Hit under CURRENT tolerances. Units store the raw miss distance (adelta), so
+// tolerance changes re-grade instantly. Falls back to the baked hit for units
+// stored before adelta existed (re-scan to refresh those).
+function unitHit(u) {
+  const tk = TOL_KEY_BY_CAT[u.cat];
+  if (tk && u.adelta != null) return u.adelta <= hitTol(tk);
+  return !!u.hit;
+}
+function catLabel(k) {
+  if (['total','awayPts','homePts'].includes(k)) return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('pts'));
+  if (TOL_KEY_BY_CAT[k] === 'yds') return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('yds'));
+  return CAT_META[k].label;
 }
 // Aggregate raw units into per-category records, applying CURRENT thresholds
 function aggregateUnits(units) {
   const cats = {};
-  for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: CAT_META[k].label, desc: catDesc(k) };
+  for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: catLabel(k), desc: catDesc(k) };
   const all = { hit: 0, n: 0, label: 'All Locks', desc: 'Every qualifying lock across all categories combined' };
   for (const u of units) {
     if (!cats[u.cat] || !unitQualifies(u)) continue;
+    const h = unitHit(u);
     cats[u.cat].n++;
-    if (u.hit) cats[u.cat].hit++;
+    if (h) cats[u.cat].hit++;
     all.n++;
-    if (u.hit) all.hit++;
+    if (h) all.hit++;
   }
   // Rebuild with All Locks pinned FIRST so every consumer lists it at the top
   return Object.assign({ allLocks: all }, cats);
@@ -3782,7 +4020,7 @@ function gradeWeek() {
     {
       const actual = g.away.score + g.home.score;
       const delta = actual - proj.total;
-      units.push({ cat: 'total', metric: proj.conf, hit: Math.abs(delta) <= HIT_TOTAL_TOL, game: gm,
+      units.push({ cat: 'total', metric: proj.conf, adelta: Math.abs(delta), hit: Math.abs(delta) <= hitTol('pts'), game: gm,
         desc: proj.total.toFixed(1) + ' → ' + actual + ' (' + fmtSigned(delta, 1) + ') · conf ' + proj.conf + '%' });
     }
     for (const item of [
@@ -3791,7 +4029,7 @@ function gradeWeek() {
     ]) {
       const [abbr, projPts, actualPts, k] = item;
       const delta = actualPts - projPts;
-      units.push({ cat: k, metric: proj.conf, hit: Math.abs(delta) <= HIT_TOTAL_TOL, game: gm,
+      units.push({ cat: k, metric: proj.conf, adelta: Math.abs(delta), hit: Math.abs(delta) <= hitTol('pts'), game: gm,
         desc: abbr + ' ' + projPts.toFixed(1) + ' → ' + actualPts + ' (' + fmtSigned(delta, 1) + ') · conf ' + proj.conf + '%' });
     }
     for (const side of ['away','home']) {
@@ -3800,9 +4038,9 @@ function gradeWeek() {
       if (!ya) continue;
       const projPass = side === 'away' ? proj.awayPassYds : proj.homePassYds;
       const projRush = side === 'away' ? proj.awayRushYds : proj.homeRushYds;
-      units.push({ cat: 'teamPass', metric: proj.conf, hit: Math.abs(ya.passYds - projPass) <= HIT_YDS_TOL, game: gm,
+      units.push({ cat: 'teamPass', metric: proj.conf, adelta: Math.abs(ya.passYds - projPass), hit: Math.abs(ya.passYds - projPass) <= hitTol('yds'), game: gm,
         desc: team.abbr + ' pass ' + projPass + ' → ' + ya.passYds + ' (' + fmtSigned(ya.passYds - projPass, 0) + ') · conf ' + proj.conf + '%' });
-      units.push({ cat: 'teamRush', metric: proj.conf, hit: Math.abs(ya.rushYds - projRush) <= HIT_YDS_TOL, game: gm,
+      units.push({ cat: 'teamRush', metric: proj.conf, adelta: Math.abs(ya.rushYds - projRush), hit: Math.abs(ya.rushYds - projRush) <= hitTol('yds'), game: gm,
         desc: team.abbr + ' rush ' + projRush + ' → ' + ya.rushYds + ' (' + fmtSigned(ya.rushYds - projRush, 0) + ') · conf ' + proj.conf + '%' });
     }
 
@@ -3821,10 +4059,11 @@ function gradeWeek() {
             for (const stat of statLinesForPosition(pos, ppr.blended)) {
               const got = getPlayerStatProj(p, stat, ctx);
               if (got.yds <= 0) continue;
+              const pc = propConfidence(p, stat, pos, null);
               const actual = getPlayerStatActual(p, stat);
               const delta = actual - got.yds;
-              units.push({ cat: statCat[stat], metric: proj.conf, hit: Math.abs(delta) <= HIT_YDS_TOL, game: gm,
-                desc: p.name + ' ' + STAT_LABEL[stat].toLowerCase() + ' ' + got.yds + ' → ' + actual + ' (' + fmtSigned(delta, 0) + ') · conf ' + proj.conf + '%' });
+              units.push({ cat: statCat[stat], metric: pc.conf, adelta: Math.abs(delta), hit: Math.abs(delta) <= hitTol('yds'), game: gm,
+                desc: p.name + ' ' + STAT_LABEL[stat].toLowerCase() + ' ' + got.yds + ' → ' + actual + ' (' + fmtSigned(delta, 0) + ') · conf ' + pc.conf + '%' });
             }
           }
         }
@@ -3860,7 +4099,7 @@ function gradeWeek() {
     const gm = entry.g.away.abbr + '@' + entry.g.home.abbr;
     const props = units
       .filter(u => u.game === gm && unitQualifies(u))
-      .map(u => ({ k: CAT_META[u.cat].short, v: u.desc, hit: u.hit, cat: u.cat }));
+      .map(u => ({ k: CAT_META[u.cat].short, v: u.desc, hit: unitHit(u), cat: u.cat }));
     return { g: entry.g, completed: true, props };
   });
 
@@ -4024,7 +4263,7 @@ let _ssAggMemo = { key: null, val: null };
 function seasonScanAggregate() {
   const ss = state.seasonScan;
   if (!ss) return null;
-  const key = ss.season + ':' + ss.weeks.length + ':' + JSON.stringify((state.settings && state.settings.lockThresholds) || {});
+  const key = ss.season + ':' + ss.weeks.length + ':' + JSON.stringify((state.settings && state.settings.lockThresholds) || {}) + ':' + JSON.stringify((state.settings && state.settings.hitTol) || {});
   if (_ssAggMemo.key === key) return _ssAggMemo.val;
   const allUnits = [];
   for (const w of ss.weeks) for (const u of w.units) allUnits.push(u);
@@ -4261,15 +4500,15 @@ function renderFacts(main) {
     // Per-week bars for the SELECTED category + tap-to-expand lock lists
     const wkRows = ss.weeks.filter(w => w.games > 0).map(w => {
       const catUnits = w.units.filter(u => (selCat === 'allLocks' || u.cat === selCat) && unitQualifies(u));
-      const hit = catUnits.filter(u => u.hit).length;
+      const hit = catUnits.filter(u => unitHit(u)).length;
       const n = catUnits.length;
       const pct = n ? (100 * hit / n) : 0;
       const isOpen = !!(state.scanWeekOpen && state.scanWeekOpen[w.week]);
       const drill = isOpen && n ? '<div class="wk-drill">' + catUnits.map(u =>
-        '<div class="wk-drill-row ' + (u.hit ? 'is-hit' : 'is-miss') + '">' +
+        '<div class="wk-drill-row ' + (unitHit(u) ? 'is-hit' : 'is-miss') + '">' +
           '<span class="wk-drill-game">' + escapeHtml(u.game) + '</span>' +
           '<span class="wk-drill-desc">' + (selCat === 'allLocks' ? '<b style="color:var(--ink)">' + escapeHtml(CAT_META[u.cat].short) + '</b> · ' : '') + escapeHtml(u.desc) + '</span>' +
-          '<span class="wk-drill-res">' + (u.hit ? '✓' : '✗') + '</span>' +
+          '<span class="wk-drill-res">' + (unitHit(u) ? '✓' : '✗') + '</span>' +
         '</div>').join('') + '</div>'
         : (isOpen ? '<div class="wk-drill"><div class="gb-empty" style="padding:8px 12px">No ' + escapeHtml(scanCatShort(selCat)) + ' locks this week at current threshold.</div></div>' : '');
       return '<div class="fact-hist-row tappable" data-scanweek="' + w.week + '">' +
@@ -4420,8 +4659,9 @@ function renderFacts(main) {
 // Player Props tab — flat, filterable list of every player prop
 // ============================================================================
 function confTier(conf) {
-  if (conf >= 70) return 'high';
-  if (conf >= 50) return 'med';
+  // Bands calibrated to honest ±10 hit probabilities (see propConfidence)
+  if (conf >= 50) return 'high';
+  if (conf >= 35) return 'med';
   return 'low';
 }
 function confTierLabel(tier) {
@@ -4434,30 +4674,31 @@ function gatherAllProps() {
   for (const g of state.games) {
     const proj = projectGame(g);
     if (!proj) continue;
-    const conf = proj.conf;
-    const tier = confTier(conf);
     for (const pos of ['QB','RB','WR','TE']) {
       for (const side of ['away','home']) {
         const team = g[side];
         const ctx = playerProjContext(g, proj, side);
-        const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos);
+        const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos)
+          .filter(p => g.completed || playerInjury(g, p) !== 'out');
         teamPlayers.sort((a, b) => playerProjVolume(b, pos, ctx) - playerProjVolume(a, pos, ctx));
         const limit = pos === 'WR' ? 3 : pos === 'RB' ? 2 : 1;
         for (const p of teamPlayers.slice(0, limit)) {
           const ppr = projectPlayer(p);
+          const inj = g.completed ? null : playerInjury(g, p);
           for (const stat of statLinesForPosition(pos, ppr.blended)) {
             const got = getPlayerStatProj(p, stat, ctx);
             if (got.yds <= 0 && !g.completed) continue;
+            const pc = propConfidence(p, stat, pos, inj);
             const projYds = got.yds;
             const actual = g.completed ? getPlayerStatActual(p, stat) : null;
             const delta = actual != null ? actual - projYds : null;
-            const hit = delta != null ? Math.abs(delta) <= HIT_YDS_TOL : null;
+            const hit = delta != null ? Math.abs(delta) <= hitTol('yds') : null;
             out.push({
               gameId: g.id, completed: g.completed,
               name: p.name, abbr: p.abbr, teamId: p.team, position: pos,
               oppAbbr: side === 'away' ? g.home.abbr : g.away.abbr,
               projYds, actual, delta, hit,
-              conf, tier,
+              conf: pc.conf, tier: confTier(pc.conf), inj,
               stat, statType: STAT_LABEL[stat],
             });
           }
@@ -4503,7 +4744,7 @@ function renderGameBets(main) {
       }
       const actualTotal = g.away.score + g.home.score;
       totErr += Math.abs(actualTotal - proj.total);
-      if (Math.abs(actualTotal - proj.total) <= HIT_TOTAL_TOL) totHitCount++;
+      if (Math.abs(actualTotal - proj.total) <= hitTol('pts')) totHitCount++;
       for (const c of locks) { lockN++; if (c._scored) lockHit++; }
       if (firstPick) {
         const totalLambda = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
@@ -4535,7 +4776,7 @@ function renderGameBets(main) {
       return '<div class="gb-pick-row">' +
         '<span class="pos-tag pos-' + c.position + '">' + c.position + '</span>' +
         '<span class="gb-star" style="visibility:hidden">★</span>' +
-        '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + '</span></div>' +
+        '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + (!g.completed && c._inj === 'questionable' ? ' <span class="inj-tag">Q</span>' : '') + '</span></div>' +
         '<div class="gb-prob">' + c._td.prob + '%</div>' +
         result +
       '</div>';
@@ -4601,7 +4842,7 @@ function renderGameBets(main) {
       '</div>' +
       '<div class="setting-note" style="padding:0 14px 14px;margin:0">' +
         '<b style="color:var(--ink)">Avg total miss</b> = on average, the projected combined score was off by this many points (was labeled “Total MAE”). ' +
-        '±' + HIT_TOTAL_TOL + ' hit rate this week: ' + totHitRate + '%.' +
+        '±' + hitTol('pts') + ' hit rate this week: ' + totHitRate + '%.' +
       '</div>' +
     '</div>';
 
@@ -4685,13 +4926,17 @@ function syncSettingsUI() {
   });
   document.getElementById('dk-detail').style.display = state.settings.dkEnabled ? '' : 'none';
   const acc = document.getElementById('acc-sync-toggle'); if (acc) acc.checked = !!state.settings.accSyncEnabled;
-  document.querySelectorAll('.lock-th-row input').forEach(inp => {
+  document.querySelectorAll('.lock-th-row input[data-lockth]').forEach(inp => {
     inp.value = lockTh(inp.dataset.lockth);
+  });
+  document.querySelectorAll('.lock-th-row input[data-hittol]').forEach(inp => {
+    inp.value = hitTol(inp.dataset.hittol);
   });
   updateDkQuotaEstimate();
   updateDkLastPullLabel();
   updateDkQuotaCard();
   updateFirebaseStatus();
+  loadRemoteDKStatus(); // async: pulls background quota + heartbeat from Firebase
 }
 
 function updateDkQuotaCard() {
@@ -4703,23 +4948,28 @@ function updateDkQuotaCard() {
   if (r == null && u == null) {
     valEl.textContent = '— / —';
     valEl.className = 'dk-quota-value';
-    metaEl.textContent = 'Tap “Refresh quota only” below, or pull odds to update.';
+    metaEl.textContent = 'Waiting for first pull or background run.';
     return;
   }
-  const total = (r != null && u != null) ? r + u : null;
-  if (r != null && total != null) {
-    valEl.textContent = r + ' / ' + total;
+  if (u != null && r != null) {
+    valEl.textContent = u + ' used of ' + (u + r) + ' (' + r + ' left)';
   } else if (r != null) {
     valEl.textContent = r + ' left';
   } else {
     valEl.textContent = u + ' used';
   }
-  // Color-code based on remaining
   valEl.className = 'dk-quota-value' + (r != null && r < 25 ? ' critical' : (r != null && r < 100 ? ' low' : ''));
   const parts = [];
   if (state.dkQuotaLastUsed != null) parts.push('last call cost ' + state.dkQuotaLastUsed);
-  if (state.dkQuotaCheckedAt) parts.push('as of ' + new Date(state.dkQuotaCheckedAt).toLocaleTimeString());
-  metaEl.textContent = parts.length ? parts.join(' · ') : 'From the-odds-api response headers.';
+  if (state.dkQuotaCheckedAt) parts.push('as of ' + new Date(state.dkQuotaCheckedAt).toLocaleString());
+  if (state.dkLastPullAt) parts.push('last odds ' + new Date(state.dkLastPullAt).toLocaleString());
+  if (state.dkHeartbeatAt) {
+    const hrs = (Date.now() - state.dkHeartbeatAt) / 3600000;
+    parts.push('automation ' + (hrs < 1 ? '<1h' : Math.round(hrs) + 'h') + ' ago' + (hrs > 13 ? ' ⚠ stale' : ' ✓'));
+  } else {
+    parts.push('automation: no heartbeat yet');
+  }
+  metaEl.textContent = parts.join(' · ');
 }
 
 function updateDkQuotaEstimate() {
@@ -4804,9 +5054,20 @@ document.getElementById('dk-master-toggle').addEventListener('change', e => {
   document.getElementById('dk-detail').style.display = e.target.checked ? '' : 'none';
   logEvent('info', 'cfg', 'DK master → ' + (e.target.checked ? 'on' : 'off'));
 });
+// Push DK automation config to Firestore so the GitHub Action can read it
+async function pushDkConfigToFirestore() {
+  try {
+    await fsSetDoc('gridline/config', {
+      dkAutoPullEnabled: !!state.settings.dkAutoPullEnabled,
+      dkMarkets: JSON.stringify(selectedMarkets()),
+    });
+    logEvent('info', 'DK', 'automation config synced to Firebase');
+  } catch (e) { logEvent('warn', 'DK', 'config sync failed: ' + e.message); }
+}
 document.getElementById('dk-auto-toggle').addEventListener('change', e => {
   state.settings.dkAutoPullEnabled = e.target.checked; saveSettings();
-  logEvent('info', 'cfg', 'DK auto-pull → ' + (e.target.checked ? 'on' : 'off'));
+  logEvent('info', 'cfg', 'DK background auto-pull → ' + (e.target.checked ? 'on' : 'off'));
+  pushDkConfigToFirestore();
 });
 document.querySelectorAll('.market-toggle input').forEach(cb => {
   cb.addEventListener('change', () => {
@@ -4814,6 +5075,7 @@ document.querySelectorAll('.market-toggle input').forEach(cb => {
     saveSettings();
     updateDkQuotaEstimate();
     logEvent('info', 'cfg', 'market ' + cb.dataset.market + ' → ' + (cb.checked ? 'on' : 'off'));
+    pushDkConfigToFirestore();
   });
 });
 document.getElementById('dk-manual-pull').addEventListener('click', async () => {
@@ -4867,7 +5129,73 @@ document.getElementById('acc-sync-toggle').addEventListener('change', e => {
   state.settings.accSyncEnabled = e.target.checked; saveSettings();
   logEvent('info', 'cfg', 'accuracy sync → ' + (e.target.checked ? 'on' : 'off'));
 });
-document.querySelectorAll('.lock-th-row input').forEach(inp => {
+// ---- Auto-tune: find threshold for a target hit rate ----
+const TUNE_LABEL = { winner: 'Winner pick', anytimeTd: 'Anytime TD', firstTd: 'First TD', yards: 'Player yards', lines: 'Game lines', tolPts: '± points (scores/totals)', tolYds: '± yards (yardage props)' };
+document.getElementById('tune-find').addEventListener('click', () => {
+  const key = document.getElementById('tune-key').value;
+  const target = Math.max(1, Math.min(99, Math.round(+document.getElementById('tune-target').value || 0)));
+  const resEl = document.getElementById('tune-result');
+  if (!target) { resEl.innerHTML = '<div class="setting-note" style="color:var(--hot)">Enter a target hit rate % first.</div>'; return; }
+  const isTol = key === 'tolPts' || key === 'tolYds';
+  const tolKey = key === 'tolPts' ? 'pts' : 'yds';
+  const best = isTol ? findToleranceForTarget(tolKey, target) : findThresholdForTarget(key, target);
+  if (!best) {
+    resEl.innerHTML = '<div class="setting-note" style="color:var(--hot)">No graded data to tune against — run a season scan (Facts tab) or load a completed week first.' + (isTol ? ' (Older stored scans lack miss-distance data — re-scan once.)' : '') + '</div>';
+    return;
+  }
+  const small = best.n < 20 ? '<div class="tp-warn">⚠ Small sample — ' + best.n + ' bets is thin evidence; this rate could swing hard with more data.</div>' : '';
+  const valueTxt = isTol ? '±' + best.t + ' ' + tolKey : best.t + '%';
+  resEl.innerHTML =
+    '<div class="tune-preview">' +
+      '<div>' + TUNE_LABEL[key] + ' · target ' + target + '%</div>' +
+      '<div>Closest: ' + (isTol ? 'tolerance' : 'threshold') + ' <span class="tp-big">' + valueTxt + '</span> → hits <span class="tp-big">' + best.rate.toFixed(1) + '%</span></div>' +
+      '<div>Sample size: <b>' + best.n + ' bets</b> (' + best.hit + ' hit / ' + (best.n - best.hit) + ' miss) · source: ' + escapeHtml(best.src) + '</div>' +
+      small +
+      '<div class="tune-actions">' +
+        '<button class="chip" id="tune-apply" data-key="' + key + '" data-t="' + best.t + '">Apply ' + valueTxt + '</button>' +
+        '<button class="chip" id="tune-cancel">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.getElementById('tune-apply').addEventListener('click', (e) => {
+    const k = e.target.dataset.key, v = +e.target.dataset.t;
+    if (k === 'tolPts' || k === 'tolYds') {
+      const tk = k === 'tolPts' ? 'pts' : 'yds';
+      if (!state.settings.hitTol) state.settings.hitTol = {};
+      state.settings.hitTol[tk] = v;
+      saveSettings();
+      const inp = document.querySelector('.lock-th-row input[data-hittol="' + tk + '"]');
+      if (inp) inp.value = v;
+      resEl.innerHTML = '<div class="setting-note" style="color:var(--accent)">Applied — ' + TUNE_LABEL[k] + ' is now ±' + v + '. All records re-graded.</div>';
+      logEvent('info', 'cfg', 'auto-tuned tolerance ' + tk + ' → ±' + v + ' (target ' + document.getElementById('tune-target').value + '%)');
+    } else {
+      if (!state.settings.lockThresholds) state.settings.lockThresholds = {};
+      state.settings.lockThresholds[k] = v;
+      saveSettings();
+      const inp = document.querySelector('.lock-th-row input[data-lockth="' + k + '"]');
+      if (inp) inp.value = v;
+      resEl.innerHTML = '<div class="setting-note" style="color:var(--accent)">Applied — ' + TUNE_LABEL[k] + ' lock threshold is now ' + v + '%. All records re-graded.</div>';
+      logEvent('info', 'cfg', 'auto-tuned ' + k + ' threshold → ' + v + '% (target ' + document.getElementById('tune-target').value + '%)');
+    }
+    render();
+  });
+  document.getElementById('tune-cancel').addEventListener('click', () => { resEl.innerHTML = ''; });
+});
+
+document.querySelectorAll('.lock-th-row input[data-hittol]').forEach(inp => {
+  inp.addEventListener('change', () => {
+    const key = inp.dataset.hittol;
+    let v = Math.max(0.5, Math.min(50, +inp.value || TOL_DEFAULTS[key]));
+    inp.value = v;
+    if (!state.settings.hitTol) state.settings.hitTol = {};
+    state.settings.hitTol[key] = v;
+    saveSettings();
+    const note = document.getElementById('lock-th-note');
+    if (note) note.textContent = 'Saved. All records re-graded with ±' + v + ' ' + key + '.';
+    logEvent('info', 'cfg', 'hit tolerance ' + key + ' → ±' + v);
+    render();
+  });
+});
+document.querySelectorAll('.lock-th-row input[data-lockth]').forEach(inp => {
   inp.addEventListener('change', () => {
     const key = inp.dataset.lockth;
     let v = Math.max(0, Math.min(99, Math.round(+inp.value || 0)));
@@ -4989,7 +5317,9 @@ async function initPaywall() {
 initPaywall();
 
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
-setTimeout(() => { maybeAutoPullDK().catch(e => logEvent('err', 'DK', 'auto-pull err: ' + e.message)); }, 600);
+// Background automation (GitHub Action) handles scheduled pulls now.
+// On boot: adopt any newer background odds + show automation status.
+setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); }, 600);
 </script>
 </body>
 </html>
