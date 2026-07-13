@@ -136,6 +136,15 @@ body{
 .cta .arrow{ font-size:19px; transition:transform .18s ease; }
 .cta:hover .arrow{ transform:translateX(4px); }
 
+/* second white link (free version) — same white treatment, gold FREE badge */
+.subcap{ margin:16px 0 6px; font-size:13px; color:var(--dim);
+  text-align:center; letter-spacing:.01em; }
+.cta2{ margin-top:0; gap:10px; justify-content:center; }
+.cta2 > span:nth-of-type(2){ flex:1; text-align:center; }
+.btnbadge{ font:800 10px/1 ui-monospace,Menlo,monospace; letter-spacing:.14em;
+  text-transform:uppercase; color:#0b0f14; background:var(--bulb);
+  border-radius:999px; padding:4px 8px; }
+
 /* ---------- footer ---------- */
 .foot{ margin-top:34px; border-top:1px solid var(--hair2); padding-top:22px; }
 .foot h2{ font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.22em;
@@ -242,6 +251,14 @@ var SITES = [
     lane: 'var(--mlb)',
     tagline: 'Prop projections for every slate, graded daily.',
     url: './premium.html',
+    // Second white link on the same card -> the free version (no duplicate logo).
+    secondary: {
+      key: 'mlbfree',
+      url: './diamondiqfree.html',
+      label: 'Free Version',
+      badge: 'Free',
+      caption: 'Same bets, Less IQ Power'
+    },
     accuracy: {
       // Diamond IQ / Fable engine — its own project. Reads the same
       // fable_settings/summary doc the app reads for its header record.
@@ -253,26 +270,15 @@ var SITES = [
     }
   },
   {
+    // Free version — reached via the second link on the Diamond IQ card, so it
+    // has no card of its own (hidden = not rendered, no logo repeated, no
+    // accuracy fetched). Kept here so it opens embedded and #mlbfree deep-links.
     key: 'mlbfree',
     name: 'Diamond IQ Free',
     sport: 'MLB',
     lane: 'var(--mlb)',
-    logoKey: 'mlb',            // reuse the Diamond IQ logo
-    badge: 'Free Trial',
-    cta: 'Start Free Trial',
-    tagline: 'A free daily sample \u2014 see the model in action.',
     url: './diamondiqfree.html',
-    accuracy: {
-      // The free trial tracks its OWN success rates, separate from premium.
-      // It reads a dedicated summary doc; the free app must publish there
-      // (same fable shape) so these numbers aren't a copy of premium's.
-      // Until it writes free_settings/summary this card shows "syncing".
-      mode: 'doc',
-      projectId: 'mlb-bets-d196c',
-      apiKey: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0',
-      path: 'free_settings/summary',    // TODO: free app must write its own summary here
-      format: 'fable'
-    }
+    hidden: true
   },
   {
     key: 'nfl',
@@ -455,6 +461,12 @@ async function fetchAccuracy(cfg){
 
 /* ---------- render ---------- */
 function cardShell(s){
+  var secondary = s.secondary ? (
+    '<div class="subcap">' + esc(s.secondary.caption) + '</div>' +
+    '<a class="cta cta2" href="' + esc(s.secondary.url) + '" data-app="' + esc(s.secondary.key) + '" target="_blank" rel="noopener">' +
+      '<span class="btnbadge">' + esc(s.secondary.badge) + '</span>' +
+      '<span>' + esc(s.secondary.label) + '</span><span class="arrow">&rarr;</span></a>'
+  ) : '';
   return '' +
   '<section class="card" style="--lane:' + s.lane + '">' +
     '<div class="logohead">' +
@@ -468,6 +480,7 @@ function cardShell(s){
         '<div class="readout"><div class="shimmer"></div></div></div>' +
       '<a class="cta" href="' + esc(s.url) + '" data-app="' + s.key + '" target="_blank" rel="noopener">' +
         '<span>' + esc(s.cta || ('Enter ' + s.name)) + '</span><span class="arrow">&rarr;</span></a>' +
+      secondary +
     '</div>' +
   '</section>';
 }
@@ -528,6 +541,9 @@ function byId(id){ return document.getElementById(id); }
 
 function openApp(key){
   var s = SITES.filter(function(x){ return x.key === key; })[0];
+  if (s) openAppObj(s);
+}
+function openAppObj(s){
   if (!s) return;
   currentSite = s;
   var view = byId('appview'), fr = byId('appiframe');
@@ -542,8 +558,8 @@ function openApp(key){
   view.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
   document.title = s.name + ' \u2014 The Board';
-  if (location.hash !== '#' + key){
-    try { history.pushState({ app: key }, '', '#' + key); } catch (e) {}
+  if (location.hash !== '#' + s.key){
+    try { history.pushState({ app: s.key }, '', '#' + s.key); } catch (e) {}
   }
 }
 function onAppLoad(){
@@ -594,7 +610,8 @@ window.addEventListener('popstate', function(){
 });
 
 async function boot(){
-  document.getElementById('cards').innerHTML = SITES.map(cardShell).join('');
+  var cards = SITES.filter(function(s){ return !s.hidden; });
+  document.getElementById('cards').innerHTML = cards.map(cardShell).join('');
 
   // Enter -> open the app inside the Board. Modifier/middle click and long-press
   // still use the real href to open a standalone tab.
@@ -612,13 +629,13 @@ async function boot(){
   if (h && SITES.some(function(s){ return s.key === h; })) openApp(h);
 
   document.getElementById('fineprint').textContent =
-    'The Board \u00b7 ' + SITES.length + ' apps \u00b7 records read live at ' +
+    'The Board \u00b7 ' + cards.length + ' apps \u00b7 records read live at ' +
     new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  var results = await Promise.all(SITES.map(function(s){ return fetchAccuracy(s.accuracy); }));
+  var results = await Promise.all(cards.map(function(s){ return fetchAccuracy(s.accuracy); }));
   var live = 0, newestT = null;
   results.forEach(function(r, i){
-    fillResult(SITES[i], r);
+    fillResult(cards[i], r);
     if (r.data){
       live++;
       if (r.data.t && (!newestT || r.data.t > newestT)) newestT = r.data.t;
@@ -628,7 +645,7 @@ async function boot(){
   var status = document.getElementById('statusline');
   if (live){
     var when = newestT ? ' \u00b7 updated ' + String(newestT).slice(0, 10) : '';
-    status.textContent = live + ' of ' + SITES.length + ' records live' + when;
+    status.textContent = live + ' of ' + cards.length + ' records live' + when;
   } else {
     status.textContent = 'Records come online as each app grades its first slate.';
   }
