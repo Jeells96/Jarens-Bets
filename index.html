@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0c1116">
+<title>The Board — MLB · NFL · NBA models</title>
+<style>
+/* ============================================================
+   THE BOARD — hub for three sports-projection apps.
+   Identity: a night arena scoreboard. Bone type on a dark board,
+   a monospace hit-rate readout that settles on load, one amber
+   "live" bulb, and a ticket-stub perforation as the single flourish.
+   Single file, no dependencies, iOS Safari first, dark only.
+   ============================================================ */
+:root{
+  --board:#0c1116;      /* deep charcoal-blue board */
+  --panel:#121922;      /* raised card */
+  --face:#080b10;       /* recessed scoreboard face */
+  --hair:#26303c;       /* hairline */
+  --hair2:#1a222c;
+  --bone:#eef2f4;       /* primary type */
+  --dim:#8593a1;        /* secondary type */
+  --dim2:#5d6b78;
+  --bulb:#f5b642;       /* amber chrome accent / LIVE */
+  --mlb:#e2574c;        /* Diamond IQ lane */
+  --nfl:#4f9cf0;        /* Gridline lane */
+  --nba:#f6863a;        /* Hardwood IQ lane */
+}
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{ margin:0; padding:0; background:var(--board); color:var(--bone);
+  font:16px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased; }
+body{
+  /* faint bulb-glow pooling behind the board, cool at the edges */
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(245,182,66,.06), transparent 55%),
+    radial-gradient(90% 70% at 15% 8%, rgba(226,87,76,.05), transparent 60%),
+    radial-gradient(90% 70% at 85% 20%, rgba(79,156,240,.05), transparent 60%),
+    var(--board);
+  min-height:100vh;
+}
+.wrap{ max-width:640px; margin:0 auto; padding:calc(34px + env(safe-area-inset-top)) 20px calc(56px + env(safe-area-inset-bottom)); }
+
+/* ---------- header ---------- */
+.eyebrow{ font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.26em;
+  text-transform:uppercase; color:var(--dim2); display:flex; align-items:center; gap:9px; }
+.live{ display:inline-flex; align-items:center; gap:6px; color:var(--bulb); }
+.bulb{ width:7px; height:7px; border-radius:50%; background:var(--bulb);
+  box-shadow:0 0 0 0 rgba(245,182,66,.55); animation:pulse 2.4s infinite; }
+@keyframes pulse{ 0%{ box-shadow:0 0 0 0 rgba(245,182,66,.5); } 70%{ box-shadow:0 0 0 7px rgba(245,182,66,0); } 100%{ box-shadow:0 0 0 0 rgba(245,182,66,0); } }
+
+.wordmark{ margin:20px 0 0; font-weight:800; letter-spacing:-.035em; line-height:.92;
+  font-size:clamp(46px,15vw,92px); text-transform:uppercase; }
+.wordmark .thin{ display:block; font-size:clamp(15px,4.4vw,22px); font-weight:600;
+  letter-spacing:.02em; text-transform:none; color:var(--dim); margin-top:16px; line-height:1.4; }
+.statusline{ margin-top:18px; font:600 12px/1 ui-monospace,Menlo,monospace;
+  letter-spacing:.08em; color:var(--dim2); }
+
+.rule{ height:1px; background:linear-gradient(90deg,var(--hair),transparent); margin:30px 0 26px; }
+
+/* ---------- card ---------- */
+.card{ position:relative; background:var(--panel); border:1px solid var(--hair2);
+  border-radius:18px; padding:22px 20px 20px; margin-bottom:20px; overflow:hidden;
+  transition:transform .18s ease, border-color .18s ease; }
+.card::before{ /* lane stripe, the only per-sport color in the chrome */
+  content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--lane); }
+.card:hover{ transform:translateY(-2px); border-color:var(--hair); }
+
+.cardhead{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.appname{ font-weight:800; font-size:25px; letter-spacing:-.02em; }
+.sporttag{ font:700 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--lane); border:1px solid var(--lane);
+  border-radius:999px; padding:5px 9px; opacity:.9; white-space:nowrap; }
+.tagline{ color:var(--dim); font-size:14.5px; margin:8px 0 0; }
+
+/* ticket-stub perforation — the one subject-specific flourish */
+.perf{ display:flex; align-items:center; gap:7px; margin:18px -20px 16px; padding:0 20px; }
+.perf .dots{ flex:1; height:1px;
+  background:repeating-linear-gradient(90deg,var(--hair) 0 4px,transparent 4px 10px); }
+.perf .cut{ width:12px; height:12px; border-radius:50%; background:var(--board);
+  box-shadow:inset 0 0 0 1px var(--hair2); }
+
+/* recessed scoreboard face */
+.sb{ background:var(--face); border:1px solid var(--hair2); border-radius:12px;
+  padding:16px 16px 14px; box-shadow:inset 0 1px 0 rgba(255,255,255,.02), inset 0 0 30px rgba(0,0,0,.4); }
+.sb .lab{ font:600 10.5px/1 ui-monospace,Menlo,monospace; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--dim2); }
+.readout{ display:flex; align-items:flex-end; gap:12px; margin-top:8px; min-height:64px; }
+.pct{ font:700 clamp(48px,16vw,76px)/.86 ui-monospace,Menlo,monospace;
+  letter-spacing:-.02em; font-variant-numeric:tabular-nums;
+  color:var(--lane); text-shadow:0 0 22px color-mix(in srgb, var(--lane) 34%, transparent); }
+.pct .u{ font-size:.42em; color:var(--dim); text-shadow:none; margin-left:4px; letter-spacing:0; }
+.market{ padding-bottom:8px; }
+.market .name{ font-weight:700; font-size:15px; line-height:1.2; }
+.market .n{ font:600 12px/1 ui-monospace,Menlo,monospace; color:var(--dim2);
+  letter-spacing:.06em; margin-top:5px; }
+.overall{ margin-top:12px; padding-top:11px; border-top:1px solid var(--hair2);
+  font:600 12px/1.4 ui-monospace,Menlo,monospace; letter-spacing:.05em; color:var(--dim); }
+.overall b{ color:var(--bone); }
+
+/* loading + honest empty states share the panel */
+.sb.state .readout{ align-items:center; }
+.shimmer{ width:120px; height:44px; border-radius:8px;
+  background:linear-gradient(90deg,var(--hair2) 25%,#20293450 37%,var(--hair2) 63%);
+  background-size:400% 100%; animation:sh 1.3s ease infinite; }
+@keyframes sh{ 0%{ background-position:100% 0; } 100%{ background-position:-100% 0; } }
+.statemsg{ color:var(--dim); font-size:13.5px; line-height:1.45; }
+.statemsg .k{ color:var(--bone); font-weight:600; }
+
+/* CTA */
+.cta{ display:flex; align-items:center; justify-content:space-between;
+  margin-top:18px; width:100%; text-decoration:none; color:var(--board);
+  background:var(--bone); border:0; border-radius:12px; padding:14px 18px;
+  font-weight:800; font-size:15.5px; letter-spacing:-.01em;
+  transition:filter .16s ease; }
+.cta:hover{ filter:brightness(.93); }
+.cta .arrow{ font-size:19px; transition:transform .18s ease; }
+.cta:hover .arrow{ transform:translateX(4px); }
+
+/* ---------- footer ---------- */
+.foot{ margin-top:34px; border-top:1px solid var(--hair2); padding-top:22px; }
+.foot h2{ font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--dim2); margin:0 0 10px; }
+.foot p{ color:var(--dim); font-size:13.5px; line-height:1.6; margin:0 0 10px; }
+.foot .invite{ color:var(--bone); font-weight:600; }
+.foot .fine{ color:var(--dim2); font-size:12px; margin-top:14px; }
+
+/* ---------- embedded app view (the Board hosts each app in-place) ---------- */
+.appview{ position:fixed; inset:0; z-index:100; background:var(--board);
+  display:flex; flex-direction:column; }
+.appview.hidden{ display:none; }
+.appbar{ position:relative; display:flex; align-items:center; gap:12px;
+  padding:calc(10px + env(safe-area-inset-top)) 14px 11px;
+  background:var(--panel); border-bottom:1px solid var(--hair2); }
+.appbar::after{ content:''; position:absolute; left:0; right:0; bottom:-1px;
+  height:2px; background:var(--lane); opacity:.95; }
+.appback{ background:none; border:1px solid var(--hair); color:var(--bone);
+  border-radius:9px; padding:8px 13px; font-weight:700; font-size:14px; letter-spacing:-.01em; }
+.appback:active{ background:var(--face); }
+.apptitle{ flex:1; font-weight:800; font-size:16px; letter-spacing:-.01em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.appout{ color:var(--dim); text-decoration:none; font-size:20px; line-height:1; padding:4px 6px; }
+.appout:active{ color:var(--bone); }
+.appframe{ position:relative; flex:1; background:var(--board); }
+.appframe iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; background:var(--board); }
+.apploading{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  color:var(--dim2); font:600 12px/1 ui-monospace,Menlo,monospace; letter-spacing:.16em; text-transform:uppercase; }
+.appempty{ position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; text-align:center; padding:30px; gap:12px; background:var(--board); }
+.appempty .t{ font-weight:800; font-size:18px; letter-spacing:-.01em; }
+.appempty .d{ color:var(--dim); font-size:14px; line-height:1.5; max-width:320px; }
+
+@media (prefers-reduced-motion: reduce){
+  .bulb{ animation:none; } .shimmer{ animation:none; }
+  .card,.cta,.cta .arrow{ transition:none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">
+      <span>Members only</span><span style="color:var(--hair)">/</span>
+      <span class="live"><span class="bulb"></span>Live</span>
+    </div>
+    <!-- Rename this wordmark to whatever you want the hub called. -->
+    <h1 class="wordmark">The Board
+      <span class="thin">Model-driven picks for MLB, NFL, and NBA &mdash; each with a verified hit rate you can check before you tap in.</span>
+    </h1>
+    <div class="statusline" id="statusline">Reading the board&hellip;</div>
+  </header>
+
+  <div class="rule"></div>
+
+  <main id="cards"><!-- cards injected --></main>
+
+  <footer class="foot">
+    <h2>How the records work</h2>
+    <p>Every result is graded walk-forward against real box scores &mdash; each model only ever sees games that finished <em>before</em> the one it&rsquo;s grading. The percentage on each card is that model&rsquo;s single most accurate market, shown with its sample size, plus the overall record. Nothing here is cherry-picked.</p>
+    <p class="invite">Access to each app is invite-only.</p>
+    <p class="fine" id="fineprint"></p>
+  </footer>
+</div>
+
+<!-- Full-screen host for an embedded app; hidden until Enter is tapped -->
+<div id="appview" class="appview hidden" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="appbar">
+    <button class="appback" id="appback" type="button" aria-label="Back to The Board">&larr;&nbsp;Board</button>
+    <div class="apptitle" id="apptitle"></div>
+    <a class="appout" id="appout" target="_blank" rel="noopener" aria-label="Open in a new tab" title="Open in a new tab">&#8599;</a>
+  </div>
+  <div class="appframe">
+    <div class="apploading" id="apploading">Loading&hellip;</div>
+    <iframe id="appiframe" title="Embedded app" allow="clipboard-write; geolocation"></iframe>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ================================================================
+   CONFIG — the only thing to edit.
+
+   Each app now lives inside THIS repo as a subfolder, so the whole thing is
+   one GitHub Pages site and the other repos can be deleted. Keep it on the
+   same jeells96.github.io account so the apps keep their existing storage,
+   PIN state and Firebase (storage is per-origin, so same host = same data).
+
+   Each app has:
+     url      : relative path to that app's page inside this repo.
+     accuracy : where to read the live "most accurate market" from Firebase
+                (unchanged — the apps still write to the same projects).
+                  mode 'doc'  -> read one summary document
+                  mode 'list' -> read a collection and aggregate it
+                Leave projectId '' to skip the fetch and show the
+                "connect this record" state (never a fake number).
+   ================================================================ */
+var SITES = [
+  {
+    key: 'mlb',
+    name: 'Diamond IQ',
+    sport: 'MLB',
+    lane: 'var(--mlb)',
+    tagline: 'Prop projections for every slate, graded daily.',
+    url: './mlb/premium.html',
+    accuracy: {
+      // Diamond IQ / Fable engine — its own project. Reads the same
+      // fable_settings/summary doc the app reads for its header record.
+      mode: 'doc',
+      projectId: 'mlb-bets-d196c',
+      apiKey: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0',
+      path: 'fable_settings/summary',
+      format: 'fable'
+    }
+  },
+  {
+    key: 'nfl',
+    name: 'Gridline',
+    sport: 'NFL',
+    lane: 'var(--nfl)',
+    tagline: 'Every game, every week, projected and tracked.',
+    url: './nfl/',
+    accuracy: {
+      // Gridline shares the nflbets-45561 project. All-time = aggregate of
+      // every accuracy/{season}_W## doc, exactly like Gridline's Facts tab.
+      mode: 'list',
+      projectId: 'nflbets-45561',
+      apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g',
+      path: 'accuracy',
+      format: 'gridline'
+    }
+  },
+  {
+    key: 'nba',
+    name: 'Hardwood IQ',
+    sport: 'NBA',
+    lane: 'var(--nba)',
+    tagline: 'Nightly projections, graded honestly.',
+    url: './nba/',
+    accuracy: {
+      // The doc Hardwood IQ writes on regrade. Lights up after the first
+      // online "Regrade all" once the app is deployed to NBABets.
+      mode: 'doc',
+      projectId: 'nflbets-45561',
+      apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g',
+      path: 'nba/allTime',
+      format: 'hardwood'
+    }
+  }
+];
+
+/* Friendly market labels (internal keys -> what members read) */
+var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks' };
+var MIN_N = 20; // sample floor before a market can be the headline number
+
+/* ---------- helpers ---------- */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+var REDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+var FS = 'https://firestore.googleapis.com/v1/projects/';
+function docUrl(cfg){ return FS + cfg.projectId + '/databases/(default)/documents/' + cfg.path + '?key=' + cfg.apiKey; }
+function listUrl(cfg){ return FS + cfg.projectId + '/databases/(default)/documents/' + cfg.path + '?key=' + cfg.apiKey + '&pageSize=300'; }
+
+// Full recursive Firestore value decoder (handles maps/arrays/timestamps),
+// with a convenience unwrap for the { data: <json string> } docs the NBA app
+// writes. Mirrors each app's own fsDecode so the hub shows identical numbers.
+function fsVal(v){
+  if (v == null) return null;
+  if (v.nullValue !== undefined) return null;
+  if (v.stringValue !== undefined) return v.stringValue;
+  if (v.booleanValue !== undefined) return v.booleanValue;
+  if (v.integerValue !== undefined) return +v.integerValue;
+  if (v.doubleValue !== undefined) return +v.doubleValue;
+  if (v.timestampValue !== undefined) return v.timestampValue;
+  if (v.mapValue !== undefined) return fsFields(v.mapValue.fields || {});
+  if (v.arrayValue !== undefined) return (v.arrayValue.values || []).map(fsVal);
+  return null;
+}
+function fsFields(fields){
+  var out = {};
+  for (var k in fields) out[k] = fsVal(fields[k]);
+  return out;
+}
+function fsDoc(json){
+  if (!json || !json.fields) return null;
+  if (typeof (json.fields.data && json.fields.data.stringValue) === 'string'){
+    try { return JSON.parse(json.fields.data.stringValue); } catch (e){ return null; }
+  }
+  return fsFields(json.fields);
+}
+
+function normTime(t){
+  if (t == null) return null;
+  if (typeof t === 'number') { try { return new Date(t).toISOString().slice(0, 10); } catch (e){ return null; } }
+  return String(t).slice(0, 10);
+}
+// From a list of {label, hit, n}, pick the headline market: best rate among
+// those clearing the sample floor; if none clear it, the largest sample (so a
+// tiny fluke never becomes the ad). Returns {label, pct, n} or null.
+function pickHeadline(rows){
+  var real = rows.filter(function(r){ return r.n > 0; });
+  if (!real.length) return null;
+  var eligible = real.filter(function(r){ return r.n >= MIN_N; });
+  var pool = eligible.length ? eligible : real;
+  pool.sort(function(a, b){
+    return eligible.length ? ((b.hit / b.n) - (a.hit / a.n)) || (b.n - a.n) : (b.n - a.n);
+  });
+  var top = pool[0];
+  return { label: top.label, pct: Math.round(100 * top.hit / top.n), n: top.n };
+}
+function withOverall(head, hit, n, t){
+  if (!head) return null;
+  if (n){ head.allPct = Math.round(100 * hit / n); head.allN = n; }
+  head.t = normTime(t);
+  return head;
+}
+
+/* ---- per-app decoders (each mirrors that app's own record math) ---- */
+function decodeHardwood(raw){ // { all:{hit,n}, top:[{label,pct,n}], t }
+  if (!raw || !Array.isArray(raw.top)) return null;
+  var rows = raw.top.filter(function(x){ return x && x.n != null && x.pct != null; })
+    .map(function(x){ return { label: x.label || 'Top market', hit: Math.round(x.pct / 100 * x.n), n: x.n }; });
+  var head = pickHeadline(rows);
+  if (!head) return null;
+  var all = raw.all || {};
+  return withOverall(head, all.hit || 0, all.n || 0, raw.t);
+}
+function decodeGridline(docs){ // aggregate accuracy/{season}_W## docs
+  var weekly = docs.filter(function(d){ return /_W\d+$/.test(d.id); });
+  var agg = {}, cumHit = 0, cumN = 0, latest = 0;
+  for (var i = 0; i < weekly.length; i++){
+    var data = weekly[i].data || {};
+    if (data.updatedAt && +data.updatedAt > latest) latest = +data.updatedAt;
+    var cats = data.cats || {};
+    for (var k in cats){
+      var c = cats[k] || {};
+      if (!agg[k]) agg[k] = { label: c.label || k, hit: 0, n: 0 };
+      agg[k].hit += c.hit || 0; agg[k].n += c.n || 0;
+      cumHit += c.hit || 0; cumN += c.n || 0;
+    }
+  }
+  var rows = Object.keys(agg).map(function(k){ return agg[k]; });
+  var head = pickHeadline(rows);
+  if (!head) return null;
+  return withOverall(head, cumHit, cumN, latest || null);
+}
+function decodeFable(raw){ // { days:{date:{hits:{h,n},hr:{h,n},kP:{w,l,p},...}} }
+  if (!raw || !raw.days) return null;
+  var acc = {}; // key -> {hit,n}
+  var days = raw.days;
+  for (var dt in days){
+    var d = days[dt] || {};
+    for (var m in FABLE_LABELS){
+      var o = d[m];
+      if (!o) continue;
+      if (!acc[m]) acc[m] = { hit: 0, n: 0 };
+      if (o.h != null && o.n != null){ acc[m].hit += o.h; acc[m].n += o.n; }          // hits / hr
+      else if (o.w != null){ acc[m].hit += o.w; acc[m].n += (o.w + (o.l || 0)); }      // k / bb (pushes excluded)
+    }
+  }
+  var rows = Object.keys(acc).map(function(m){ return { label: FABLE_LABELS[m], hit: acc[m].hit, n: acc[m].n }; });
+  var head = pickHeadline(rows);
+  if (!head) return null;
+  var cumHit = 0, cumN = 0;
+  rows.forEach(function(r){ cumHit += r.hit; cumN += r.n; });
+  return withOverall(head, cumHit, cumN, raw.updatedAt || null);
+}
+
+function decode(raw, format){
+  if (format === 'hardwood') return decodeHardwood(raw);
+  if (format === 'fable') return decodeFable(raw);
+  return null;
+}
+
+async function fetchAccuracy(cfg){
+  if (!cfg || !cfg.projectId || !cfg.apiKey) return { skipped: true };
+  try {
+    if (cfg.mode === 'list'){
+      var lr = await fetch(listUrl(cfg));
+      if (!lr.ok) return lr.status === 403 ? { blocked: true } : { error: 'HTTP ' + lr.status };
+      var lj = await lr.json();
+      var docs = (lj.documents || []).map(function(d){ return { id: d.name.split('/').pop(), data: fsFields(d.fields || {}) }; });
+      if (!docs.length) return { missing: true };
+      var g = decodeGridline(docs);
+      return g ? { data: g } : { unreadable: true };
+    }
+    var res = await fetch(docUrl(cfg));
+    if (res.status === 404) return { missing: true };
+    if (res.status === 403) return { blocked: true };
+    if (!res.ok) return { error: 'HTTP ' + res.status };
+    var obj = fsDoc(await res.json());
+    var dec = decode(obj, cfg.format);
+    return dec ? { data: dec } : { unreadable: true };
+  } catch (e){
+    return { error: e.message };
+  }
+}
+
+/* ---------- render ---------- */
+function cardShell(s){
+  return '' +
+  '<section class="card" style="--lane:' + s.lane + '">' +
+    '<div class="cardhead"><div class="appname">' + esc(s.name) + '</div>' +
+      '<div class="sporttag">' + esc(s.sport) + '</div></div>' +
+    '<p class="tagline">' + esc(s.tagline) + '</p>' +
+    '<div class="perf"><span class="cut"></span><span class="dots"></span><span class="cut"></span></div>' +
+    '<div class="sb state" id="sb-' + s.key + '">' +
+      '<div class="lab">Most accurate market</div>' +
+      '<div class="readout"><div class="shimmer"></div></div></div>' +
+    '<a class="cta" href="' + esc(s.url) + '" data-app="' + s.key + '" target="_blank" rel="noopener">' +
+      '<span>Enter ' + esc(s.name) + '</span><span class="arrow">&rarr;</span></a>' +
+  '</section>';
+}
+
+function countUp(el, target){
+  if (REDUCE || target <= 0){ el.firstChild.nodeValue = String(target); return; }
+  var start = null, dur = 900;
+  function step(ts){
+    if (start == null) start = ts;
+    var p = Math.min(1, (ts - start) / dur);
+    var eased = 1 - Math.pow(1 - p, 3);
+    el.firstChild.nodeValue = String(Math.round(eased * target));
+    if (p < 1) requestAnimationFrame(step);
+    else el.firstChild.nodeValue = String(target);
+  }
+  requestAnimationFrame(step);
+}
+
+function fillResult(s, result){
+  var sb = document.getElementById('sb-' + s.key);
+  if (!sb) return;
+  if (result.data){
+    var d = result.data;
+    sb.classList.remove('state');
+    var overall = (d.allPct != null && d.allN)
+      ? '<div class="overall">Overall locks: <b>' + d.allPct + '%</b> \u00b7 ' + d.allN + ' graded</div>' : '';
+    sb.innerHTML =
+      '<div class="lab">Most accurate market</div>' +
+      '<div class="readout">' +
+        '<div class="pct"><span class="num">0</span><span class="u">%</span></div>' +
+        '<div class="market"><div class="name">' + esc(d.label) + '</div>' +
+          '<div class="n">' + (d.n != null ? 'n = ' + d.n + ' graded' : 'sample syncing') + '</div></div>' +
+      '</div>' + overall;
+    countUp(sb.querySelector('.num'), d.pct);
+    return;
+  }
+  // Honest non-numeric states — direction, not apology, per the copy voice.
+  var msg;
+  if (result.skipped) msg = '<span class="k">Connect this app\u2019s record.</span> Add its Firebase details in the config and the live hit rate appears here.';
+  else if (result.blocked) msg = '<span class="k">Record is private.</span> Allow public read on this app\u2019s summary doc to show it here.';
+  else if (result.missing || result.unreadable) msg = '<span class="k">Record syncing.</span> Check back after the next graded slate.';
+  else msg = '<span class="k">Record briefly unavailable.</span> ' + esc(result.error || 'Try again shortly.');
+  sb.innerHTML = '<div class="lab">Most accurate market</div>' +
+    '<div class="readout"><div class="statemsg">' + msg + '</div></div>';
+}
+
+/* ---------- embedded app host ----------
+   Same origin (all on jeells96.github.io), so each app iframes cleanly and
+   keeps its own storage/PIN/Firebase. Loaded lazily on Enter; unloaded on
+   close to free its listeners. Back button and the phone's back gesture both
+   return to the hub, and #<key> deep-links straight into an app. */
+var currentSite = null;
+function byId(id){ return document.getElementById(id); }
+
+function openApp(key){
+  var s = SITES.filter(function(x){ return x.key === key; })[0];
+  if (!s) return;
+  currentSite = s;
+  var view = byId('appview'), fr = byId('appiframe');
+  byId('apptitle').textContent = s.name + '  \u00b7  ' + s.sport;
+  byId('appout').href = s.url;
+  view.style.setProperty('--lane', s.lane);
+  hideAppEmpty();
+  byId('apploading').style.display = '';
+  fr.onload = onAppLoad;
+  fr.src = s.url;                       // lazy-load the app now
+  view.classList.remove('hidden');
+  view.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  document.title = s.name + ' \u2014 The Board';
+  if (location.hash !== '#' + key){
+    try { history.pushState({ app: key }, '', '#' + key); } catch (e) {}
+  }
+}
+function onAppLoad(){
+  byId('apploading').style.display = 'none';
+  // Same-origin: if the target page is still an empty placeholder (e.g. NBABets
+  // before deploy), say so instead of showing a blank frame.
+  try {
+    var d = byId('appiframe').contentDocument;
+    if (d && d.body){
+      var txt = (d.body.innerText || '').trim();
+      var kids = d.body.children ? d.body.children.length : 0;
+      if (txt.length < 3 && kids === 0) showAppEmpty();
+    }
+  } catch (e){ /* if it ever becomes cross-origin, just skip the check */ }
+}
+function showAppEmpty(){
+  var f = document.querySelector('.appframe');
+  if (!f || f.querySelector('.appempty') || !currentSite) return;
+  var s = currentSite, div = document.createElement('div');
+  div.className = 'appempty';
+  div.innerHTML =
+    '<div class="t">' + esc(s.name) + ' isn\u2019t deployed yet</div>' +
+    '<div class="d">Its page on GitHub Pages is still empty. Push the app to the repo and it\u2019ll open right here.</div>' +
+    '<a class="cta" style="width:auto;padding:12px 18px" href="' + esc(s.url) + '" target="_blank" rel="noopener">' +
+      '<span>Open the page</span><span class="arrow">&rarr;</span></a>';
+  f.appendChild(div);
+}
+function hideAppEmpty(){ var e = document.querySelector('.appempty'); if (e) e.remove(); }
+
+function closeApp(fromPop){
+  var view = byId('appview'), fr = byId('appiframe');
+  view.classList.add('hidden');
+  view.setAttribute('aria-hidden', 'true');
+  fr.onload = null; fr.removeAttribute('src');   // unload the app
+  hideAppEmpty();
+  document.body.style.overflow = '';
+  currentSite = null;
+  document.title = 'The Board \u2014 MLB \u00b7 NFL \u00b7 NBA models';
+  if (!fromPop){
+    try {
+      if (history.state && history.state.app) history.back();
+      else if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    } catch (e) {}
+  }
+}
+window.addEventListener('popstate', function(){
+  if (!byId('appview').classList.contains('hidden')) closeApp(true);
+});
+
+async function boot(){
+  document.getElementById('cards').innerHTML = SITES.map(cardShell).join('');
+
+  // Enter -> open the app inside the Board. Modifier/middle click and long-press
+  // still use the real href to open a standalone tab.
+  Array.prototype.forEach.call(document.querySelectorAll('.cta[data-app]'), function(a){
+    a.addEventListener('click', function(e){
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+      e.preventDefault();
+      openApp(a.getAttribute('data-app'));
+    });
+  });
+  byId('appback').addEventListener('click', function(){ closeApp(false); });
+
+  // Deep link: board#nfl / #mlb / #nba opens straight into that app.
+  var h = (location.hash || '').replace('#', '');
+  if (h && SITES.some(function(s){ return s.key === h; })) openApp(h);
+
+  document.getElementById('fineprint').textContent =
+    'The Board \u00b7 ' + SITES.length + ' apps \u00b7 records read live at ' +
+    new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  var results = await Promise.all(SITES.map(function(s){ return fetchAccuracy(s.accuracy); }));
+  var live = 0, newestT = null;
+  results.forEach(function(r, i){
+    fillResult(SITES[i], r);
+    if (r.data){
+      live++;
+      if (r.data.t && (!newestT || r.data.t > newestT)) newestT = r.data.t;
+    }
+  });
+
+  var status = document.getElementById('statusline');
+  if (live){
+    var when = newestT ? ' \u00b7 updated ' + String(newestT).slice(0, 10) : '';
+    status.textContent = live + ' of ' + SITES.length + ' records live' + when;
+  } else {
+    status.textContent = 'Records come online as each app grades its first slate.';
+  }
+}
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>
