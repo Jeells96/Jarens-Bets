@@ -67,7 +67,8 @@ body{
 
 /* ---------- card ---------- */
 .card{ position:relative; background:var(--panel); border:1px solid var(--hair2);
-  border-radius:18px; margin-bottom:20px; overflow:hidden;
+  border-radius:18px; margin-bottom:34px; overflow:hidden;
+  box-shadow:0 10px 30px rgba(0,0,0,.35);
   transition:transform .18s ease, border-color .18s ease; }
 .card:hover{ transform:translateY(-2px); border-color:var(--hair); }
 
@@ -82,6 +83,11 @@ body{
   text-transform:uppercase; color:var(--lane); border:1px solid var(--lane);
   border-radius:999px; padding:4px 8px; background:rgba(0,0,0,.35);
   backdrop-filter:blur(2px); white-space:nowrap; }
+.freebadge{ position:absolute; top:11px; left:12px;
+  font:800 10px/1 ui-monospace,Menlo,monospace; letter-spacing:.16em;
+  text-transform:uppercase; color:#0b0f14; background:var(--bulb);
+  border-radius:999px; padding:5px 9px; white-space:nowrap;
+  box-shadow:0 2px 10px rgba(245,182,66,.35); }
 
 .cardbody{ padding:16px 20px 20px; }
 .tagline{ color:var(--dim); font-size:14.5px; margin:0 0 14px; }
@@ -89,30 +95,36 @@ body{
 
 /* recessed scoreboard face */
 .sb{ background:var(--face); border:1px solid var(--hair2); border-radius:12px;
-  padding:16px 16px 14px; box-shadow:inset 0 1px 0 rgba(255,255,255,.02), inset 0 0 30px rgba(0,0,0,.4); }
+  padding:14px 16px 12px; box-shadow:inset 0 1px 0 rgba(255,255,255,.02), inset 0 0 30px rgba(0,0,0,.4); }
 .sb .lab{ font:600 10.5px/1 ui-monospace,Menlo,monospace; letter-spacing:.22em;
   text-transform:uppercase; color:var(--dim2); }
-.readout{ display:flex; align-items:flex-end; gap:12px; margin-top:8px; min-height:64px; }
-.pct{ font:700 clamp(48px,16vw,76px)/.86 ui-monospace,Menlo,monospace;
-  letter-spacing:-.02em; font-variant-numeric:tabular-nums;
-  color:var(--lane); text-shadow:0 0 22px color-mix(in srgb, var(--lane) 34%, transparent); }
-.pct .u{ font-size:.42em; color:var(--dim); text-shadow:none; margin-left:4px; letter-spacing:0; }
-.market{ padding-bottom:8px; }
-.market .name{ font-weight:700; font-size:15px; line-height:1.2; }
-.market .n{ font:600 12px/1 ui-monospace,Menlo,monospace; color:var(--dim2);
-  letter-spacing:.06em; margin-top:5px; }
-.overall{ margin-top:12px; padding-top:11px; border-top:1px solid var(--hair2);
-  font:600 12px/1.4 ui-monospace,Menlo,monospace; letter-spacing:.05em; color:var(--dim); }
-.overall b{ color:var(--bone); }
+
+/* top-3 leaderboard */
+.top3{ list-style:none; margin:10px 0 0; padding:0; }
+.t3row{ display:grid; grid-template-columns:auto 1fr auto auto; align-items:baseline;
+  gap:10px; padding:7px 0; border-top:1px solid var(--hair2); }
+.t3row:first-child{ border-top:0; }
+.t3row .rk{ font:700 11px/1 ui-monospace,Menlo,monospace; color:var(--dim2);
+  width:16px; text-align:center; }
+.t3row .mk{ font-weight:600; font-size:14px; line-height:1.15; color:var(--dim);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.t3row .pc{ font:700 17px/1 ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
+  color:var(--lane); letter-spacing:-.01em; }
+.t3row .nn{ font:600 11px/1 ui-monospace,Menlo,monospace; color:var(--dim2);
+  letter-spacing:.04em; min-width:44px; text-align:right; }
+.t3row.lead .mk{ color:var(--bone); font-weight:700; }
+.t3row.lead .pc{ font-size:22px; text-shadow:0 0 20px color-mix(in srgb, var(--lane) 32%, transparent); }
+.t3row.lead .rk{ color:var(--lane); }
 
 /* loading + honest empty states share the panel */
-.sb.state .readout{ align-items:center; }
-.shimmer{ width:120px; height:44px; border-radius:8px;
+.readout{ display:flex; align-items:center; gap:12px; margin-top:8px; min-height:56px; }
+.shimmer{ width:120px; height:40px; border-radius:8px;
   background:linear-gradient(90deg,var(--hair2) 25%,#20293450 37%,var(--hair2) 63%);
   background-size:400% 100%; animation:sh 1.3s ease infinite; }
 @keyframes sh{ 0%{ background-position:100% 0; } 100%{ background-position:-100% 0; } }
 .statemsg{ color:var(--dim); font-size:13.5px; line-height:1.45; }
 .statemsg .k{ color:var(--bone); font-weight:600; }
+
 
 /* CTA */
 .cta{ display:flex; align-items:center; justify-content:space-between;
@@ -241,6 +253,28 @@ var SITES = [
     }
   },
   {
+    key: 'mlbfree',
+    name: 'Diamond IQ Free',
+    sport: 'MLB',
+    lane: 'var(--mlb)',
+    logoKey: 'mlb',            // reuse the Diamond IQ logo
+    badge: 'Free Trial',
+    cta: 'Start Free Trial',
+    tagline: 'A free daily sample \u2014 see the model in action.',
+    url: './diamondiqfree.html',
+    accuracy: {
+      // The free trial tracks its OWN success rates, separate from premium.
+      // It reads a dedicated summary doc; the free app must publish there
+      // (same fable shape) so these numbers aren't a copy of premium's.
+      // Until it writes free_settings/summary this card shows "syncing".
+      mode: 'doc',
+      projectId: 'mlb-bets-d196c',
+      apiKey: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0',
+      path: 'free_settings/summary',    // TODO: free app must write its own summary here
+      format: 'fable'
+    }
+  },
+  {
     key: 'nfl',
     name: 'Gridline',
     sport: 'NFL',
@@ -331,22 +365,22 @@ function normTime(t){
 // From a list of {label, hit, n}, pick the headline market: best rate among
 // those clearing the sample floor; if none clear it, the largest sample (so a
 // tiny fluke never becomes the ad). Returns {label, pct, n} or null.
-function pickHeadline(rows){
+function rankMarkets(rows, k){
+  // Top k markets by hit rate, preferring those that clear the sample floor so
+  // a tiny fluke never outranks a proven market. Always carries n for honesty.
   var real = rows.filter(function(r){ return r.n > 0; });
-  if (!real.length) return null;
-  var eligible = real.filter(function(r){ return r.n >= MIN_N; });
-  var pool = eligible.length ? eligible : real;
-  pool.sort(function(a, b){
-    return eligible.length ? ((b.hit / b.n) - (a.hit / a.n)) || (b.n - a.n) : (b.n - a.n);
+  if (!real.length) return [];
+  var eligible = real.filter(function(r){ return r.n >= MIN_N; })
+    .sort(function(a, b){ return (b.hit / b.n) - (a.hit / a.n) || (b.n - a.n); });
+  var rest = real.filter(function(r){ return r.n < MIN_N; })
+    .sort(function(a, b){ return (b.n - a.n) || ((b.hit / b.n) - (a.hit / a.n)); });
+  return eligible.concat(rest).slice(0, k).map(function(r){
+    return { label: r.label, pct: Math.round(100 * r.hit / r.n), n: r.n };
   });
-  var top = pool[0];
-  return { label: top.label, pct: Math.round(100 * top.hit / top.n), n: top.n };
 }
-function withOverall(head, hit, n, t){
-  if (!head) return null;
-  if (n){ head.allPct = Math.round(100 * hit / n); head.allN = n; }
-  head.t = normTime(t);
-  return head;
+function packTop(rows, t){
+  var markets = rankMarkets(rows, 3);
+  return markets.length ? { markets: markets, t: normTime(t) } : null;
 }
 
 /* ---- per-app decoders (each mirrors that app's own record math) ---- */
@@ -354,14 +388,11 @@ function decodeHardwood(raw){ // { all:{hit,n}, top:[{label,pct,n}], t }
   if (!raw || !Array.isArray(raw.top)) return null;
   var rows = raw.top.filter(function(x){ return x && x.n != null && x.pct != null; })
     .map(function(x){ return { label: x.label || 'Top market', hit: Math.round(x.pct / 100 * x.n), n: x.n }; });
-  var head = pickHeadline(rows);
-  if (!head) return null;
-  var all = raw.all || {};
-  return withOverall(head, all.hit || 0, all.n || 0, raw.t);
+  return packTop(rows, raw.t);
 }
 function decodeGridline(docs){ // aggregate accuracy/{season}_W## docs
   var weekly = docs.filter(function(d){ return /_W\d+$/.test(d.id); });
-  var agg = {}, cumHit = 0, cumN = 0, latest = 0;
+  var agg = {}, latest = 0;
   for (var i = 0; i < weekly.length; i++){
     var data = weekly[i].data || {};
     if (data.updatedAt && +data.updatedAt > latest) latest = +data.updatedAt;
@@ -370,18 +401,14 @@ function decodeGridline(docs){ // aggregate accuracy/{season}_W## docs
       var c = cats[k] || {};
       if (!agg[k]) agg[k] = { label: c.label || k, hit: 0, n: 0 };
       agg[k].hit += c.hit || 0; agg[k].n += c.n || 0;
-      cumHit += c.hit || 0; cumN += c.n || 0;
     }
   }
   var rows = Object.keys(agg).map(function(k){ return agg[k]; });
-  var head = pickHeadline(rows);
-  if (!head) return null;
-  return withOverall(head, cumHit, cumN, latest || null);
+  return packTop(rows, latest || null);
 }
 function decodeFable(raw){ // { days:{date:{hits:{h,n},hr:{h,n},kP:{w,l,p},...}} }
   if (!raw || !raw.days) return null;
-  var acc = {}; // key -> {hit,n}
-  var days = raw.days;
+  var acc = {}, days = raw.days;
   for (var dt in days){
     var d = days[dt] || {};
     for (var m in FABLE_LABELS){
@@ -393,11 +420,7 @@ function decodeFable(raw){ // { days:{date:{hits:{h,n},hr:{h,n},kP:{w,l,p},...}}
     }
   }
   var rows = Object.keys(acc).map(function(m){ return { label: FABLE_LABELS[m], hit: acc[m].hit, n: acc[m].n }; });
-  var head = pickHeadline(rows);
-  if (!head) return null;
-  var cumHit = 0, cumN = 0;
-  rows.forEach(function(r){ cumHit += r.hit; cumN += r.n; });
-  return withOverall(head, cumHit, cumN, raw.updatedAt || null);
+  return packTop(rows, raw.updatedAt || null);
 }
 
 function decode(raw, format){
@@ -435,15 +458,16 @@ function cardShell(s){
   return '' +
   '<section class="card" style="--lane:' + s.lane + '">' +
     '<div class="logohead">' +
-      '<img class="logo" src="' + LOGOS[s.key] + '" alt="' + esc(s.name) + ' logo">' +
+      '<img class="logo" src="' + LOGOS[s.logoKey || s.key] + '" alt="' + esc(s.name) + ' logo">' +
+      (s.badge ? '<span class="freebadge">' + esc(s.badge) + '</span>' : '') +
       '<span class="sporttag">' + esc(s.sport) + '</span></div>' +
     '<div class="cardbody">' +
       '<p class="tagline">' + esc(s.tagline) + '</p>' +
       '<div class="sb state" id="sb-' + s.key + '">' +
-        '<div class="lab">Most accurate market</div>' +
+        '<div class="lab">Most accurate markets</div>' +
         '<div class="readout"><div class="shimmer"></div></div></div>' +
       '<a class="cta" href="' + esc(s.url) + '" data-app="' + s.key + '" target="_blank" rel="noopener">' +
-        '<span>Enter ' + esc(s.name) + '</span><span class="arrow">&rarr;</span></a>' +
+        '<span>' + esc(s.cta || ('Enter ' + s.name)) + '</span><span class="arrow">&rarr;</span></a>' +
     '</div>' +
   '</section>';
 }
@@ -465,28 +489,32 @@ function countUp(el, target){
 function fillResult(s, result){
   var sb = document.getElementById('sb-' + s.key);
   if (!sb) return;
-  if (result.data){
-    var d = result.data;
+  if (result.data && result.data.markets && result.data.markets.length){
+    var mk = result.data.markets;
     sb.classList.remove('state');
-    var overall = (d.allPct != null && d.allN)
-      ? '<div class="overall">Overall locks: <b>' + d.allPct + '%</b> \u00b7 ' + d.allN + ' graded</div>' : '';
+    var rows = mk.map(function(m, i){
+      return '<li class="t3row' + (i === 0 ? ' lead' : '') + '">' +
+        '<span class="rk">' + (i + 1) + '</span>' +
+        '<span class="mk">' + esc(m.label) + '</span>' +
+        '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
+        '<span class="nn">n=' + m.n + '</span></li>';
+    }).join('');
     sb.innerHTML =
-      '<div class="lab">Most accurate market</div>' +
-      '<div class="readout">' +
-        '<div class="pct"><span class="num">0</span><span class="u">%</span></div>' +
-        '<div class="market"><div class="name">' + esc(d.label) + '</div>' +
-          '<div class="n">' + (d.n != null ? 'n = ' + d.n + ' graded' : 'sample syncing') + '</div></div>' +
-      '</div>' + overall;
-    countUp(sb.querySelector('.num'), d.pct);
+      '<div class="lab">Most accurate markets</div>' +
+      '<ol class="top3">' + rows + '</ol>';
+    var nums = sb.querySelectorAll('.num');
+    Array.prototype.forEach.call(nums, function(el, i){
+      setTimeout(function(){ countUp(el, +el.getAttribute('data-v')); }, REDUCE ? 0 : i * 120);
+    });
     return;
   }
   // Honest non-numeric states — direction, not apology, per the copy voice.
   var msg;
-  if (result.skipped) msg = '<span class="k">Connect this app\u2019s record.</span> Add its Firebase details in the config and the live hit rate appears here.';
+  if (result.skipped) msg = '<span class="k">Connect this app\u2019s record.</span> Add its Firebase details in the config and the live rates appear here.';
   else if (result.blocked) msg = '<span class="k">Record is private.</span> Allow public read on this app\u2019s summary doc to show it here.';
   else if (result.missing || result.unreadable) msg = '<span class="k">Record syncing.</span> Check back after the next graded slate.';
   else msg = '<span class="k">Record briefly unavailable.</span> ' + esc(result.error || 'Try again shortly.');
-  sb.innerHTML = '<div class="lab">Most accurate market</div>' +
+  sb.innerHTML = '<div class="lab">Most accurate markets</div>' +
     '<div class="readout"><div class="statemsg">' + msg + '</div></div>';
 }
 
