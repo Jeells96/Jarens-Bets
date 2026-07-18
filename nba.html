@@ -49,6 +49,12 @@ input[type=checkbox]{ width:20px; height:20px; accent-color:var(--accent); }
 .datebar .dstep{ width:44px; height:40px; border-radius:10px; background:var(--card2);
   border:1px solid var(--line); color:var(--text); font-size:18px; }
 .datebar .dlabel{ flex:1; text-align:center; font-weight:700; }
+.datebar .dpick{ flex:1; text-align:center; font-weight:700; font-size:15px;
+  height:40px; border-radius:10px; background:var(--card2);
+  border:1px solid var(--line); color:var(--text); padding:0 10px;
+  -webkit-appearance:none; appearance:none; }
+.datebar .dpick::-webkit-date-and-time-value{ text-align:center; }
+.datebar .dpick::-webkit-calendar-picker-indicator{ filter:invert(1); opacity:.7; }
 .game{ display:flex; align-items:center; justify-content:space-between;
   background:var(--card); border:1px solid var(--line); border-radius:14px;
   padding:12px; margin-bottom:10px; }
@@ -109,7 +115,7 @@ nav#tabbar button.active{ color:var(--accent); }
     <section id="tab-games">
       <div class="datebar">
         <button class="dstep" id="dPrev">&#8249;</button>
-        <div class="dlabel" id="dLabel"></div>
+        <input type="date" class="dpick" id="dPick">
         <button class="dstep" id="dNext">&#8250;</button>
       </div>
       <div class="row" style="margin-bottom:10px">
@@ -200,21 +206,26 @@ async function fbWrite(col, doc, obj){
   if (!res.ok) throw new Error('FB write ' + res.status);
   return true;
 }
-async function fbListAccuracy(){
+async function fbListCol(col){
   if (!fbReady()) return {};
   const url = 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
-    '/databases/(default)/documents/' + FB_ACC + '?pageSize=400&key=' + FB.apiKey;
+    '/databases/(default)/documents/' + col + '?pageSize=400&key=' + FB.apiKey;
   const res = await fetch(url);
   if (!res.ok) throw new Error('FB list ' + res.status);
   const j = await res.json();
   const out = {};
   for (const d of (j.documents || [])){
-    const date = d.name.split('/').pop();
+    const id = d.name.split('/').pop();
     const s = d.fields && d.fields.data && d.fields.data.stringValue;
-    if (s){ try { out[date] = JSON.parse(s); } catch (e) {} }
+    if (s){ try { out[id] = JSON.parse(s); } catch (e) {} }
   }
   return out;
 }
+async function fbListAccuracy(){ return fbListCol(FB_ACC); }
+// Compact game records mirrored to Firestore so a fresh device (or the grading
+// cron's throwaway browser) can seed the whole season in ONE read instead of
+// re-fetching ~1,300 ESPN summaries. One doc per completed date.
+const FB_RECS = 'nba_recs';
 
 // Placeholder member PIN. Once Firebase config sync is wired the synced PIN
 // takes over; until then, change this constant to whatever you want.
@@ -722,15 +733,16 @@ function possessions(t){
   return t.fga + 0.44 * t.fta - t.orb + t.tov;
 }
 
-function hydrateFromStore(){
+function hydrateFromList(records){
   if (!state.posMap){
     const env = loadPosMapEnvelope();
     if (env) state.posMap = env.map;
   }
   const pp = {}, tl = {};
   let n = 0, bytes = 0, minD = null, maxD = null;
-  eachStoredRecord(function(rec, len){
-    n++; bytes += len || 0;
+  for (const rec of records){
+    if (!rec || rec.id == null) continue;
+    n++; bytes += JSON.stringify(rec).length;
     if (minD == null || rec.date < minD) minD = rec.date;
     if (maxD == null || rec.date > maxD) maxD = rec.date;
     const ph = possessions(rec.home), pa = possessions(rec.away);
@@ -743,23 +755,50 @@ function hydrateFromStore(){
     tRow(rec.away, rec.home, false);
     for (const p of (rec.players || [])){
       if (!pp[p.id]) pp[p.id] = { name: p.n, pos: p.p, tm: p.tm, tmD: rec.date, rows: [] };
-      // roster map wins over the frozen snapshot when available
       const live = state.posMap && state.posMap[p.id];
       pp[p.id].name = p.n;
       pp[p.id].pos = (live && live.p) || p.p;
-      if (rec.date >= pp[p.id].tmD){ pp[p.id].tm = p.tm; pp[p.id].tmD = rec.date; } // latest team by date (trades)
+      if (rec.date >= pp[p.id].tmD){ pp[p.id].tm = p.tm; pp[p.id].tmD = rec.date; }
       const home = p.tm === rec.home.id;
       pp[p.id].rows.push({ date: rec.date, min: p.min, pts: p.pts, reb: p.reb, ast: p.ast, home: home, opp: home ? rec.away.ab : rec.home.ab });
     }
-  });
+  }
   const byDate = function(x, y){ return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; };
   for (const k in pp) pp[k].rows.sort(byDate);
   for (const k in tl) tl[k].sort(byDate);
   state.priorPlayer = pp;
   state.teamLog = tl;
+  state.lgCache = null; state.defCache = null; // baselines depend on the log
   state.coverage = { games: n, from: minD, to: maxD, players: Object.keys(pp).length, kb: Math.round(bytes / 1024) };
   logEvent('info', 'data', 'hydrated ' + n + ' records \u00b7 ' + state.coverage.players + ' players \u00b7 ~' + state.coverage.kb + 'KB');
   return state.coverage;
+}
+
+function hydrateFromStore(){
+  const list = [];
+  eachStoredRecord(function(rec){ list.push(rec); });
+  return hydrateFromList(list);
+}
+
+/* Seed the whole season from the cloud that the grading autopilot fills
+   (nba_recs/{date}). Hydrates directly from the fetched records so a full
+   season projects even when this phone's shared localStorage is too full to
+   persist ~1,300 box scores. Opportunistically caches what fits for offline. */
+async function hydrateFromCloud(){
+  if (!fbReady()) throw new Error('Firebase not configured');
+  const docs = await fbListCol(FB_RECS);
+  const list = [];
+  for (const d in docs){
+    const recs = docs[d] && docs[d].recs;
+    if (!Array.isArray(recs)) continue;
+    for (const rec of recs){
+      list.push(rec);
+      try { if (rec && rec.id != null && !hasRecord(rec.id)) saveRecord(rec); } catch (e) {}
+    }
+    if (!dayDone(d)) markDay(d, recs.length);
+  }
+  hydrateFromList(list);
+  return { dates: Object.keys(docs).length, games: list.length, coverage: state.coverage };
 }
 
 /* ---- resumable date scan ---- */
@@ -771,7 +810,7 @@ async function buildData(fromStr, toStr){
   state.scan = { running: true, stop: false };
   const say = function(msg){ const el = document.getElementById('scanMsg'); if (el) el.textContent = msg; };
   const busy = function(dis){
-    ['updBtn', 'rangeBtn', 'rosterBtn'].forEach(function(id){
+    ['updBtn', 'rangeBtn', 'rosterBtn', 'cloudBtn'].forEach(function(id){
       const b = document.getElementById(id); if (b) b.disabled = dis;
     });
     const s = document.getElementById('stopBtn'); if (s) s.classList.toggle('hidden', !dis);
@@ -1016,7 +1055,18 @@ function projectGame(g, injuries, beforeDate){
 async function projectSlate(){
   if (!state.slate || state.slate.date !== state.slateDate){ toast('Load the slate first'); return; }
   if (!state.coverage) hydrateFromStore();
-  if (!state.coverage || !state.coverage.games){ toast('Build data first \u2014 Facts \u2192 Update'); return; }
+  if (!state.coverage || !state.coverage.games){
+    // Nothing built locally — try the cloud the grading autopilot fills.
+    if (fbReady()){
+      const pb = document.getElementById('projBtn');
+      const restore = pb ? pb.textContent : '';
+      if (pb){ pb.disabled = true; pb.textContent = 'Loading history\u2026'; }
+      try { const r = await hydrateFromCloud(); if (r.games) toast('Loaded ' + r.games + ' games from cloud'); }
+      catch (e){ logEvent('warn', 'data', 'cloud seed: ' + e.message); }
+      if (pb){ pb.disabled = false; pb.textContent = restore; }
+    }
+  }
+  if (!state.coverage || !state.coverage.games){ toast('No history yet \u2014 run the grading autopilot once, or Facts \u2192 Update'); return; }
   const btn = document.getElementById('projBtn');
   btn.disabled = true;
   let done = 0;
@@ -1140,6 +1190,60 @@ function betRowsForSearch(q){
 
 const DK_PREFIX = 'hiq_' + CACHE_VERSION + '_dk_';
 function fmtSigned(v){ return v == null ? '\u2014' : (v >= 0 ? '+' : '') + v; }
+
+/* ---- record sync + cron grading (headless GitHub Action) ----
+   pullRecsFB seeds local storage from nba_recs/{date} docs; pushRecsFB
+   mirrors any locally-built complete days back. runCronGrade is the whole
+   automated flow: seed -> build only genuinely new days from ESPN ->
+   regrade the season with the app's own model -> nba/allTime updated
+   (inside saveGateSummary) -> mirror new records. Idempotent: day markers
+   skip covered dates and regrading recomputes the same units. */
+async function pullRecsFB(){
+  const docs = await fbListCol(FB_RECS);
+  let seeded = 0;
+  for (const d in docs){
+    const recs = docs[d] && docs[d].recs;
+    if (!Array.isArray(recs)) continue;
+    for (const rec of recs){
+      if (rec && rec.id != null && !hasRecord(rec.id)){ saveRecord(rec); seeded++; }
+    }
+    if (!dayDone(d)) markDay(d, recs.length);
+  }
+  return { dates: Object.keys(docs).length, seeded: seeded };
+}
+async function pushRecsFB(){
+  const remote = await fbListCol(FB_RECS);
+  const byDate = loadRecsByDate();
+  let pushed = 0;
+  for (const d in byDate){
+    if (!dayDone(d)) continue;          // only mirror complete days
+    if (remote[d] && remote[d].recs && remote[d].recs.length >= byDate[d].length) continue;
+    await fbWrite(FB_RECS, d, { recs: byDate[d] });
+    pushed++;
+    await sleep(60);
+  }
+  return pushed;
+}
+async function runCronGrade(){
+  window.__cronStatus = 'cron: starting';
+  try { localStorage.setItem(PIN_OK_KEY, '1'); } catch (e) {}
+  try {
+    window.__cronStatus = 'cron: seeding records from Firebase';
+    const seed = await pullRecsFB();
+    window.__cronStatus = 'cron: building roster position map';
+    try { await buildPosMap(false, function(m){ window.__cronStatus = 'cron: ' + String(m || ''); }); }
+    catch (e){ /* degraded positions beat no grade — records freeze pos at parse */ }
+    window.__cronStatus = 'cron: building new days (' + seed.dates + ' seeded dates)';
+    await buildData(SEASON.start, todayPT());
+    window.__cronStatus = 'cron: regrading season';
+    await regradeAll();                 // saveGateSummary inside writes nba/allTime
+    window.__cronStatus = 'cron: mirroring new records';
+    const pushed = await pushRecsFB();
+    const dates = Object.keys(state.seasonUnits).length;
+    window.__cronStatus = 'cron: done — ' + dates + ' dates graded, ' + pushed + ' record day(s) mirrored, nba/allTime updated';
+  } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
+  window.__cronDone = true;
+}
 
 function loadRecsByDate(){
   const by = {};
@@ -1507,7 +1611,8 @@ function esc(s){
 }
 
 function renderGames(){
-  document.getElementById('dLabel').textContent = fmtSlateLabel(state.slateDate);
+  const dp = document.getElementById('dPick');
+  if (dp && dp.value !== state.slateDate) dp.value = state.slateDate;
   const list = document.getElementById('gamesList');
   const q = (document.getElementById('gameSearch').value || '').trim().toLowerCase();
   if (!state.slate || state.slate.date !== state.slateDate){
@@ -1659,8 +1764,8 @@ function renderGameDetail(id, summary){
   }
 
   if (!proj){
-    html += '<div class="card"><h2>Projection</h2><div class="muted small">Not enough walk-forward history before ' + esc(slateD) +
-      ' (needs \u226540 team-games). Build data first: Facts \u2192 Update.</div></div>';
+    html += '<div class="card"><h2>Projection</h2><div class="muted small">Not enough history before ' + esc(slateD) +
+      ' (needs \u226540 team-games). Load it first: <b>Facts \u2192 Pull from cloud</b> (once the grading autopilot has run), or <b>Facts \u2192 Update</b> to build it here. Loading a slate alone doesn\u2019t store box scores.</div></div>';
   } else {
     const lockW = proj.winMetric >= lockTh('winner');
     const lockT = proj.confTotal >= lockTh('lines');
@@ -1772,7 +1877,7 @@ function renderBets(){
 
 function coverageLine(){
   const c = state.coverage;
-  if (!c || !c.games) return 'No built data yet \u2014 tap Update to scan the ' + SEASON.label + ' season.';
+  if (!c || !c.games) return 'No built data yet \u2014 tap Update to scan the ' + SEASON.label + ' season, or Pull from cloud once the grading autopilot has run.';
   return c.games + ' games \u00b7 ' + c.players + ' players \u00b7 ' + c.from + ' \u2192 ' + c.to + ' \u00b7 ~' + c.kb + 'KB';
 }
 
@@ -1788,6 +1893,7 @@ function renderFactsDataCard(){
     '<div class="small muted" style="margin-top:2px">Rosters (BUG-2): ' + esc(rosterLine) + '</div>' +
     '<div class="row" style="margin-top:10px">' +
       '<button class="btn" id="updBtn">Update</button>' +
+      '<button class="btn ghost" id="cloudBtn">Pull from cloud</button>' +
       '<button class="btn ghost" id="rosterBtn">Refresh rosters</button>' +
       '<button class="btn ghost hidden" id="stopBtn">Stop</button></div>' +
     '<div class="row" style="margin-top:8px">' +
@@ -1799,6 +1905,18 @@ function renderFactsDataCard(){
 
   document.getElementById('updBtn').addEventListener('click', function(){
     buildData(SEASON.start, addDays(todayPT(), -1)); // day markers skip covered dates instantly
+  });
+  document.getElementById('cloudBtn').addEventListener('click', async function(){
+    if (state.scan && state.scan.running) return;
+    if (!fbReady()){ toast('Firebase not configured'); return; }
+    const b = document.getElementById('cloudBtn');
+    const say = function(m){ const x = document.getElementById('scanMsg'); if (x) x.textContent = m; };
+    b.disabled = true; say('Pulling season from cloud\u2026');
+    try {
+      const r = await hydrateFromCloud();
+      say(r.games ? ('Loaded ' + r.games + ' games across ' + r.dates + ' dates from cloud.') : 'Cloud is empty \u2014 run the grading autopilot once, then pull again.');
+    } catch (e){ say('Cloud pull failed \u2014 ' + e.message); }
+    finally { b.disabled = false; renderFactsDataCard(); }
   });
   document.getElementById('rangeBtn').addEventListener('click', function(){
     const f = document.getElementById('fromD').value.trim();
@@ -2234,6 +2352,12 @@ function toast(msg){
 }
 
 function boot(){
+  /* CRON MODE (?cron=1): headless grading for the GitHub Action — no UI. */
+  if (new URLSearchParams(location.search).get('cron') === '1'){
+    state.settings = loadSettings();
+    runCronGrade();
+    return;
+  }
   document.getElementById('verBadge').textContent = 'v' + APP.version;
   document.getElementById('fbPill').textContent = fbReady() ? 'FB: ' + FB.projectId : 'Firebase: not set';
   purgeStaleCache(); // quota hygiene only — no data fetches on boot
@@ -2245,6 +2369,10 @@ function boot(){
   });
   document.getElementById('dNext').addEventListener('click', function(){
     state.slateDate = addDays(state.slateDate, 1); closeGame(); renderGames();
+  });
+  document.getElementById('dPick').addEventListener('change', function(e){
+    const v = (e.target.value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)){ state.slateDate = v; closeGame(); renderGames(); }
   });
   document.getElementById('todayBtn').addEventListener('click', function(){
     state.slateDate = todayPT(); closeGame(); renderGames();
