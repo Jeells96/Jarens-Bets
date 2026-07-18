@@ -785,8 +785,12 @@ function hydrateFromStore(){
    season projects even when this phone's shared localStorage is too full to
    persist ~1,300 box scores. Opportunistically caches what fits for offline. */
 async function hydrateFromCloud(){
-  if (!fbReady()) throw new Error('Firebase not configured');
-  const docs = await fbListCol(FB_RECS);
+  if (!fbReady()){ toast('Cloud off: Firebase not configured', 5000); throw new Error('Firebase not configured'); }
+  toast('Cloud: reading nba_recs from ' + FB.projectId + '\u2026', 4000);
+  let docs;
+  try { docs = await fbListCol(FB_RECS); }
+  catch (e){ toast('Cloud read FAILED: ' + e.message, 6000); throw e; }
+  const dateCount = Object.keys(docs).length;
   const list = [];
   for (const d in docs){
     const recs = docs[d] && docs[d].recs;
@@ -797,8 +801,16 @@ async function hydrateFromCloud(){
     }
     if (!dayDone(d)) markDay(d, recs.length);
   }
+  if (!list.length){
+    toast('Cloud is EMPTY (' + dateCount + ' docs, 0 games) \u2014 run the grading autopilot once, then pull again', 7000);
+    hydrateFromList(list);
+    return { dates: dateCount, games: 0, coverage: state.coverage };
+  }
+  toast('Cloud: found ' + list.length + ' games across ' + dateCount + ' dates \u2014 hydrating\u2026', 4000);
   hydrateFromList(list);
-  return { dates: Object.keys(docs).length, games: list.length, coverage: state.coverage };
+  const c = state.coverage;
+  toast('Cloud loaded: ' + c.games + ' games \u00b7 ' + c.from + '\u2192' + c.to + ' \u00b7 ' + c.players + ' players', 6000);
+  return { dates: dateCount, games: list.length, coverage: c };
 }
 
 /* ---- resumable date scan ---- */
@@ -1055,21 +1067,35 @@ function projectGame(g, injuries, beforeDate){
 async function projectSlate(){
   if (!state.slate || state.slate.date !== state.slateDate){ toast('Load the slate first'); return; }
   if (!state.coverage) hydrateFromStore();
+  if (state.coverage) toast('History on this device: ' + state.coverage.games + ' games', 3500);
   if (!state.coverage || !state.coverage.games){
     // Nothing built locally — try the cloud the grading autopilot fills.
     if (fbReady()){
+      toast('No local history \u2014 pulling from cloud\u2026', 4000);
       const pb = document.getElementById('projBtn');
       const restore = pb ? pb.textContent : '';
       if (pb){ pb.disabled = true; pb.textContent = 'Loading history\u2026'; }
-      try { const r = await hydrateFromCloud(); if (r.games) toast('Loaded ' + r.games + ' games from cloud'); }
+      try { await hydrateFromCloud(); }
       catch (e){ logEvent('warn', 'data', 'cloud seed: ' + e.message); }
       if (pb){ pb.disabled = false; pb.textContent = restore; }
+    } else {
+      toast('Firebase not configured \u2014 use Facts \u2192 Update to build locally', 6000);
     }
   }
-  if (!state.coverage || !state.coverage.games){ toast('No history yet \u2014 run the grading autopilot once, or Facts \u2192 Update'); return; }
+  if (!state.coverage || !state.coverage.games){
+    toast('Still no history \u2014 run the grading autopilot once (Actions tab), or Facts \u2192 Update', 7000);
+    return;
+  }
+  // Report walk-forward availability BEFORE the slate date so "0 projections" is explained.
+  const lgChk = leagueBaselines(state.slate.date);
+  if (lgChk.nRows < 40){
+    toast('Have ' + state.coverage.games + ' games but only ' + lgChk.nRows + ' team-games before ' + state.slate.date + ' (need 40). Pick a later date or build earlier games.', 8000);
+    return;
+  }
   const btn = document.getElementById('projBtn');
   btn.disabled = true;
   let done = 0;
+  toast('Projecting ' + state.slate.games.length + ' games (' + lgChk.nRows + ' prior team-games)\u2026', 4000);
   try {
     for (const g of state.slate.games){
       done++;
@@ -1083,8 +1109,9 @@ async function projectSlate(){
       if (proj){ proj.inj = inj; state.projections[g.id] = proj; }
       await sleep(80);
     }
-    logEvent('info', 'model', 'projected ' + Object.keys(state.projections).length + '/' + state.slate.games.length + ' games for ' + state.slate.date);
-    if (!Object.keys(state.projections).length) toast('No projections \u2014 need \u226540 team-games of history before this date');
+    const n = Object.keys(state.projections).length;
+    logEvent('info', 'model', 'projected ' + n + '/' + state.slate.games.length + ' games for ' + state.slate.date);
+    toast(n ? ('Projected ' + n + '/' + state.slate.games.length + ' games \u2713') : 'Projected 0 \u2014 see log for why', n ? 3000 : 6000);
     renderGames();
   } finally {
     btn.disabled = false;
@@ -2343,12 +2370,12 @@ function switchTab(name){
   if (name === 'settings') renderSettings();
 }
 
-function toast(msg){
+function toast(msg, ms){
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.remove('hidden');
   clearTimeout(toast._h);
-  toast._h = setTimeout(function(){ t.classList.add('hidden'); }, 2600);
+  toast._h = setTimeout(function(){ t.classList.add('hidden'); }, ms || 2600);
 }
 
 function boot(){
