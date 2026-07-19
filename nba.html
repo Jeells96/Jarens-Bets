@@ -802,7 +802,7 @@ async function hydrateFromCloud(){
     if (!dayDone(d)) markDay(d, recs.length);
   }
   if (!list.length){
-    toast('Cloud is EMPTY (' + dateCount + ' docs, 0 games) \u2014 run the grading autopilot once, then pull again', 7000);
+    logEvent('info', 'data', 'cloud empty (' + dateCount + ' docs) \u2014 nothing to sync yet');
     hydrateFromList(list);
     return { dates: dateCount, games: 0, coverage: state.coverage };
   }
@@ -822,7 +822,7 @@ async function buildData(fromStr, toStr){
   state.scan = { running: true, stop: false };
   const say = function(msg){ const el = document.getElementById('scanMsg'); if (el) el.textContent = msg; };
   const busy = function(dis){
-    ['updBtn', 'rangeBtn', 'rosterBtn', 'cloudBtn', 'pushBtn'].forEach(function(id){
+    ['updBtn', 'rangeBtn', 'rosterBtn'].forEach(function(id){
       const b = document.getElementById(id); if (b) b.disabled = dis;
     });
     const s = document.getElementById('stopBtn'); if (s) s.classList.toggle('hidden', !dis);
@@ -886,6 +886,14 @@ async function buildData(fromStr, toStr){
     }
     if (!state.scan.stop){
       say('Done \u00b7 ' + recorded + ' new games recorded' + (failures ? ' \u00b7 ' + failures + ' failures (see log)' : ''));
+      if (recorded > 0 && fbReady()){
+        // Cloud sync is automatic: anything built here is shared immediately.
+        try {
+          say('Backing up to cloud\u2026');
+          const pushed = await pushRecsFB();
+          say('Done \u00b7 ' + recorded + ' new games recorded \u00b7 ' + pushed + ' day(s) backed up to cloud');
+        } catch (e){ logEvent('warn', 'data', 'auto push after build: ' + e.message); }
+      }
     }
   } catch (e){
     logEvent('err', 'data', 'build failed: ' + e.message);
@@ -1260,6 +1268,26 @@ async function pushRecsFB(){
   }
   return pushed;
 }
+/* Cloud sync is NOT optional: every device pulls the shared season on boot and
+   pushes any locally-built days back, automatically. Quiet when in sync. */
+async function autoCloudSync(){
+  if (!fbReady()) return;
+  if (state.cloudSync && state.cloudSync.running) return;
+  state.cloudSync = { running: true };
+  try {
+    const before = state.coverage ? state.coverage.games : (hydrateFromStore().games || 0);
+    let r = null;
+    try { r = await hydrateFromCloud(); } catch (e){ logEvent('warn', 'data', 'auto pull: ' + e.message); }
+    const after = state.coverage ? state.coverage.games : 0;
+    if (r && after > before) toast('Cloud sync: +' + (after - before) + ' games', 3000);
+    try {
+      const pushed = await pushRecsFB();
+      if (pushed) toast('Backed up ' + pushed + ' day(s) to the cloud', 3000);
+    } catch (e){ logEvent('warn', 'data', 'auto push: ' + e.message); }
+    try { if (document.getElementById('updBtn')) renderFactsDataCard(); } catch (e) {}
+  } finally { state.cloudSync.running = false; }
+}
+
 async function runCronGrade(){
   window.__cronStatus = 'cron: starting';
   try { localStorage.setItem(PIN_OK_KEY, '1'); } catch (e) {}
@@ -1836,7 +1864,7 @@ function renderGameDetail(id, summary){
 
   if (!proj){
     html += '<div class="card"><h2>Projection</h2><div class="muted small">Not enough history before ' + esc(slateD) +
-      ' (needs \u226540 team-games). Load it first: <b>Facts \u2192 Pull from cloud</b> (once the grading autopilot has run), or <b>Facts \u2192 Update</b> to build it here. Loading a slate alone doesn\u2019t store box scores.</div></div>';
+      ' (needs \u226540 team-games). Cloud sync runs automatically on open \u2014 if this persists, the autopilot hasn\u2019t built the season yet (run it once), or tap <b>Facts \u2192 Update</b> to build here. Loading a slate alone doesn\u2019t store box scores.</div></div>';
   } else {
     const lockW = proj.winMetric >= lockTh('winner');
     const lockT = proj.confTotal >= lockTh('lines');
@@ -1948,7 +1976,7 @@ function renderBets(){
 
 function coverageLine(){
   const c = state.coverage;
-  if (!c || !c.games) return 'No built data yet \u2014 tap Update to scan the ' + SEASON.label + ' season, or Pull from cloud once the grading autopilot has run.';
+  if (!c || !c.games) return 'No data on this device yet \u2014 cloud sync runs automatically on open; tap Update to build from ESPN here.';
   return c.games + ' games \u00b7 ' + c.players + ' players \u00b7 ' + c.from + ' \u2192 ' + c.to + ' \u00b7 ~' + c.kb + 'KB';
 }
 
@@ -1964,8 +1992,6 @@ function renderFactsDataCard(){
     '<div class="small muted" style="margin-top:2px">Rosters (BUG-2): ' + esc(rosterLine) + '</div>' +
     '<div class="row" style="margin-top:10px">' +
       '<button class="btn" id="updBtn">Update</button>' +
-      '<button class="btn ghost" id="cloudBtn">Pull from cloud</button>' +
-      '<button class="btn ghost" id="pushBtn">Push to cloud</button>' +
       '<button class="btn ghost" id="rosterBtn">Refresh rosters</button>' +
       '<button class="btn ghost hidden" id="stopBtn">Stop</button></div>' +
     '<div class="row" style="margin-top:8px">' +
@@ -1977,40 +2003,6 @@ function renderFactsDataCard(){
 
   document.getElementById('updBtn').addEventListener('click', function(){
     buildData(SEASON.start, addDays(todayPT(), -1)); // day markers skip covered dates instantly
-  });
-  document.getElementById('cloudBtn').addEventListener('click', async function(){
-    if (state.scan && state.scan.running) return;
-    if (!fbReady()){ toast('Firebase not configured'); return; }
-    const b = document.getElementById('cloudBtn');
-    const say = function(m){ const x = document.getElementById('scanMsg'); if (x) x.textContent = m; };
-    b.disabled = true; say('Pulling season from cloud\u2026');
-    try {
-      const r = await hydrateFromCloud();
-      say(r.games ? ('Loaded ' + r.games + ' games across ' + r.dates + ' dates from cloud.') : 'Cloud is empty \u2014 run the grading autopilot once, then pull again.');
-    } catch (e){ say('Cloud pull failed \u2014 ' + e.message); }
-    finally { b.disabled = false; renderFactsDataCard(); }
-  });
-  document.getElementById('pushBtn').addEventListener('click', async function(){
-    if (state.scan && state.scan.running) return;
-    if (!fbReady()){ toast('Firebase not configured'); return; }
-    const b = document.getElementById('pushBtn');
-    const say = function(m){ const x = document.getElementById('scanMsg'); if (x) x.textContent = m; };
-    const byDate = loadRecsByDate();
-    const dates = Object.keys(byDate).sort();
-    if (!dates.length){ say('Nothing to push \u2014 build the season first with Update.'); return; }
-    b.disabled = true;
-    let pushed = 0;
-    try {
-      for (let i = 0; i < dates.length; i++){
-        const d = dates[i];
-        say('Pushing to cloud\u2026 ' + (i + 1) + '/' + dates.length + ' (' + d + ')');
-        await fbWrite(FB_RECS, d, { recs: byDate[d] });
-        pushed++;
-        await sleep(60);
-      }
-      say('Pushed ' + pushed + ' day(s) to the cloud. Autopilot + other devices can now use them.');
-    } catch (e){ say('Push failed after ' + pushed + ' day(s) \u2014 ' + e.message); }
-    finally { b.disabled = false; }
   });
   document.getElementById('rangeBtn').addEventListener('click', function(){
     const f = document.getElementById('fromD').value.trim();
@@ -2484,7 +2476,8 @@ function boot(){
 
   renderGames();
   if (isUnlocked()) hideGate(); else showGate();
-  logEvent('info', 'boot', APP.name + ' v' + APP.version + ' ready \u2014 no data auto-loaded');
+  logEvent('info', 'boot', APP.name + ' v' + APP.version + ' ready \u2014 cloud sync starting');
+  setTimeout(function(){ autoCloudSync(); }, 60); // mandatory, non-blocking, quiet when in sync
 }
 document.addEventListener('DOMContentLoaded', boot);
 </script>

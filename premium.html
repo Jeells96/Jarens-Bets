@@ -1644,6 +1644,57 @@ async function autoGradePriorDays(fromDate,prog){
   }
 }
 
+/* Retro-load a past day through the SAME path a manual load uses: predicts from
+   confirmed lineups, grades vs box scores, pushes the day + summary. Restores
+   the current board afterward (backfillYesterday's snapshot pattern). */
+async function retroLoadDay(d){
+  const snap={ROWS,MK,PENDING,DAY_RESULTS,CUR_DATE};
+  const prev=$('dp').value;
+  $('dp').value=d;
+  try{ await loadDay(); }
+  finally{
+    ROWS=snap.ROWS;MK=snap.MK;PENDING=snap.PENDING;DAY_RESULTS=snap.DAY_RESULTS;CUR_DATE=snap.CUR_DATE;
+    $('dp').value=prev;
+  }
+}
+
+/* The guarantee the automation relies on: every recent prior day ends up
+   graded in the summary, exactly as if it had been loaded by hand.
+   - saved picks + ungraded  -> grade them (fetchDayScores + storeResults)
+   - no saved picks          -> retro-load the day (same as a manual load)
+   - already graded          -> skip
+   Returns a per-day report so cron logs can PROVE what happened instead of
+   "should have". Partial days (not all games final) stay ungraded on purpose
+   and complete on a later run. */
+async function ensurePriorDaysGraded(fromDate,prog,daysBack){
+  const report=[];
+  for(let i=1;i<=(daysBack||3);i++){
+    const d=addDays(fromDate,-i);
+    let local=null;
+    try{local=JSON.parse(localStorage.getItem('fablehits_'+d)||'null');}catch(e){}
+    const remote=FBH.ready?await fbPull(d):null;
+    const rows=(remote?.rows?.length||0)||(local?.rows?.length||0);
+    const done=(remote?.graded===true)||(local?.graded===true);
+    if(done){ report.push(d+': already graded'); continue; }
+    try{
+      if(rows>0){
+        prog('Grading '+d+' ('+rows+' saved picks)…');
+        const g=await fetchDayScores(d,t=>prog('Grading '+d+' — '+t));
+        if(Object.keys(g.res).length){
+          await storeResults(d,g);
+          report.push(d+': graded '+rows+' picks ('+g.finals+'/'+g.total+' final)');
+        } else report.push(d+': no box scores yet ('+g.finals+'/'+g.total+' final)');
+      } else {
+        prog('No saved picks for '+d+' — retro-loading…');
+        await retroLoadDay(d);
+        report.push(d+': retro-loaded + graded');
+      }
+    }catch(e){ report.push(d+': FAILED — '+(e&&e.message||e)); }
+  }
+  report.forEach(r=>{try{console.log('[premium] '+r);}catch(e){}});
+  return report;
+}
+
 /* ── stored-day access + per-market grading ── */
 let RM='hits',RVIEW='14d',REXP=null;
 let DAY_RESULTS=null; // outcomes for the date shown on the Today tab (past days)
@@ -2101,19 +2152,24 @@ async function bootLeagueLoad(){
            graded, so "done" can never again hide a zero-work sweep. */
         const _sr=storeResults; let gradedN=0;
         storeResults=async function(d,g){gradedN++;console.log('[premium] graded '+d);return _sr(d,g);};
-        try{ await autoGradePriorDays(todayStr(),m=>{window.__cronStatus='cron: '+String(m||'');}); }
+        let report=[];
+        try{ report=await ensurePriorDaysGraded(todayStr(),m=>{window.__cronStatus='cron: '+String(m||'');},3); }
         finally{ storeResults=_sr; }
         await computeSuccessStats();
-        /* Picks-pipeline health: grading can only score saved picks. Say
-           plainly whether yesterday's picks exist so an empty sweep is
-           explained in the log instead of silent. */
+        /* VERIFY, don't trust: yesterday must be in the summary now, unless
+           MLB simply had no games. A miss is a loud named failure. */
+        const yd=addDays(todayStr(),-1);
+        let ydGames=0; try{ ydGames=(await fetchScheduleDay(yd)).length; }catch(e){}
+        let ydInSummary=false, ydLine='';
         try{
-          const yd=addDays(todayStr(),-1);
-          const doc=await fbPull(yd);
-          const nRows=doc&&doc.rows?doc.rows.length:0;
-          console.log('[premium] picks saved for '+yd+': '+(nRows?('yes ('+nRows+' rows)'):'NO — run the Make Picks workflow so grading has something to score'));
+          const doc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
+          const t=doc.exists?((doc.data().days||{})[yd]||null):null;
+          ydInSummary=!!t;
+          if(t&&t.hits)ydLine=' (hits '+(t.hits.h||0)+'/'+(t.hits.n||0)+')';
         }catch(e){}
-        window.__cronStatus='cron: done — '+gradedN+' day(s) graded this run; summary pushed';
+        console.log('[premium] verify: '+yd+' in summary: '+(ydInSummary?('YES'+ydLine):'NO')+' \u00b7 '+ydGames+' games were scheduled');
+        if(!ydInSummary&&ydGames>0)throw new Error('yesterday ('+yd+') missing from summary after grading \u2014 '+report.join(' | '));
+        window.__cronStatus='cron: done — '+gradedN+' day(s) graded this run; '+yd+' verified in summary'+(ydGames?'':' (no games that day)');
       }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;
     })();
@@ -2139,6 +2195,10 @@ async function bootLeagueLoad(){
         $('dp').value=todayStr();
         window.__cronStatus='picks: generating '+todayStr();
         await loadDay();   // free MLB data + DK lines read from Firebase -> saves fable_hits
+        /* Belt + suspenders: loadDay's own sweep should have graded prior
+           days, but run the guarantee too so a hiccup inside loadDay can
+           never leave yesterday ungraded. Already-graded days skip instantly. */
+        try{ await ensurePriorDaysGraded(todayStr(),m=>{window.__cronStatus='picks: '+String(m||'');},2); }catch(e){}
         window.__cronStatus='picks: done — locks generated + saved for '+todayStr();
       }catch(e){window.__cronStatus='picks: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;
