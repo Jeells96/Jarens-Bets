@@ -4419,6 +4419,11 @@ async function loadFirebaseAccuracy() {
 }
 
 function renderFacts(main) {
+  // Auto-load the all-time synced record the first time Facts opens — the
+  // button stays as a manual refresh, but nobody should have to tap it.
+  if (!state.fsAccuracy && !state.fsAccuracyLoading) {
+    setTimeout(() => { try { loadFirebaseAccuracy(); } catch (e) {} }, 0);
+  }
   // ---- All-time synced record from Firebase (works with nothing loaded) ----
   let fsHtml;
   if (state.fsAccuracyLoading) {
@@ -4726,9 +4731,9 @@ function renderGameBets(main) {
   let firstN = 0, firstHit = 0;
   let totErr = 0, totHitCount = 0, gradedGames = 0;
 
-  const gameCards = state.games.map(g => {
+  const gameEntries = state.games.map(g => {
     const proj = projectGame(g);
-    if (!proj) return '';
+    if (!proj) return null;
     const cands = buildTDCandidates(g, proj);
     const locks = cands.filter(c => c._td.prob >= lockTh('anytimeTd'));
     const firstPick = cands[0] || null;
@@ -4809,7 +4814,15 @@ function renderGameBets(main) {
 
     // Locks-only view: a game with no qualifying locks gets one compact line
     const hasAnyLock = !!(winBadge || lockRows || firstRow);
-    return '<div class="gb-game">' +
+    // strongest qualifying lock in this game — drives the strongest-first sort below
+    let bestConf = -1;
+    if (winnerIsLock) bestConf = Math.max(bestConf, winProbPct);
+    for (const c of locks) bestConf = Math.max(bestConf, c._td.prob);
+    if (firstRow){
+      const tl = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
+      if (firstPick && tl > 0) bestConf = Math.max(bestConf, ((firstPick._td.lambda || 0) / tl) * (1 - Math.exp(-tl)) * 100);
+    }
+    const cardHtml = '<div class="gb-game">' +
       '<div class="gb-head">' +
         '<div class="gb-teams">' + escapeHtml(g.away.abbr) + '<span class="at">@</span>' + escapeHtml(g.home.abbr) + '</div>' +
         (winBadge ? winBadge + catRateTag('winner') : '') +
@@ -4818,7 +4831,11 @@ function renderGameBets(main) {
         ? (lockRows ? '<div class="gb-sub">Anytime TD Locks (≥' + lockTh('anytimeTd') + '%, rush/rec only)' + catRateTag('anytimeTd') + '</div>' + lockRows : '') + firstRow
         : '<div class="gb-empty">No locks for this game at current thresholds.</div>') +
     '</div>';
-  }).join('');
+    return { conf: bestConf, html: cardHtml };
+  }).filter(Boolean);
+  // strongest games first; games with no qualifying locks sink to the bottom
+  gameEntries.sort((a, b) => b.conf - a.conf);
+  const gameCards = gameEntries.map(e => e.html).join('');
 
   // --- Summary card at top ---
   const mae = gradedGames ? (totErr / gradedGames).toFixed(1) : '—';

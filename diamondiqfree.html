@@ -10662,6 +10662,18 @@ function openHRLineMo(gamePk,opts={}){
   };
 
   document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMo();});
+
+  // Auto-sync on open: run the same guarded sync the ⇄ button uses, deferred
+  // so boot finishes first. syncFirebaseNow already caps its FB.ready wait at
+  // 5s and try/catches everything, so a Firebase timeout can't crash launch —
+  // the old hard-disable predates those guards. Cron modes run their own flow.
+  if(!__cronMode){
+    setTimeout(()=>{
+      Promise.resolve(window.syncFirebaseNow()).then(()=>{
+        try{if(UI.tab==='dash')renderTab();}catch(e){}
+      }).catch(e=>console.warn('[DIQ] auto-sync failed',e));
+    },1500);
+  }
 })();
 
 </script>
