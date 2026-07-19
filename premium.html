@@ -214,6 +214,7 @@ footer{padding:20px 16px;font-size:.62rem;color:var(--mt2);line-height:1.6;borde
 /* ============ FABLE HITS v1.0 — standalone, MLB StatsAPI only ============ */
 const MLB='https://statsapi.mlb.com';
 const LG_AVG=0.244;                 // league batting average baseline
+const LG_SLG=0.399;                 // league slugging baseline (drives the TB market)
 const BASELINE_GAME=0.66;           // avg starter's chance of >=1 hit — meter tick
 const PA_BY_SLOT=[4.65,4.55,4.45,4.35,4.20,4.05,3.90,3.75,3.60];
 const SEASON=(new Date()).getFullYear();
@@ -275,10 +276,10 @@ function showView(v){
 
 /* ── config (lock threshold), PIN, and access gate ── */
 const PIN='2325';
-const CONFIG={lock:0.78,hrLock:0.10,kEdge:0.45,bbEdge:0.25};
+const CONFIG={lock:0.78,hrLock:0.10,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gkEdge:1.5,hrlEdge:0.4};
 try{
   const c=JSON.parse(localStorage.getItem('fablehits_cfg')||'null');
-  if(c)['lock','hrLock','kEdge','bbEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
+  if(c)['lock','hrLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
 }catch(e){}
 window.CONFIG=CONFIG; // shared with the standalone stats engine
 function cfgSave(){try{localStorage.setItem('fablehits_cfg',JSON.stringify(CONFIG));}catch(e){}}
@@ -288,14 +289,14 @@ async function cfgPull(){
     const doc=await withTO(FBH.db.collection('fable_settings').doc('config').get(),6000);
     if(doc.exists){
       const d=doc.data();
-      ['lock','hrLock','kEdge','bbEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
+      ['lock','hrLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
     }
     cfgSave();
   }catch(e){}
 }
 async function cfgPush(){
   if(!FBH.ready)return;
-  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
+  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gkEdge:CONFIG.gkEdge,hrlEdge:CONFIG.hrlEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
 }
 
 const nameKey=n=>n.trim().toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,'_');
@@ -402,7 +403,7 @@ async function saveThresholds(){
   cfgSave();
   await cfgPush();
   // re-lean already-computed K/BB rows against the new edges (no refetch needed)
-  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge]].forEach(([m,th])=>{
+  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge],['gmK',CONFIG.gkEdge],['hrL',CONFIG.hrlEdge]].forEach(([m,th])=>{
     (MK[m]||[]).forEach(r=>{if(r.line!=null){r.lean=leanFor(r.exp,r.line,th);}});
   });
   if(ROWS.length)render(null);
@@ -474,9 +475,9 @@ let TEAM_PITCH={};   // teamId -> {k,bb,hr,ip} season aggregate (bullpen proxy)
 let TEAM_OAA={};     // team full name -> outs above average (Savant, advanced defense)
 let OAA_OK=null;
 let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
-let MK={hr:[],kP:[],kB:[],bbP:[],bbB:[]};
+let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gmK:[],hrL:[]};
 let MARKET='gm';
-const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gmK:'GAME K',hrL:'GAME HRs'};
 
 function toast(msg,kind){
   const wrap=document.getElementById('toasts');
@@ -722,13 +723,16 @@ async function fetchDayScores(date,onProg){
     if(onProg)onProg(`Box scores ${i+1}/${finals.length}…`);
     const box=await fetchJSON(`${MLB}/api/v1/game/${finals[i].gamePk}/boxscore`);
     const hs=nn(box?.teams?.home?.teamStats?.batting?.runs),as=nn(box?.teams?.away?.teamStats?.batting?.runs);
-    out['g'+finals[i].gamePk]={hs,as,homeAb:box?.teams?.home?.team?.abbreviation||'',awayAb:box?.teams?.away?.team?.abbreviation||''};
+    const tk=(nn(box?.teams?.home?.teamStats?.pitching?.strikeOuts)||0)+(nn(box?.teams?.away?.teamStats?.pitching?.strikeOuts)||0);
+    const thr=(nn(box?.teams?.home?.teamStats?.batting?.homeRuns)||0)+(nn(box?.teams?.away?.teamStats?.batting?.homeRuns)||0);
+    out['g'+finals[i].gamePk]={hs,as,tk,thr,homeAb:box?.teams?.home?.team?.abbreviation||'',awayAb:box?.teams?.away?.team?.abbreviation||''};
     ['home','away'].forEach(side=>{
       Object.values(box?.teams?.[side]?.players||{}).forEach(p=>{
         const b=p?.stats?.batting;
         if(b&&(b.atBats!=null||b.hits!=null)){
+          const tb=(nn(b.hits)||0)+(nn(b.doubles)||0)+2*(nn(b.triples)||0)+3*(nn(b.homeRuns)||0);
           out[p.person.id]=Object.assign(out[p.person.id]||{},
-            {h:nn(b.hits),ab:nn(b.atBats),so:nn(b.strikeOuts),bb:nn(b.baseOnBalls),hr:nn(b.homeRuns)});
+            {h:nn(b.hits),ab:nn(b.atBats),so:nn(b.strikeOuts),bb:nn(b.baseOnBalls),hr:nn(b.homeRuns),tb});
         }
         const pi=p?.stats?.pitching;
         if(pi&&pi.strikeOuts!=null){
@@ -1077,6 +1081,24 @@ function batterLine(b,slot,pitcher,kind){
   return{exp,r,pMult,paEst,reasons};
 }
 
+/* \u2500\u2500 TOTAL BASES: expected TB = at-bats \u00d7 slugging blend (60% xSLG / 40% SLG,
+   regressed by PA), scaled by the hit model's pitcher + split multipliers and a
+   half-strength park HR factor. TB/AB IS slugging, so the advanced xSLG signal
+   maps directly onto the DK batter_total_bases line. \u2500\u2500 */
+function batterTB(b,s,parkName){
+  const ov=b.overall;const pa=ov.pa||0;const reasons=[];
+  const slgBlend=(ov.xSLG!=null&&ov.slg!=null)?0.6*ov.xSLG+0.4*ov.slg:(ov.xSLG??ov.slg);
+  if(slgBlend==null||!(s.ab>0))return null;
+  const slgAdj=regressV(slgBlend,LG_SLG,pa,250);
+  const parkT=1+((PARK_HR[parkName]||1)-1)*0.5;
+  const exp=s.ab*slgAdj*clampN(s.pitMult,0.85,1.18)*clampN(s.splitMult,0.9,1.12)*parkT;
+  if(ov.xSLG!=null&&ov.xSLG>=0.5)reasons.push({t:'Elite expected slugging \u2014 xSLG '+ov.xSLG.toFixed(3),k:'good'});
+  else if(ov.xSLG!=null&&ov.xSLG<=0.34)reasons.push({t:'Weak expected slugging \u2014 xSLG '+ov.xSLG.toFixed(3),k:'bad'});
+  if(s.pitMult>=1.08)reasons.push({t:'Favorable pitcher matchup boosts damage (\u00d7'+s.pitMult.toFixed(2)+')',k:'good'});
+  else if(s.pitMult<=0.92)reasons.push({t:'Tough pitcher suppresses damage (\u00d7'+s.pitMult.toFixed(2)+')',k:'bad'});
+  return{exp,slgAdj,reasons};
+}
+
 /* ── GAME LINES MODEL ──────────────────────────────────────────────────────
    Expected runs per side = league 4.45 R/G scaled by:
    • lineup offense index — every batter's xwOBA, regressed by PA, split-adjusted
@@ -1252,7 +1274,8 @@ async function loadDay(){
   const date=$('dp').value||todayStr();
   CUR_DATE=date;
   const btn=$('loadBtn');btn.disabled=true;btn.textContent='Loading…';
-  ROWS=[];PENDING=[];MK={hr:[],kP:[],kB:[],bbP:[],bbB:[],gm:[]};const PITJOBS=[];const GAMEJOBS=[];
+  ROWS=[];PENDING=[];MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmK:[],hrL:[]};const PITJOBS=[];const GAMEJOBS=[];
+  const EXPHR={},SPKEXP={}; // per-batter expected HR count / per-starter expected K — feed the game-level markets
   try{
     prog('Fetching schedule…');
     const games=await fetchScheduleDay(date);
@@ -1356,6 +1379,17 @@ async function loadDay(){
       MK.hr.push({id:j.pid,name:j.name,team:j.team,opp:j.opp,slot:j.slot,
         pit:j.oppPitName||'TBD',pHand,verified:j.verified,prob:hs.prob,reasons:hs.reasons,
         math:'per-PA '+(hs.pPA*100).toFixed(2)+'% \u00d7 ~'+hs.paEst.toFixed(1)+' PA \u00b7 split \u00d7'+hs.splitMult.toFixed(2)+' \u00b7 pitcher \u00d7'+hs.pitMult.toFixed(2)+' \u00b7 hit \u00d7'+(hs.hitMult||1).toFixed(2)+' \u00b7 park \u00d7'+hs.parkF.toFixed(2)});
+      EXPHR[j.pid]=hs.pPA*hs.paEst;
+      // TOTAL BASES market with the DK batter_total_bases line
+      const tbm=batterTB(b,s,j.park);
+      if(tbm){
+        const tdk=propFor(j.name,'batter_total_bases');
+        MK.tb.push({id:j.pid,name:j.name,team:j.team,opp:j.opp,
+          pit:j.oppPitName||'TBD',verified:j.verified,exp:Math.round(tbm.exp*100)/100,
+          line:tdk?.line??null,lean:leanFor(tbm.exp,tdk?.line,CONFIG.tbEdge??0.45),
+          edge:tdk?.line!=null?tbm.exp-tdk.line:null,reasons:tbm.reasons,
+          math:'~'+s.ab.toFixed(1)+' AB \u00d7 '+tbm.slgAdj.toFixed(3)+' adj SLG \u00d7 pitcher \u00d7'+s.pitMult.toFixed(2)+' \u00d7 park'});
+      }
       // batter K + BB markets with DK lines
       [['k','kB','batter_strikeouts',CONFIG.kEdge],['bb','bbB','batter_walks',CONFIG.bbEdge]].forEach(([kind,mk,mkt,th])=>{
         const bl=batterLine(b,j.slot,pit,kind);
@@ -1375,6 +1409,7 @@ async function loadDay(){
       [['k','kP','pitcher_strikeouts',CONFIG.kEdge],['bb','bbP','pitcher_walks',CONFIG.bbEdge]].forEach(([kind,mk,mkt,th])=>{
         const pl=pitcherLine(pit,oppB,kind);
         if(!pl)return;
+        if(kind==='k')SPKEXP[pj.pid]=pl.exp;
         const dk=propFor(pit.name,mkt);
         MK[mk].push({id:pj.pid,name:pit.name||('#'+pj.pid),team:pj.team,opp:pj.opp,
           pit:'',verified:pj.verified,exp:pl.exp,
@@ -1416,10 +1451,43 @@ async function loadDay(){
         eA:Math.round(g.eA*10)/10,eH:Math.round(g.eH*10)/10,total:g.total,
         mlEdge:mlEdge!=null?Math.round(mlEdge*1000)/1000:null,mlLean,
         totLine,totLean,verified:gj.verified,reasons:g.reasons,math:g.math});
+      // GAME K TOTAL — both starters' expected K (full advanced model) + each
+      // bullpen's K rate over the remaining ~3.6 innings. Graded vs a standard
+      // 16.5 combined-K line; the model only leans when it clears gkEdge.
+      {
+        const spH=SPKEXP[gj.hSPid],spA=SPKEXP[gj.aSPid];
+        if(spH!=null&&spA!=null){
+          const bp=id=>{const t=TEAM_PITCH[id];return(t&&t.ip>0)?(t.k/t.ip)*3.6:3.5;};
+          const exp=Math.round((spH+spA+bp(gj.hId)+bp(gj.aId))*10)/10;
+          const GK_LINE=16.5;
+          MK.gmK.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
+            verified:gj.verified,exp,line:GK_LINE,lean:leanFor(exp,GK_LINE,CONFIG.gkEdge??1.5),
+            edge:exp-GK_LINE,reasons:[
+              {t:'Starters: '+spA.toFixed(1)+' + '+spH.toFixed(1)+' expected K (lineup-adjusted)',k:'info'},
+              {t:'Bullpens add ~'+(bp(gj.hId)+bp(gj.aId)).toFixed(1)+' K over the late innings',k:'info'}],
+            math:'SP '+spA.toFixed(1)+'+'+spH.toFixed(1)+' K + bullpens '+(bp(gj.aId)).toFixed(1)+'+'+(bp(gj.hId)).toFixed(1)+' vs '+GK_LINE});
+        }
+      }
+      // GAME HR LINE — expected homers = sum of every batter's expected HR count
+      // (each already carries split/pitcher/park/power adjustments). Over/under
+      // the standard 2.5 combined-HR line, leaning only past hrlEdge.
+      {
+        const ids=[...gj.hLids,...gj.aLids].filter(id=>EXPHR[id]!=null);
+        if(ids.length>=12){
+          const raw=ids.reduce((s2,id)=>s2+EXPHR[id],0);
+          const exp=Math.round(raw*(18/ids.length)*10)/10; // normalize to 18 lineup spots
+          const HRL_LINE=2.5;
+          MK.hrL.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
+            verified:gj.verified,exp,line:HRL_LINE,lean:leanFor(exp,HRL_LINE,CONFIG.hrlEdge??0.4),
+            edge:Math.round((exp-HRL_LINE)*100)/100,reasons:[
+              {t:'Sum of '+ids.length+' batters’ expected HR (power, split, pitcher, park each priced in)',k:'info'}],
+            math:'Σ expected HR '+exp+' vs '+HRL_LINE});
+        }
+      }
     });
     MK.gm.sort((a,b)=>(b.conf||0)-(a.conf||0));
     ['hr'].forEach(m=>MK[m].sort((a,b)=>b.prob-a.prob));
-    ['kP','kB','bbP','bbB'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
+    ['kP','kB','bbP','bbB','tb','gmK','hrL'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
     // LOCK RULE: any row that was VERIFIED in an earlier run (local or league Firebase)
     // keeps its original score — refresh only overrides unverified/projected rows.
     prog('Checking earlier runs…');
@@ -1541,7 +1609,7 @@ function showCached(){
 // game that day went Final — partial days regrade on the next Load.
 
 function dayTallies(rows,mk,res,dbgDate){
-  const t={hits:{h:0,n:0},hr:{h:0,n:0},kP:{w:0,l:0,p:0},kB:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},bbB:{w:0,l:0,p:0},gm:{w:0,l:0,p:0}};
+  const t={hits:{h:0,n:0},hr:{h:0,n:0},kP:{w:0,l:0,p:0},kB:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},bbB:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
     if(!r.verified)return;
     const g=res['g'+r.id];
@@ -1562,7 +1630,7 @@ function dayTallies(rows,mk,res,dbgDate){
     if(!playedBat(o))return;
     t.hr.n++;if((o.hr||0)>=1)t.hr.h++;
   });
-  ['kP','kB','bbP','bbB'].forEach(m=>{
+  ['kP','kB','bbP','bbB','tb','gmK','hrL'].forEach(m=>{
     ((mk&&mk[m])||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag)return;
       const gr=lineGrade(r,MK_ACTUAL[m](res[r.id]||res[String(r.id)]));
@@ -1705,7 +1773,7 @@ function lineGrade(r,actual){
   if(actual<r.line)return r.lean==='UNDER'?'W':'L';
   return 'P';
 }
-const MK_ACTUAL={kB:o=>o?.so??null,bbB:o=>o?.bb??null,kP:o=>o?.pk??null,bbP:o=>o?.pbb??null};
+const MK_ACTUAL={kB:o=>o?.so??null,bbB:o=>o?.bb??null,kP:o=>o?.pk??null,bbP:o=>o?.pbb??null,tb:o=>o?.tb??null,gmK:o=>o?.tk??null,hrL:o=>o?.thr??null};
 window.MK_ACTUAL=MK_ACTUAL;window.playedBat=playedBat;
 
 async function loadStoredDay(date){
@@ -1975,8 +2043,10 @@ function drawCurrent(rowsOverride){
     drawGames(rows);
   }else{
     const withLine=rows.filter(r=>r.line!=null).length;
-    const unit=MARKET.startsWith('k')?'strikeouts':'walks';
-    head.innerHTML=`<div class="chips"><span class="chip"><b>${rows.length}</b> ${MARKET.endsWith('P')?'pitchers':'batters'} · expected ${unit}</span><span class="chip"><b>${withLine}</b> with DK lines${withLine?'':' — pull props on Diamond IQ main first'}</span></div>`;
+    const unit=MARKET==='tb'?'total bases':MARKET==='gmK'?'combined strikeouts':MARKET==='hrL'?'combined home runs':MARKET.startsWith('k')?'strikeouts':'walks';
+    const who=(MARKET==='gmK'||MARKET==='hrL')?'games':MARKET.endsWith('P')?'pitchers':'batters';
+    const lineNote=(MARKET==='gmK'||MARKET==='hrL')?`<span class="chip">graded vs the standard ${MARKET==='gmK'?'16.5':'2.5'} line</span>`:`<span class="chip"><b>${withLine}</b> with DK lines${withLine?'':' — pull props on Diamond IQ main first'}</span>`;
+    head.innerHTML=`<div class="chips"><span class="chip"><b>${rows.length}</b> ${who} · expected ${unit}</span>${lineNote}</div>`;
     drawLineList(rows);
   }
 }
@@ -2100,7 +2170,7 @@ function applyFilter(){
    only overrides unconfirmed matchups (confirmed ones are locked). */
 function hydrateCompact(remote){
   ROWS=(remote.rows||[]).map(r=>({...r,locked:!!r.verified,reasons:null,pAB:0,ab:0,splitMult:1,pitMult:1,ptMult:1,parkF:1}));
-  MK={hr:[],kP:[],kB:[],bbP:[],bbB:[],gm:[]};
+  MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmK:[],hrL:[]};
   if(remote.mk)Object.keys(MK).forEach(m=>{MK[m]=(remote.mk[m]||[]).map(r=>({...r,reasons:null}));});
   PENDING=[];
 }
@@ -2244,7 +2314,7 @@ async function bootLeagueLoad(){
     else {setTxt('hs14','—');setTxt('hs14N','no graded picks');}
   }
 
-  const MKL={gm:'GAME PREDICTIONS',hits:'HITS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+  const MKL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gmK:'GAME K',hrL:'GAME HRs'};
   let VIEW='14d', MKT='gm', EXP=null;
   const DAYC={};
   window.__stat={
