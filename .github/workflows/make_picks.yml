@@ -1,0 +1,30 @@
+name: Make Picks - Diamond IQ
+
+on:
+  workflow_dispatch:
+  schedule:
+    # MLB lineup window (UTC). Lineups firm up through the afternoon/evening ET;
+    # repeats are safe — verified matchups stay locked, so re-runs can't corrupt
+    # anything, they only fill in picks for games whose lineups just posted.
+    - cron: "43 15,17,19,21,23 * * *"
+
+concurrency:
+  group: make-picks
+  cancel-in-progress: false
+
+jobs:
+  picks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+      - name: Make picks (Premium + Free)
+        run: node make_picks.js
