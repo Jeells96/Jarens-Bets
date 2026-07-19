@@ -3173,8 +3173,8 @@ if(__cronMode==='1'){
     window.__cronStatus='cron: starting';
     try{
       const t0=Date.now();
-      while(!(window.FB&&FB.ready)&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
-      if(!(window.FB&&FB.ready))throw new Error('Firebase not ready after 15s');
+      while(!FB.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+      if(!FB.ready)throw new Error('Firebase not ready after 15s');
       await pullSharedHistory();
       const today=todayStr();
       const dates=Object.keys(PRED.byDate).filter(d=>d<today).sort().reverse().slice(0,14);
@@ -3205,7 +3205,7 @@ if(__cronMode==='picks'){
     window.__cronStatus='picks: starting';
     try{
       const t0=Date.now();
-      while(!(window.FB&&FB.ready)&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+      while(!FB.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
       const dp=document.getElementById('dp'); if(dp)dp.value=todayStr();
       if(typeof STATE!=='undefined')STATE.date=todayStr();
       window.__cronStatus='picks: generating '+todayStr();
