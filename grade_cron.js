@@ -11,14 +11,16 @@
 const { chromium } = require('playwright');
 
 const BASE = 'https://jeells96.github.io/Jarens-Bets/';
-const APPS = [
-  // The Key first: its initial run may build the whole season (one-time, ~10-40
-  // min); afterwards it seeds from nba_recs and finishes in well under a minute.
-  { name: 'The Key (NBA)',          file: 'nba.html',           timeoutMin: 50 },
-  { name: 'Diamond IQ Premium',     file: 'premium.html',       timeoutMin: 10 },
-  { name: 'Diamond IQ Free',        file: 'diamondiqfree.html', timeoutMin: 15 },
-  { name: 'Gridline (NFL)',         file: 'nfl.html',           timeoutMin: 20 },
-];
+const ALL = {
+  // Keyed so each app can run in its OWN workflow: node grade_cron.js <key>
+  nba:     { name: 'The Key (NBA)',       file: 'nba.html',           timeoutMin: 50 },
+  premium: { name: 'Diamond IQ Premium',  file: 'premium.html',       timeoutMin: 12 },
+  free:    { name: 'Diamond IQ Free',      file: 'diamondiqfree.html', timeoutMin: 15 },
+  nfl:     { name: 'Gridline (NFL)',       file: 'nfl.html',           timeoutMin: 20 },
+};
+const key = (process.argv[2] || process.env.APP || '').toLowerCase();
+if (key && !ALL[key]) { console.log('Unknown app "' + key + '" — use one of: ' + Object.keys(ALL).join(', ')); process.exit(1); }
+const APPS = key ? [ALL[key]] : Object.values(ALL); // one app, or all when no key
 
 (async () => {
   const browser = await chromium.launch();

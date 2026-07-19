@@ -5316,6 +5316,33 @@ async function initPaywall() {
 }
 initPaywall();
 
+/* ── CRON MODE (?cron=1) ─────────────────────────────────────────────
+   Headless grading for the GitHub Action. Uses the app's OWN grading
+   path: scanFullSeason() self-provisions the prior-season aggregate and
+   roster position map, walks weeks 1..18 blind, and syncWeekAccuracy /
+   syncSeasonSummary write accuracy/{season}_W## + the season summary.
+   Idempotent by design: graded results are deterministic and the
+   fingerprint memo skips unchanged Firestore writes. In the offseason
+   this re-verifies the record and writes nothing new. */
+if (new URLSearchParams(location.search).get('cron') === '1') {
+  (async function () {
+    window.__cronStatus = 'cron: starting';
+    try { sessionStorage.setItem('gl_member_ok', '1'); } catch (e) {}
+    try { document.getElementById('paywall').classList.add('hidden'); } catch (e) {}
+    try {
+      if (!state.settings.accSyncEnabled) throw new Error('accSyncEnabled is off — nothing would be written');
+      const prog = setInterval(function () {
+        window.__cronStatus = 'cron: ' + (state.seasonScanProgress || 'scanning…');
+      }, 1000);
+      await scanFullSeason();
+      clearInterval(prog);
+      const weeks = state.seasonScan && state.seasonScan.weeks ? state.seasonScan.weeks.length : 0;
+      window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks), accuracy synced';
+    } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
+    window.__cronDone = true;
+  })();
+}
+
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
 // Background automation (GitHub Action) handles scheduled pulls now.
 // On boot: adopt any newer background odds + show automation status.
