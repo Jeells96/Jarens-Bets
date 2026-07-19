@@ -2082,6 +2082,54 @@ async function bootLeagueLoad(){
 /* boot: set date only. NOTHING auto-loads. */
 (function(){
   $('dp').value=todayStr();
+  var cronMode=new URLSearchParams(location.search).get('cron');
+  /* ── CRON MODE (?cron=1) — headless GRADING ──────────────────────────
+     Uses the app's OWN grading path so numbers can't drift:
+     autoGradePriorDays(today) sweeps days −1..−5, skips graded days,
+     pulls each day's stored picks from fable_hits/{d}, grades vs real
+     box scores, and storeResults() pushes fable_settings/summary. */
+  if(cronMode==='1'){
+    (async function(){
+      window.__cronStatus='cron: starting';
+      try{localStorage.setItem('fablehits_access_ok','1');localStorage.setItem('fablehits_user',JSON.stringify({name:'cron',key:'cron'}));}catch(e){}
+      try{
+        const t0=Date.now();
+        while(!FBH.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+        if(!FBH.ready)throw new Error('Firebase not ready after 15s');
+        await autoGradePriorDays(todayStr(),m=>{window.__cronStatus='cron: '+String(m||'');});
+        await computeSuccessStats();
+        window.__cronStatus='cron: done — prior days swept + summary pushed';
+      }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
+      window.__cronDone=true;
+    })();
+    return;
+  }
+  /* ── CRON MODE (?cron=picks) — headless PICK GENERATION ──────────────
+     Generates today's locks and saves them (loadDay -> fbPush to
+     fable_hits/{today}) so grading has something to score, seamlessly.
+     No odds quota: loadDay READS DK lines from Firebase (props_/odds_
+     docs your separate DK pull fills); the only live pull is
+     maybeAutoPullDK, which we neutralize here so a picks run can never
+     spend The-Odds-API credits. Verified matchups your app locks stay
+     locked, so repeat runs across the lineup window are safe. */
+  if(cronMode==='picks'){
+    (async function(){
+      window.__cronStatus='picks: starting';
+      try{localStorage.setItem('fablehits_access_ok','1');localStorage.setItem('fablehits_user',JSON.stringify({name:'cron',key:'cron'}));}catch(e){}
+      try{ maybeAutoPullDK=async function(){}; }catch(e){}   // DK stays separate — never pulled here
+      try{
+        const t0=Date.now();
+        while(!FBH.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+        if(!FBH.ready)throw new Error('Firebase not ready after 15s');
+        $('dp').value=todayStr();
+        window.__cronStatus='picks: generating '+todayStr();
+        await loadDay();   // free MLB data + DK lines read from Firebase -> saves fable_hits
+        window.__cronStatus='picks: done — locks generated + saved for '+todayStr();
+      }catch(e){window.__cronStatus='picks: ERROR — '+(e&&e.message||e);}
+      window.__cronDone=true;
+    })();
+    return;
+  }
   renderHeaderStats();
   bootGate();
 })();
