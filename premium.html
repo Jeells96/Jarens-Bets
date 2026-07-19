@@ -2269,10 +2269,10 @@ async function bootLeagueLoad(){
         let c={};
         try{const doc=await withTO(FBH.db.collection('app_settings').doc('dk_auto').get(),8000);if(doc.exists)c=doc.data();}catch(e){}
         const on=c.premiumOn!==false; // default ON until the Board says otherwise
-        const hours=String(c.premiumHours||'11,15,18').split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
-        const etHour=parseInt(new Date().toLocaleString('en-US',{timeZone:'America/New_York',hour:'numeric',hour12:false}),10);
+        const hours=String(c.premiumHours||'8,12,15').split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
+        const etHour=parseInt(new Date().toLocaleString('en-US',{timeZone:'America/Los_Angeles',hour:'numeric',hour12:false}),10);
         if(!on){window.__cronStatus='dk: skipped — auto pull is OFF in Board settings';}
-        else if(!hours.includes(etHour)){window.__cronStatus='dk: skipped — '+etHour+':xx ET not in scheduled hours ['+hours.join(',')+']';}
+        else if(!hours.includes(etHour)){window.__cronStatus='dk: skipped — '+etHour+':xx PT not in scheduled hours ['+hours.join(',')+']';}
         else{
           const r=await fetchDKPropsAndPush(todayStr(),m=>{window.__cronStatus='dk: '+String(m||'working…');});
           if(r.ok)window.__cronStatus='dk: done — '+r.count+' games of props pulled ('+(r.calls??'?')+' API calls left)';

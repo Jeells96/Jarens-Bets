@@ -5387,10 +5387,10 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
         }
       } catch (e) {}
       const on = c.nflOn !== false;
-      const hours = String(c.nflHours || '11,17').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-      const etHour = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }), 10);
+      const hours = String(c.nflHours || '8,14').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+      const etHour = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }), 10);
       if (!on) { window.__cronStatus = 'dk: skipped — auto pull is OFF in Board settings'; }
-      else if (!hours.includes(etHour)) { window.__cronStatus = 'dk: skipped — ' + etHour + ':xx ET not in scheduled hours [' + hours.join(',') + ']'; }
+      else if (!hours.includes(etHour)) { window.__cronStatus = 'dk: skipped — ' + etHour + ':xx PT not in scheduled hours [' + hours.join(',') + ']'; }
       else {
         await pullDKOdds('auto');
         window.__cronStatus = 'dk: done — DK odds pulled and pushed for the league';

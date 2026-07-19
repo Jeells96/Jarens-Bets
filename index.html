@@ -576,6 +576,7 @@ var currentSite = null;
 function byId(id){ return document.getElementById(id); }
 
 function openApp(key){
+  if (!appGranted(key)){ showDeniedNote(key); return; }
   var s = SITES.filter(function(x){ return x.key === key; })[0];
   if (s) openAppObj(s);
 }
@@ -712,49 +713,83 @@ async function boot(){
   refreshRecords._onAppClose = maybeRefresh;
 }
 /* ═══ ENTRY GATE + ADMIN SETTINGS ═══════════════════════════════════════════
-   Gate: one shared access code (changeable in settings, stored in Firebase)
-   keeps casual visitors out — deliberately "simple but not your name" level,
-   not bank-grade. The admin PIN also opens the gate.
-   Settings (PIN-protected): per-app DK auto-pull toggle + pull hours (ET),
-   written to app_settings/dk_auto in the MLB Firebase project, where the
-   hourly DK workflow reads them before spending any API quota. */
+   Gate: access codes (managed in settings, stored in Firebase). Each code can
+   grant ALL apps or specific ones — deliberately "simple but not your name"
+   level security. The admin PIN opens everything.
+   Settings (PIN 4-digit): per-app DK auto-pull toggle + pull hours (PT),
+   per-app access codes, and master lock grades with a success-rate preview
+   computed from the real graded history before anything is saved. */
 var ADMIN = { p: 'mlb-bets-d196c', k: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' };
 function adminPinOk(v){ try { return String(v).trim() === atob('MjMyNQ=='); } catch (e){ return false; } }
-function fsFieldVal(f){ if (!f) return null; if ('stringValue' in f) return f.stringValue; if ('booleanValue' in f) return f.booleanValue; return null; }
 async function adminGetDoc(doc){
   try {
     var ctl = new AbortController();
-    setTimeout(function(){ ctl.abort(); }, 6000); // never hang the UI on a bad connection
+    setTimeout(function(){ ctl.abort(); }, 6000);
     var r = await fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/' + doc + '?key=' + ADMIN.k, { cache: 'no-store', signal: ctl.signal });
     if (!r.ok) return null;
-    var f = (await r.json()).fields || {};
-    var out = {}; Object.keys(f).forEach(function(k){ out[k] = fsFieldVal(f[k]); });
-    return out;
+    return fsFields((await r.json()).fields || {});
   } catch (e){ return null; }
 }
-async function adminSetDoc(doc, obj){
+function fsEnc(v){
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (v && typeof v === 'object' && !Array.isArray(v)){
+    var f = {}; Object.keys(v).forEach(function(k){ f[k] = fsEnc(v[k]); });
+    return { mapValue: { fields: f } };
+  }
+  return { stringValue: String(v) };
+}
+async function adminSetDoc(collection, doc, obj){
   var fields = {}, masks = [];
   Object.keys(obj).forEach(function(k){
-    fields[k] = typeof obj[k] === 'boolean' ? { booleanValue: obj[k] } : { stringValue: String(obj[k]) };
+    fields[k] = fsEnc(obj[k]);
     masks.push('updateMask.fieldPaths=' + encodeURIComponent(k));
   });
-  var url = FS + ADMIN.p + '/databases/(default)/documents/app_settings/' + doc + '?key=' + ADMIN.k + '&' + masks.join('&');
+  var url = FS + ADMIN.p + '/databases/(default)/documents/' + collection + '/' + doc + '?key=' + ADMIN.k + '&' + masks.join('&');
   var r = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: fields }) });
   if (!r.ok) throw new Error('Save failed (HTTP ' + r.status + ') — check Firestore rules');
   return true;
 }
 
+/* ---- access codes: [{code, apps:['mlb','mlbfree','nfl','nba']}] ---- */
+var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key']];
 var GATE_LS = 'board_entry_v2';
+var GRANTS = null; // null = everything (admin / legacy), Set = specific apps
+function appGranted(key){ return !GRANTS || GRANTS.has(key); }
+function showDeniedNote(key){
+  var s = SITES.filter(function(x){ return x.key === key; })[0];
+  alert('Your access code doesn\u2019t include ' + (s ? s.name : 'this app') + '. Ask for an upgraded code.');
+}
+function parseCodes(cfg){
+  // 'codes' (per-app list) is authoritative once it exists; the legacy single
+  // 'code' field only applies before the first save from this panel.
+  if (cfg && cfg.codes){ try { return JSON.parse(cfg.codes) || []; } catch (e){ return []; } }
+  if (cfg && cfg.code) return [{ code: String(cfg.code), apps: null }];
+  return [];
+}
+function grantsFor(entered, list){
+  var norm = function(v){ return String(v || '').trim().toLowerCase(); };
+  if (adminPinOk(entered)) return { ok: true, apps: null };
+  for (var i = 0; i < list.length; i++){
+    if (norm(list[i].code) === norm(entered)){
+      return { ok: true, apps: list[i].apps && list[i].apps.length ? list[i].apps : null };
+    }
+  }
+  return { ok: false };
+}
 async function runGate(){
   var saved = null; try { saved = localStorage.getItem(GATE_LS); } catch (e) {}
   var cfg = await adminGetDoc('board_access');
-  var code = (cfg && cfg.code) ? String(cfg.code) : 'greenlight'; // default until changed in settings
-  var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-  if (saved && (norm(saved) === norm(code) || adminPinOk(saved))) return; // remembered on this device
+  var list = parseCodes(cfg);
+  if (!list.length) list = [{ code: 'greenlight', apps: null }]; // default until changed in settings
+  if (saved){
+    var g = grantsFor(saved, list);
+    if (g.ok){ GRANTS = g.apps ? new Set(g.apps) : null; markLockedCards(); return; }
+  }
   var ovl = document.createElement('div');
   ovl.className = 'ovl';
   ovl.innerHTML = '<div class="box"><h3>Members only</h3>' +
-    '<p class="sub">Enter the access code you were given. It’s remembered on this device.</p>' +
+    '<p class="sub">Enter the access code you were given. It\u2019s remembered on this device.</p>' +
     '<input type="text" id="gatein" placeholder="Access code" autocomplete="off" autocapitalize="none">' +
     '<div class="err" id="gateerr"></div>' +
     '<button class="go" id="gatego">Enter The Board</button></div>';
@@ -762,16 +797,122 @@ async function runGate(){
   document.body.style.overflow = 'hidden';
   var tryIt = function(){
     var v = document.getElementById('gatein').value;
-    if (norm(v) === norm(code) || adminPinOk(v)){
+    var g = grantsFor(v, list);
+    if (g.ok){
+      GRANTS = g.apps ? new Set(g.apps) : null;
       try { localStorage.setItem(GATE_LS, String(v).trim()); } catch (e) {}
       ovl.remove(); document.body.style.overflow = '';
+      markLockedCards();
     } else {
-      document.getElementById('gateerr').textContent = 'That’s not it — double-check the code.';
+      document.getElementById('gateerr').textContent = 'That\u2019s not it — double-check the code.';
     }
   };
   document.getElementById('gatego').addEventListener('click', tryIt);
   document.getElementById('gatein').addEventListener('keydown', function(e){ if (e.key === 'Enter') tryIt(); });
   setTimeout(function(){ var i = document.getElementById('gatein'); if (i) i.focus(); }, 250);
+}
+function markLockedCards(){
+  if (!GRANTS) return;
+  var els = document.querySelectorAll('.cta[data-app]');
+  if (!els.length){ setTimeout(markLockedCards, 800); return; } // cards may not be built yet
+  els.forEach(function(a){
+    var k = a.getAttribute('data-app');
+    if (!appGranted(k)){ a.style.opacity = '.4'; a.title = 'Not included in your access code'; }
+  });
+}
+
+/* ---- master lock grades: preview engines (mirror each app\u2019s grading rules) ---- */
+var PREM_KNOBS = [
+  ['lock','Batter hits \u00b7 lock \u2265 %',true],['hrLock','Home runs \u00b7 lock \u2265 %',true],
+  ['kEdge','Strikeout props \u00b7 edge \u2265',false],['bbEdge','Walk props \u00b7 edge \u2265',false],
+  ['tbEdge','Total bases \u00b7 edge \u2265',false],['gkEdge','Game K \u00b7 edge \u2265',false],['hrlEdge','Game HRs \u00b7 edge \u2265',false]
+];
+var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs'],['bb','Batter walks'],['bbat','Batter strikeouts'],['k','Pitcher strikeouts'],['pbb','Pitcher walks'],['hrLine','HR line'],['gnoHR','No-HR game'],['gmultiHR','Multi-HR game']];
+var PREVIEW_CACHE = {};
+async function listAllDocs(project, key, coll){
+  var out = [], tok = '';
+  for (var page = 0; page < 4; page++){
+    var r = await fetch(FS + project + '/databases/(default)/documents/' + coll + '?key=' + key + '&pageSize=300' + (tok ? '&pageToken=' + tok : ''), { cache: 'no-store' });
+    if (!r.ok) break;
+    var j = await r.json();
+    (j.documents || []).forEach(function(d){
+      var id = d.name.split('/').pop();
+      out.push({ id: id, data: fsFields(d.fields || {}) });
+    });
+    tok = j.nextPageToken || '';
+    if (!tok) break;
+  }
+  return out;
+}
+function premiumRates(days, cfg){
+  // Mirrors premium.html dayTallies + lineGrade exactly: verified rows only,
+  // gradeFlag rows excluded, played = ab>=1||h>=1, line leans recomputed at
+  // the proposed edges. Rates are lock-tier only, same as the app shows.
+  var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
+  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{w:0,l:0}, bbB:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmK:{w:0,l:0}, hrL:{w:0,l:0} };
+  var actual = { kB:'so', bbB:'bb', kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
+  var edgeKey = { kB:'kEdge', bbB:'bbEdge', kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
+  days.forEach(function(day){
+    var res = day.data.results; if (!res) return;
+    (day.data.rows || []).forEach(function(r){
+      if (!r.verified || r.gradeFlag || r.prob == null || r.prob < cfg.lock) return;
+      var o = res[r.id]; if (!played(o)) return;
+      agg.hits.n++; if ((o.h || 0) >= 1) agg.hits.h++;
+    });
+    var mk = day.data.mk || {};
+    (mk.hr || []).forEach(function(r){
+      if (!r.verified || r.gradeFlag || (r.prob || 0) < cfg.hrLock) return;
+      var o = res[r.id]; if (!played(o)) return;
+      agg.hr.n++; if ((o.hr || 0) >= 1) agg.hr.h++;
+    });
+    Object.keys(actual).forEach(function(m){
+      (mk[m] || []).forEach(function(r){
+        if (!r.verified || r.gradeFlag || r.line == null || r.exp == null) return;
+        var d = r.exp - r.line, th = cfg[edgeKey[m]];
+        var lean = d >= th ? 'OVER' : d <= -th ? 'UNDER' : null;
+        if (!lean) return;
+        var o = res[r.id]; var act = o ? o[actual[m]] : null;
+        if (act == null) return;
+        if (act > r.line){ if (lean === 'OVER') agg[m].w++; else agg[m].l++; }
+        else if (act < r.line){ if (lean === 'UNDER') agg[m].w++; else agg[m].l++; }
+      });
+    });
+  });
+  return agg;
+}
+function freeRates(days, locks){
+  // Mirrors diamondiqfree.html outcome() SCORE rules for the five batter
+  // categories (DK-line grading not simulated here). played = box-score row.
+  var rc = function(v){ if (v == null || isNaN(v)) return null; var f = Math.floor(v); return (v - f) >= 0.7 ? f + 1 : f; };
+  var agg = { hits:{h:0,n:0}, tb:{h:0,n:0}, hr:{h:0,n:0}, bb:{h:0,n:0}, bbat:{h:0,n:0} };
+  days.forEach(function(day){
+    var pred = day.data.predictions, resB = day.data.results && day.data.results.batters;
+    if (!pred || !pred.batters || !resB) return;
+    pred.batters.forEach(function(b){
+      var o = resB[b.id]; if (!o) return;
+      if (!((o.ab || 0) >= 1 || (o.pa || 0) >= 1 || (o.actualHits || 0) >= 1)) return;
+      var cats = [
+        ['hits', b.score, (o.actualHits || 0) > 0],
+        ['tb', b.tbScore, b.expectedTB != null && (o.actualTB || 0) >= rc(b.expectedTB)],
+        ['hr', b.hrScore, (o.actualHR || 0) > 0],
+        ['bb', b.bbScore, b.expectedBB != null && (o.actualBB || 0) >= rc(b.expectedBB)],
+        ['bbat', b.batterKScore, b.batterExpectedK != null && (o.actualK || 0) >= rc(b.batterExpectedK)]
+      ];
+      cats.forEach(function(c){
+        if (c[1] == null || c[1] < locks[c[0]]) return;
+        agg[c[0]].n++; if (c[2]) agg[c[0]].h++;
+      });
+    });
+  });
+  return agg;
+}
+function rateRow(label, cur, prop){
+  var f = function(o){
+    var h = o.h != null ? o.h : o.w, n = o.n != null ? o.n : (o.w + o.l);
+    return n ? Math.round(100 * h / n) + '% (' + h + '/' + n + ')' : '\u2014';
+  };
+  return '<div class="row" style="margin:4px 0"><span class="hint" style="flex:1">' + esc(label) + '</span>' +
+    '<span class="hint">' + f(cur) + '</span><span style="font-size:12.5px;font-weight:700;min-width:86px;text-align:right">\u2192 ' + f(prop) + '</span></div>';
 }
 
 async function openSettingsPanel(){
@@ -781,44 +922,154 @@ async function openSettingsPanel(){
   var old = document.getElementById('adminovl'); if (old) old.remove();
   var ovl = document.createElement('div');
   ovl.className = 'ovl'; ovl.id = 'adminovl';
-  ovl.innerHTML = '<div class="box"><h3>Board Settings</h3>' +
-    '<p class="sub">Loading current settings…</p></div>';
+  ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
+  ovl.innerHTML = '<div class="box" style="margin:24px 0;max-width:420px"><h3>Board Settings</h3><p class="sub">Loading current settings\u2026</p></div>';
   document.body.appendChild(ovl);
-  var cfg = (await adminGetDoc('dk_auto')) || {};
+  var dk = (await adminGetDoc('dk_auto')) || {};
   var access = (await adminGetDoc('board_access')) || {};
-  var pOn = cfg.premiumOn !== false, nOn = cfg.nflOn !== false;
-  var pHrs = cfg.premiumHours || '11,15,18', nHrs = cfg.nflHours || '11,17';
+  var premCfgRaw = null;
+  try {
+    var r = await fetch(FS + ADMIN.p + '/databases/(default)/documents/fable_settings/config?key=' + ADMIN.k, { cache: 'no-store' });
+    if (r.ok) premCfgRaw = fsFields((await r.json()).fields || {});
+  } catch (e) {}
+  var freeLocks = (await adminGetDoc('locks')) || {};
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
+  var premCfg = {}; Object.keys(PREM_DEF).forEach(function(k){ premCfg[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
+  var freeCfg = {}; Object.keys(FREE_DEF).forEach(function(k){ freeCfg[k] = (typeof freeLocks[k] === 'number') ? freeLocks[k] : FREE_DEF[k]; });
+  var codes = parseCodes(access);
+  if (!codes.length) codes = [{ code: 'greenlight', apps: null }];
+
+  var codeRowHtml = function(c, i){
+    return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px" data-coderow="' + i + '">' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">' +
+        '<input type="text" class="c-code" value="' + esc(c.code) + '" placeholder="code" autocapitalize="none" style="margin:0;flex:1">' +
+        '<button class="close c-del" style="width:auto;margin:0;padding:4px 8px;color:#ff7a7a">remove</button></div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:8px">' + APP_KEYS.map(function(a){
+        var on = !c.apps || c.apps.indexOf(a[0]) >= 0;
+        return '<label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="c-app" data-app="' + a[0] + '"' + (on ? ' checked' : '') + '>' + esc(a[1]) + '</label>';
+      }).join('') + '</div></div>';
+  };
+  var knobHtml = function(id, label, val){
+    return '<div class="row" style="margin:5px 0"><span class="hint" style="flex:1">' + esc(label) + '</span>' +
+      '<input type="text" id="' + id + '" inputmode="decimal" value="' + esc(val) + '" style="margin:0;width:72px;text-align:right"></div>';
+  };
+
   ovl.querySelector('.box').innerHTML =
     '<h3>Board Settings</h3>' +
-    '<p class="sub">DK pulls run on the hour (Eastern time). List the hours you want, like <b>11,15,18</b> = 11am, 3pm, 6pm ET. The hourly automation checks these before spending any odds-API quota.</p>' +
-    '<div class="row"><span class="lbl">Diamond IQ · auto DK props</span>' +
-      '<label class="tog"><input type="checkbox" id="s-pon"' + (pOn ? ' checked' : '') + '><span></span></label></div>' +
-    '<input type="text" id="s-phrs" value="' + esc(pHrs) + '" placeholder="Pull hours ET, e.g. 11,15,18">' +
-    '<div class="row"><span class="lbl">Gridline · auto DK odds</span>' +
-      '<label class="tog"><input type="checkbox" id="s-non"' + (nOn ? ' checked' : '') + '><span></span></label></div>' +
-    '<input type="text" id="s-nhrs" value="' + esc(nHrs) + '" placeholder="Pull hours ET, e.g. 11,17">' +
-    '<div class="sect"><div class="row"><span class="lbl">Member access code</span><span class="hint">what you hand out</span></div>' +
-    '<input type="text" id="s-code" value="' + esc(access.code || 'greenlight') + '" autocapitalize="none"></div>' +
-    '<button class="go" id="s-save">Save settings</button>' +
+    '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">hours in PACIFIC time</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">Each app has its own schedule. List the hours you want, like <b>8,12,15</b> = 8am, noon, 3pm PT. The hourly automation checks these before spending any odds-API quota.</p>' +
+    '<div class="row"><span class="lbl">Diamond IQ \u00b7 props</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
+    '<input type="text" id="s-phrs" value="' + esc(dk.premiumHours || '8,12,15') + '" placeholder="Hours PT, e.g. 8,12,15">' +
+    '<div class="row"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
+    '<input type="text" id="s-nhrs" value="' + esc(dk.nflHours || '8,14') + '" placeholder="Hours PT, e.g. 8,14"></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Access codes</span><span class="hint">who gets in \u00b7 which apps</span></div>' +
+    '<div id="codelist">' + codes.map(codeRowHtml).join('') + '</div>' +
+    '<button class="close" id="c-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add another code</button></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Lock grades \u00b7 Diamond IQ Premium</span></div>' +
+    '<p class="sub" style="margin:6px 0 8px">Raise a number = fewer, stronger locks. Hits/HR are lock percentages (0\u20131 scale, e.g. 0.80). The rest are edge-vs-DK-line margins. Preview shows current \u2192 proposed lock-tier success from the real graded history.</p>' +
+    PREM_KNOBS.map(function(k){ return knobHtml('pk-' + k[0], k[1], premCfg[k[0]]); }).join('') +
+    '<button class="close" id="p-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px">Preview success rates</button>' +
+    '<div id="p-prevout"></div></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Lock grades \u00b7 Diamond IQ Free</span></div>' +
+    '<p class="sub" style="margin:6px 0 8px">Score thresholds (0\u2013100). Preview covers the five batter categories (score-rule grading); pitcher/game categories save but preview isn\u2019t built for them yet.</p>' +
+    FREE_KNOBS.map(function(k){ return knobHtml('fk-' + k[0], k[1], freeCfg[k[0]]); }).join('') +
+    '<button class="close" id="f-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px">Preview success rates</button>' +
+    '<div id="f-prevout"></div></div>' +
+    '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
     '<button class="close" id="s-close">Close</button>';
-  document.getElementById('s-close').addEventListener('click', function(){ ovl.remove(); });
-  document.getElementById('s-save').addEventListener('click', async function(){
-    var msg = document.getElementById('s-msg');
-    msg.style.color = ''; msg.textContent = 'Saving…';
-    var hrsOk = function(v){ return String(v).split(',').every(function(x){ var n = parseInt(x.trim(), 10); return !isNaN(n) && n >= 0 && n <= 23; }); };
-    var ph = document.getElementById('s-phrs').value, nh = document.getElementById('s-nhrs').value;
-    var codeV = document.getElementById('s-code').value.trim();
-    if (!hrsOk(ph) || !hrsOk(nh)){ msg.style.color = '#ff7a7a'; msg.textContent = 'Hours must be numbers 0–23, separated by commas.'; return; }
-    if (codeV.length < 4){ msg.style.color = '#ff7a7a'; msg.textContent = 'Access code needs at least 4 characters.'; return; }
+
+  var box = ovl.querySelector('.box');
+  box.querySelector('#s-close').addEventListener('click', function(){ ovl.remove(); });
+  box.querySelector('#c-add').addEventListener('click', function(){
+    var div = document.createElement('div');
+    div.innerHTML = codeRowHtml({ code: '', apps: null }, Date.now());
+    box.querySelector('#codelist').appendChild(div.firstChild);
+    wireDel();
+  });
+  function wireDel(){
+    box.querySelectorAll('.c-del').forEach(function(b){
+      b.onclick = function(){ b.closest('[data-coderow]').remove(); };
+    });
+  }
+  wireDel();
+  var readCodes = function(){
+    var out = [];
+    box.querySelectorAll('[data-coderow]').forEach(function(row){
+      var code = row.querySelector('.c-code').value.trim();
+      if (code.length < 4) return;
+      var apps = [];
+      row.querySelectorAll('.c-app').forEach(function(cb){ if (cb.checked) apps.push(cb.getAttribute('data-app')); });
+      out.push({ code: code, apps: apps.length === APP_KEYS.length ? null : apps });
+    });
+    return out;
+  };
+  var readPrem = function(){
+    var out = {}, bad = false;
+    PREM_KNOBS.forEach(function(k){
+      var v = parseFloat(box.querySelector('#pk-' + k[0]).value);
+      if (isNaN(v) || v < 0){ bad = true; } out[k[0]] = v;
+    });
+    return bad ? null : out;
+  };
+  var readFree = function(){
+    var out = {}, bad = false;
+    FREE_KNOBS.forEach(function(k){
+      var v = parseFloat(box.querySelector('#fk-' + k[0]).value);
+      if (isNaN(v) || v < 0 || v > 100){ bad = true; } out[k[0]] = v;
+    });
+    return bad ? null : out;
+  };
+
+  box.querySelector('#p-preview').addEventListener('click', async function(){
+    var outEl = box.querySelector('#p-prevout');
+    var prop = readPrem();
+    if (!prop){ outEl.innerHTML = '<div class="err">Every field needs a number \u2265 0.</div>'; return; }
+    outEl.innerHTML = '<div class="hint" style="padding:8px 0">Reading graded history\u2026</div>';
     try {
-      await adminSetDoc('dk_auto', {
-        premiumOn: document.getElementById('s-pon').checked, premiumHours: ph.replace(/\s/g, ''),
-        nflOn: document.getElementById('s-non').checked, nflHours: nh.replace(/\s/g, '')
+      if (!PREVIEW_CACHE.prem) PREVIEW_CACHE.prem = await listAllDocs(ADMIN.p, ADMIN.k, 'fable_hits');
+      var cur = premiumRates(PREVIEW_CACHE.prem, premCfg);
+      var nxt = premiumRates(PREVIEW_CACHE.prem, prop);
+      var L = { hits:'Batter hits', hr:'Home runs', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmK:'Game K', hrL:'Game HRs' };
+      outEl.innerHTML = '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (lock-tier only, ' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
+        Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
+    } catch (e){ outEl.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+  });
+  box.querySelector('#f-preview').addEventListener('click', async function(){
+    var outEl = box.querySelector('#f-prevout');
+    var prop = readFree();
+    if (!prop){ outEl.innerHTML = '<div class="err">Every field needs a number 0\u2013100.</div>'; return; }
+    outEl.innerHTML = '<div class="hint" style="padding:8px 0">Reading graded history\u2026</div>';
+    try {
+      if (!PREVIEW_CACHE.free) PREVIEW_CACHE.free = await listAllDocs(ADMIN.p, ADMIN.k, 'shared_history');
+      var cur = freeRates(PREVIEW_CACHE.free, freeCfg);
+      var nxt = freeRates(PREVIEW_CACHE.free, prop);
+      var L = { hits:'Batter hits', tb:'Total bases', hr:'Home runs', bb:'Batter walks', bbat:'Batter strikeouts' };
+      outEl.innerHTML = '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (score-rule locks, ' + PREVIEW_CACHE.free.length + ' stored days)</div>' +
+        Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
+    } catch (e){ outEl.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+  });
+
+  box.querySelector('#s-save').addEventListener('click', async function(){
+    var msg = box.querySelector('#s-msg');
+    msg.style.color = ''; msg.textContent = 'Saving\u2026';
+    var hrsOk = function(v){ return String(v).split(',').every(function(x){ var n = parseInt(x.trim(), 10); return !isNaN(n) && n >= 0 && n <= 23; }); };
+    var ph = box.querySelector('#s-phrs').value, nh = box.querySelector('#s-nhrs').value;
+    var codesOut = readCodes(), premOut = readPrem(), freeOut = readFree();
+    if (!hrsOk(ph) || !hrsOk(nh)){ msg.style.color = '#ff7a7a'; msg.textContent = 'DK hours must be numbers 0\u201323, separated by commas.'; return; }
+    if (!codesOut.length){ msg.style.color = '#ff7a7a'; msg.textContent = 'Keep at least one access code (4+ characters).'; return; }
+    if (!premOut || !freeOut){ msg.style.color = '#ff7a7a'; msg.textContent = 'Check the lock-grade numbers.'; return; }
+    try {
+      await adminSetDoc('app_settings', 'dk_auto', {
+        premiumOn: box.querySelector('#s-pon').checked, premiumHours: ph.replace(/\s/g, ''),
+        nflOn: box.querySelector('#s-non').checked, nflHours: nh.replace(/\s/g, '')
       });
-      await adminSetDoc('board_access', { code: codeV });
-      try { localStorage.setItem(GATE_LS, codeV); } catch (e) {}
-      msg.textContent = '✓ Saved — the next hourly run uses these settings.';
+      await adminSetDoc('app_settings', 'board_access', { codes: JSON.stringify(codesOut), code: codesOut[0].code });
+      await adminSetDoc('fable_settings', 'config', premOut);
+      await adminSetDoc('app_settings', 'locks', freeOut);
+      try { localStorage.setItem(GATE_LS, codesOut[0].code); } catch (e) {}
+      msg.textContent = '\u2713 Saved. DK schedule + access apply now; lock grades apply on each app\u2019s next load/grade.';
     } catch (e){ msg.style.color = '#ff7a7a'; msg.textContent = e.message; }
   });
 }
