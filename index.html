@@ -182,6 +182,39 @@ body{
   .bulb{ animation:none; } .shimmer{ animation:none; }
   .card,.cta,.cta .arrow{ transition:none; }
 }
+
+/* ---------- entry gate + admin settings ---------- */
+.gearbtn{ margin-left:auto; background:none; border:1px solid var(--hair); color:var(--dim);
+  border-radius:8px; padding:5px 9px; font-size:14px; line-height:1; cursor:pointer; }
+.gearbtn:active{ color:var(--bone); background:var(--face); }
+.ovl{ position:fixed; inset:0; z-index:300; background:rgba(4,6,10,.92);
+  display:flex; align-items:center; justify-content:center; padding:24px; }
+.ovl.hidden{ display:none; }
+.ovl .box{ width:100%; max-width:360px; background:var(--panel); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; }
+.ovl h3{ margin:0 0 6px; font-size:17px; letter-spacing:-.01em; }
+.ovl .sub{ color:var(--dim); font-size:13px; line-height:1.5; margin:0 0 14px; }
+.ovl input[type=text],.ovl input[type=password]{ width:100%; box-sizing:border-box; background:var(--board);
+  border:1px solid var(--hair); border-radius:9px; color:var(--bone); padding:11px 12px;
+  font-size:16px; margin-bottom:10px; }
+.ovl .go{ width:100%; border:0; border-radius:9px; padding:12px; font-weight:800; font-size:14px;
+  background:var(--bone); color:#0b0d12; cursor:pointer; }
+.ovl .err{ color:#ff7a7a; font-size:12.5px; min-height:16px; margin:2px 0 6px; }
+.ovl .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin:12px 0 4px; }
+.ovl .row .lbl{ font-size:13.5px; font-weight:700; }
+.ovl .row .hint{ color:var(--dim2); font-size:11.5px; }
+.ovl .sect{ border-top:1px solid var(--hair2); margin-top:14px; padding-top:12px; }
+.tog{ position:relative; width:44px; height:24px; flex:none; }
+.tog input{ opacity:0; width:0; height:0; }
+.tog span{ position:absolute; inset:0; background:var(--face); border:1px solid var(--hair);
+  border-radius:24px; transition:.15s; }
+.tog span::after{ content:''; position:absolute; left:2px; top:2px; width:18px; height:18px;
+  border-radius:50%; background:var(--dim); transition:.15s; }
+.tog input:checked + span{ background:#1d3a26; border-color:#2e5c3c; }
+.tog input:checked + span::after{ left:22px; background:#7fd99a; }
+.ovl .close{ background:none; border:0; color:var(--dim); font-size:13px; margin-top:12px;
+  width:100%; cursor:pointer; }
+.ovl .savemsg{ font-size:12.5px; min-height:16px; margin-top:8px; color:#7fd99a; text-align:center; }
 </style>
 </head>
 <body>
@@ -190,6 +223,7 @@ body{
     <div class="eyebrow">
       <span>Members only</span><span style="color:var(--hair)">/</span>
       <span class="live"><span class="bulb"></span>Live</span>
+      <button class="gearbtn" id="gearbtn" aria-label="Settings">&#9881;</button>
     </div>
     <!-- Rename this wordmark to whatever you want the hub called. -->
     <h1 class="wordmark">The Board
@@ -207,6 +241,8 @@ body{
     <p>Every result is graded walk-forward against real box scores &mdash; each model only ever sees games that finished <em>before</em> the one it&rsquo;s grading. The percentage on each card is that model&rsquo;s single most accurate market, shown with its sample size, plus the overall record. Nothing here is cherry-picked.</p>
     <p class="invite">Access to each app is invite-only.</p>
     <p class="fine" id="fineprint"></p>
+  <!-- gate + settings overlays are appended at the end of body -->
+
   </footer>
 </div>
 
@@ -317,7 +353,7 @@ var SITES = [
 ];
 
 /* Friendly market labels (internal keys -> what members read) */
-var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks' };
+var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks', gm: 'Game predictions', tb: 'Total bases', gmK: 'Game strikeouts', hrL: 'Game HR line' };
 var MIN_N = 20; // sample floor before a market can be the headline number
 
 /* Brand logos, embedded so the hub stays a single self-contained file. */
@@ -675,6 +711,123 @@ async function boot(){
   setInterval(maybeRefresh, 5 * 60 * 1000);
   refreshRecords._onAppClose = maybeRefresh;
 }
+/* ═══ ENTRY GATE + ADMIN SETTINGS ═══════════════════════════════════════════
+   Gate: one shared access code (changeable in settings, stored in Firebase)
+   keeps casual visitors out — deliberately "simple but not your name" level,
+   not bank-grade. The admin PIN also opens the gate.
+   Settings (PIN-protected): per-app DK auto-pull toggle + pull hours (ET),
+   written to app_settings/dk_auto in the MLB Firebase project, where the
+   hourly DK workflow reads them before spending any API quota. */
+var ADMIN = { p: 'mlb-bets-d196c', k: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' };
+function adminPinOk(v){ try { return String(v).trim() === atob('MjMyNQ=='); } catch (e){ return false; } }
+function fsFieldVal(f){ if (!f) return null; if ('stringValue' in f) return f.stringValue; if ('booleanValue' in f) return f.booleanValue; return null; }
+async function adminGetDoc(doc){
+  try {
+    var ctl = new AbortController();
+    setTimeout(function(){ ctl.abort(); }, 6000); // never hang the UI on a bad connection
+    var r = await fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/' + doc + '?key=' + ADMIN.k, { cache: 'no-store', signal: ctl.signal });
+    if (!r.ok) return null;
+    var f = (await r.json()).fields || {};
+    var out = {}; Object.keys(f).forEach(function(k){ out[k] = fsFieldVal(f[k]); });
+    return out;
+  } catch (e){ return null; }
+}
+async function adminSetDoc(doc, obj){
+  var fields = {}, masks = [];
+  Object.keys(obj).forEach(function(k){
+    fields[k] = typeof obj[k] === 'boolean' ? { booleanValue: obj[k] } : { stringValue: String(obj[k]) };
+    masks.push('updateMask.fieldPaths=' + encodeURIComponent(k));
+  });
+  var url = FS + ADMIN.p + '/databases/(default)/documents/app_settings/' + doc + '?key=' + ADMIN.k + '&' + masks.join('&');
+  var r = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: fields }) });
+  if (!r.ok) throw new Error('Save failed (HTTP ' + r.status + ') — check Firestore rules');
+  return true;
+}
+
+var GATE_LS = 'board_entry_v2';
+async function runGate(){
+  var saved = null; try { saved = localStorage.getItem(GATE_LS); } catch (e) {}
+  var cfg = await adminGetDoc('board_access');
+  var code = (cfg && cfg.code) ? String(cfg.code) : 'greenlight'; // default until changed in settings
+  var norm = function(v){ return String(v || '').trim().toLowerCase(); };
+  if (saved && (norm(saved) === norm(code) || adminPinOk(saved))) return; // remembered on this device
+  var ovl = document.createElement('div');
+  ovl.className = 'ovl';
+  ovl.innerHTML = '<div class="box"><h3>Members only</h3>' +
+    '<p class="sub">Enter the access code you were given. It’s remembered on this device.</p>' +
+    '<input type="text" id="gatein" placeholder="Access code" autocomplete="off" autocapitalize="none">' +
+    '<div class="err" id="gateerr"></div>' +
+    '<button class="go" id="gatego">Enter The Board</button></div>';
+  document.body.appendChild(ovl);
+  document.body.style.overflow = 'hidden';
+  var tryIt = function(){
+    var v = document.getElementById('gatein').value;
+    if (norm(v) === norm(code) || adminPinOk(v)){
+      try { localStorage.setItem(GATE_LS, String(v).trim()); } catch (e) {}
+      ovl.remove(); document.body.style.overflow = '';
+    } else {
+      document.getElementById('gateerr').textContent = 'That’s not it — double-check the code.';
+    }
+  };
+  document.getElementById('gatego').addEventListener('click', tryIt);
+  document.getElementById('gatein').addEventListener('keydown', function(e){ if (e.key === 'Enter') tryIt(); });
+  setTimeout(function(){ var i = document.getElementById('gatein'); if (i) i.focus(); }, 250);
+}
+
+async function openSettingsPanel(){
+  var pin = prompt('Admin PIN');
+  if (pin == null) return;
+  if (!adminPinOk(pin)){ alert('Wrong PIN.'); return; }
+  var old = document.getElementById('adminovl'); if (old) old.remove();
+  var ovl = document.createElement('div');
+  ovl.className = 'ovl'; ovl.id = 'adminovl';
+  ovl.innerHTML = '<div class="box"><h3>Board Settings</h3>' +
+    '<p class="sub">Loading current settings…</p></div>';
+  document.body.appendChild(ovl);
+  var cfg = (await adminGetDoc('dk_auto')) || {};
+  var access = (await adminGetDoc('board_access')) || {};
+  var pOn = cfg.premiumOn !== false, nOn = cfg.nflOn !== false;
+  var pHrs = cfg.premiumHours || '11,15,18', nHrs = cfg.nflHours || '11,17';
+  ovl.querySelector('.box').innerHTML =
+    '<h3>Board Settings</h3>' +
+    '<p class="sub">DK pulls run on the hour (Eastern time). List the hours you want, like <b>11,15,18</b> = 11am, 3pm, 6pm ET. The hourly automation checks these before spending any odds-API quota.</p>' +
+    '<div class="row"><span class="lbl">Diamond IQ · auto DK props</span>' +
+      '<label class="tog"><input type="checkbox" id="s-pon"' + (pOn ? ' checked' : '') + '><span></span></label></div>' +
+    '<input type="text" id="s-phrs" value="' + esc(pHrs) + '" placeholder="Pull hours ET, e.g. 11,15,18">' +
+    '<div class="row"><span class="lbl">Gridline · auto DK odds</span>' +
+      '<label class="tog"><input type="checkbox" id="s-non"' + (nOn ? ' checked' : '') + '><span></span></label></div>' +
+    '<input type="text" id="s-nhrs" value="' + esc(nHrs) + '" placeholder="Pull hours ET, e.g. 11,17">' +
+    '<div class="sect"><div class="row"><span class="lbl">Member access code</span><span class="hint">what you hand out</span></div>' +
+    '<input type="text" id="s-code" value="' + esc(access.code || 'greenlight') + '" autocapitalize="none"></div>' +
+    '<button class="go" id="s-save">Save settings</button>' +
+    '<div class="savemsg" id="s-msg"></div>' +
+    '<button class="close" id="s-close">Close</button>';
+  document.getElementById('s-close').addEventListener('click', function(){ ovl.remove(); });
+  document.getElementById('s-save').addEventListener('click', async function(){
+    var msg = document.getElementById('s-msg');
+    msg.style.color = ''; msg.textContent = 'Saving…';
+    var hrsOk = function(v){ return String(v).split(',').every(function(x){ var n = parseInt(x.trim(), 10); return !isNaN(n) && n >= 0 && n <= 23; }); };
+    var ph = document.getElementById('s-phrs').value, nh = document.getElementById('s-nhrs').value;
+    var codeV = document.getElementById('s-code').value.trim();
+    if (!hrsOk(ph) || !hrsOk(nh)){ msg.style.color = '#ff7a7a'; msg.textContent = 'Hours must be numbers 0–23, separated by commas.'; return; }
+    if (codeV.length < 4){ msg.style.color = '#ff7a7a'; msg.textContent = 'Access code needs at least 4 characters.'; return; }
+    try {
+      await adminSetDoc('dk_auto', {
+        premiumOn: document.getElementById('s-pon').checked, premiumHours: ph.replace(/\s/g, ''),
+        nflOn: document.getElementById('s-non').checked, nflHours: nh.replace(/\s/g, '')
+      });
+      await adminSetDoc('board_access', { code: codeV });
+      try { localStorage.setItem(GATE_LS, codeV); } catch (e) {}
+      msg.textContent = '✓ Saved — the next hourly run uses these settings.';
+    } catch (e){ msg.style.color = '#ff7a7a'; msg.textContent = e.message; }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  var g = document.getElementById('gearbtn');
+  if (g) g.addEventListener('click', openSettingsPanel);
+  runGate();
+});
 document.addEventListener('DOMContentLoaded', boot);
 </script>
 </body>

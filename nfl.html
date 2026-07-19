@@ -5368,6 +5368,38 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
   })();
 }
 
+/* ── CRON MODE (?cron=dk) — scheduled DK odds pull, gated by the Board's
+   settings doc (app_settings/dk_auto in the MLB Firebase project, read here
+   over REST). Pulls only when the NFL toggle is ON and the current Eastern
+   hour is in the configured list. */
+if (new URLSearchParams(location.search).get('cron') === 'dk') {
+  (async function () {
+    window.__cronStatus = 'dk: starting';
+    try { sessionStorage.setItem('gl_member_ok', '1'); } catch (e) {}
+    try { document.getElementById('paywall').classList.add('hidden'); } catch (e) {}
+    try {
+      let c = {};
+      try {
+        const r = await fetch('https://firestore.googleapis.com/v1/projects/mlb-bets-d196c/databases/(default)/documents/app_settings/dk_auto?key=AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0', { cache: 'no-store' });
+        if (r.ok) {
+          const f = (await r.json()).fields || {};
+          c = { nflOn: f.nflOn ? f.nflOn.booleanValue !== false : true, nflHours: f.nflHours ? f.nflHours.stringValue : null };
+        }
+      } catch (e) {}
+      const on = c.nflOn !== false;
+      const hours = String(c.nflHours || '11,17').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+      const etHour = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }), 10);
+      if (!on) { window.__cronStatus = 'dk: skipped — auto pull is OFF in Board settings'; }
+      else if (!hours.includes(etHour)) { window.__cronStatus = 'dk: skipped — ' + etHour + ':xx ET not in scheduled hours [' + hours.join(',') + ']'; }
+      else {
+        await pullDKOdds('auto');
+        window.__cronStatus = 'dk: done — DK odds pulled and pushed for the league';
+      }
+    } catch (e) { window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
+    window.__cronDone = true;
+  })();
+}
+
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
 // Background automation (GitHub Action) handles scheduled pulls now.
 // On boot: adopt any newer background odds + show automation status.

@@ -1,16 +1,19 @@
-name: Grade - Gridline
+name: DK Pull - Board Scheduled
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "9 */6 * * *"
+    # Hourly sweep; each app decides for itself (via the Board's settings doc)
+    # whether this hour is one of its configured pull times. Off-hours cost
+    # nothing — the page reports "skipped" without touching the odds API.
+    - cron: "20 * * * *"
 
 concurrency:
-  group: grade-nfl
+  group: dk-pull
   cancel-in-progress: false
 
 jobs:
-  grade:
+  pull:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -23,5 +26,5 @@ jobs:
           npm init -y
           npm install playwright
           npx playwright install --with-deps chromium
-      - name: Grade Gridline
-        run: node grade_cron.js nfl
+      - name: DK pull (Premium + Gridline)
+        run: node dk_pull.js

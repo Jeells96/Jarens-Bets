@@ -2254,6 +2254,35 @@ async function bootLeagueLoad(){
      maybeAutoPullDK, which we neutralize here so a picks run can never
      spend The-Odds-API credits. Verified matchups your app locks stay
      locked, so repeat runs across the lineup window are safe. */
+  /* ── CRON MODE (?cron=dk) — scheduled DK props pull, gated by the Board's
+     settings doc (app_settings/dk_auto). Only pulls when the toggle is ON and
+     the current Eastern hour is in the configured list, so the hourly workflow
+     spends The-Odds-API quota exactly when Jaren says to. ── */
+  if(cronMode==='dk'){
+    (async function(){
+      window.__cronStatus='dk: starting';
+      try{localStorage.setItem('fablehits_access_ok','1');localStorage.setItem('fablehits_user',JSON.stringify({name:'cron',key:'cron'}));}catch(e){}
+      try{
+        const t0=Date.now();
+        while(!FBH.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+        if(!FBH.ready)throw new Error('Firebase not ready after 15s');
+        let c={};
+        try{const doc=await withTO(FBH.db.collection('app_settings').doc('dk_auto').get(),8000);if(doc.exists)c=doc.data();}catch(e){}
+        const on=c.premiumOn!==false; // default ON until the Board says otherwise
+        const hours=String(c.premiumHours||'11,15,18').split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
+        const etHour=parseInt(new Date().toLocaleString('en-US',{timeZone:'America/New_York',hour:'numeric',hour12:false}),10);
+        if(!on){window.__cronStatus='dk: skipped — auto pull is OFF in Board settings';}
+        else if(!hours.includes(etHour)){window.__cronStatus='dk: skipped — '+etHour+':xx ET not in scheduled hours ['+hours.join(',')+']';}
+        else{
+          const r=await fetchDKPropsAndPush(todayStr(),m=>{window.__cronStatus='dk: '+String(m||'working…');});
+          if(r.ok)window.__cronStatus='dk: done — '+r.count+' games of props pulled ('+(r.calls??'?')+' API calls left)';
+          else window.__cronStatus='dk: nothing pulled — '+(r.reason||'unknown');
+        }
+      }catch(e){window.__cronStatus='dk: ERROR — '+(e&&e.message||e);}
+      window.__cronDone=true;
+    })();
+    return;
+  }
   if(cronMode==='picks'){
     (async function(){
       window.__cronStatus='picks: starting';
