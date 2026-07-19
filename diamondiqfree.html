@@ -3141,7 +3141,80 @@ async function bootPullWithRetry(){
   // Force a re-render so the badge picks up the newly pulled data
   if(typeof renderTab==='function')renderTab();
 }
+var __cronMode=new URLSearchParams(location.search).get('cron');
+/* Any cron mode: DK stays separate. maybeAutoPull is invoked by boot and by
+   _performReload; neutralize it up front so no headless run can ever spend
+   The-Odds-API credits. DK lines still come from Firebase (your DK pull). */
+if(__cronMode){
+  try{ maybeAutoPull=async function(){}; }catch(e){}
+  /* The app fires pushSharedHistory()/pushGradeLog() fire-and-forget, once per
+     day processed. On a fresh headless runner that queues ~14+ writes at once
+     and Firestore throws resource-exhausted ("write stream exhausted"). Wrap
+     both so every write runs one-at-a-time with a small gap — same writes,
+     just serialized, so the queue can never overflow. */
+  try{
+    var __wq=Promise.resolve();
+    var __serial=function(orig){ return function(){ var args=arguments; __wq=__wq.then(function(){return orig.apply(null,args);}).then(function(){return new Promise(function(r){setTimeout(r,200);});}).catch(function(){}); return __wq; }; };
+    if(typeof pushSharedHistory==='function') pushSharedHistory=__serial(pushSharedHistory);
+    if(typeof pushGradeLog==='function') pushGradeLog=__serial(pushGradeLog);
+  }catch(e){}
+}
 bootPullWithRetry();
+
+/* ── CRON MODE (?cron=1) — headless GRADING ──────────────────────────
+   Uses the app's OWN grading path: pullSharedHistory() seeds league
+   predictions on a fresh runner, then fetchHistoryForDate(d) grades
+   stored picks against real box scores and pushes shared_history/{d}.
+   The two most recent past dates are force-refreshed every run so late
+   West-Coast finals that landed after an earlier partial grade get
+   picked up (a full-day rebuild is idempotent). */
+if(__cronMode==='1'){
+  (async function(){
+    window.__cronStatus='cron: starting';
+    try{
+      const t0=Date.now();
+      while(!(window.FB&&FB.ready)&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+      if(!(window.FB&&FB.ready))throw new Error('Firebase not ready after 15s');
+      await pullSharedHistory();
+      const today=todayStr();
+      const dates=Object.keys(PRED.byDate).filter(d=>d<today).sort().reverse().slice(0,14);
+      dates.slice(0,2).forEach(d=>{HISTORY.fetched[d]=false;});
+      let graded=0;
+      for(const d of dates){
+        if(HISTORY.fetched[d]&&HISTORY.byDate[d])continue;
+        window.__cronStatus='cron: grading '+d;
+        await fetchHistoryForDate(d);
+        graded++;
+      }
+      window.__cronStatus='cron: done — '+graded+' day(s) graded/refreshed of '+dates.length+' tracked';
+    }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
+    window.__cronDone=true;
+  })();
+}
+
+/* ── CRON MODE (?cron=picks) — headless PICK GENERATION ──────────────
+   Generates today's locks and saves them so grading has something to
+   score, seamlessly. refreshUnverified() -> _performReload(true): pulls
+   the latest lineups (free MLB Stats API), computes projections, keeps
+   already-verified matchups FROZEN (your confirm-locks rule), then
+   predSave() + pushSharedHistory() persist the picks. maybeAutoPull is
+   neutralized above so DK is never pulled here — DK lines still come
+   from Firebase. Safe to run repeatedly across the lineup window. */
+if(__cronMode==='picks'){
+  (async function(){
+    window.__cronStatus='picks: starting';
+    try{
+      const t0=Date.now();
+      while(!(window.FB&&FB.ready)&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
+      const dp=document.getElementById('dp'); if(dp)dp.value=todayStr();
+      if(typeof STATE!=='undefined')STATE.date=todayStr();
+      window.__cronStatus='picks: generating '+todayStr();
+      await refreshUnverified();   // generate + save + lock verified; no DK pull
+      window.__cronStatus='picks: done — locks generated + saved for '+todayStr();
+    }catch(e){window.__cronStatus='picks: ERROR — '+(e&&e.message||e);}
+    window.__cronDone=true;
+  })();
+}
 
 // Show the launch notice once per actual page-view. Uses a flag that resets on iOS
 // page-restore (pageshow with persisted=true) so closing & reopening re-shows it.
