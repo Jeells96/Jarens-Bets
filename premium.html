@@ -475,8 +475,8 @@ let TEAM_OAA={};     // team full name -> outs above average (Savant, advanced d
 let OAA_OK=null;
 let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
 let MK={hr:[],kP:[],kB:[],bbP:[],bbB:[]};
-let MARKET='hits';
-const MK_LABEL={hits:'HITS',gm:'GAME PREDICTIONS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+let MARKET='gm';
+const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
 
 function toast(msg,kind){
   const wrap=document.getElementById('toasts');
@@ -1696,7 +1696,7 @@ async function ensurePriorDaysGraded(fromDate,prog,daysBack){
 }
 
 /* ── stored-day access + per-market grading ── */
-let RM='hits',RVIEW='14d',REXP=null;
+let RM='gm',RVIEW='14d',REXP=null;
 let DAY_RESULTS=null; // outcomes for the date shown on the Today tab (past days)
 const playedBat=o=>!!o&&((o.ab||0)>=1||(o.h||0)>=1);
 function lineGrade(r,actual){
@@ -2244,8 +2244,8 @@ async function bootLeagueLoad(){
     else {setTxt('hs14','—');setTxt('hs14N','no graded picks');}
   }
 
-  const MKL={hits:'HITS',gm:'GAME PREDICTIONS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
-  let VIEW='14d', MKT='hits', EXP=null;
+  const MKL={gm:'GAME PREDICTIONS',hits:'HITS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+  let VIEW='14d', MKT='gm', EXP=null;
   const DAYC={};
   window.__stat={
     setView:v=>{VIEW=v;EXP=null;paintResults();},

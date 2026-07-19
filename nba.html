@@ -1947,14 +1947,15 @@ function renderBets(){
     el.innerHTML = '<div class="card"><h2>Locks \u00b7 ' + esc(state.slate.date) + '</h2><div class="muted small">Tap Project Slate on Games to compute this date\u2019s bets.</div>' + th + '</div>';
     return;
   }
-  let total = 0, hitN = 0, gradedN = 0, html = '';
+  let hitN = 0, gradedN = 0;
+  const bets = []; // { conf, html } — flattened across games, sorted by confidence below
   for (const g of projected){
     const proj = state.projections[g.id];
     let recD = null;
     if (g.completed){
       try { recD = hasRecord(g.id) ? JSON.parse(localStorage.getItem(recKey(g.id))) : null; } catch (e) {}
     }
-    const rows = [];
+    const gTag = '<span class="muted">' + esc(g.away.abbr) + '@' + esc(g.home.abbr) + '</span> ';
     const mark = function(ok, extra){
       gradedN++; if (ok) hitN++;
       return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (extra != null ? extra + ' ' : '') + (ok ? '\u2713' : '\u2717') + '</span>';
@@ -1965,7 +1966,7 @@ function renderBets(){
         const actW = recD.home.pts > recD.away.pts ? recD.home.ab : recD.away.ab;
         m = mark(actW === proj.winAb, null);
       }
-      rows.push('<div class="row small" style="padding:4px 0"><div class="grow">Winner: <b>' + esc(proj.winAb) + '</b>' + m + '</div><div class="lock">' + proj.winMetric + '% \ud83d\udd12</div></div>');
+      bets.push({ conf: proj.winMetric, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Winner: <b>' + esc(proj.winAb) + '</b>' + m + '</div><div class="lock">' + proj.winMetric + '% \ud83d\udd12</div></div>' });
     }
     if (s.markets.total !== false && proj.confTotal >= lockTh('lines')){
       let m = '';
@@ -1973,14 +1974,14 @@ function renderBets(){
         const aTot = recD.home.pts + recD.away.pts;
         m = mark(Math.abs(aTot - proj.total) <= hitTol('pts'), aTot);
       }
-      rows.push('<div class="row small" style="padding:4px 0"><div class="grow">Total ' + proj.total + ' \u00b1' + hitTol('pts') + m + '</div><div class="lock">' + proj.confTotal + '% \ud83d\udd12</div></div>');
+      bets.push({ conf: proj.confTotal, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Total ' + proj.total + ' \u00b1' + hitTol('pts') + m + '</div><div class="lock">' + proj.confTotal + '% \ud83d\udd12</div></div>' });
     }
     if (s.markets.teamPts !== false && proj.confTeam >= lockTh('lines')){
       const sides = [[g.away.abbr, proj.awayPts, recD ? recD.away.pts : null], [g.home.abbr, proj.homePts, recD ? recD.home.pts : null]];
       for (const sd of sides){
         let m = '';
         if (sd[2] != null) m = mark(Math.abs(sd[2] - sd[1]) <= hitTol('pts'), sd[2]);
-        rows.push('<div class="row small" style="padding:4px 0"><div class="grow">' + esc(sd[0]) + ' pts ' + sd[1] + ' \u00b1' + hitTol('pts') + m + '</div><div class="lock">' + proj.confTeam + '% \ud83d\udd12</div></div>');
+        bets.push({ conf: proj.confTeam, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(sd[0]) + ' pts ' + sd[1] + ' \u00b1' + hitTol('pts') + m + '</div><div class="lock">' + proj.confTeam + '% \ud83d\udd12</div></div>' });
       }
     }
     for (const p of proj.props){
@@ -1989,14 +1990,13 @@ function renderBets(){
       let m = '';
       const act = actualFor(recD, p.pid, p.stat);
       if (act != null) m = mark(Math.abs(act - p.proj) <= hitTol('stat'), act);
-      rows.push('<div class="row small" style="padding:4px 0"><div class="grow">' + esc(p.name) + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + hitTol('stat') +
-        (p.inj === 'questionable' ? ' <span style="color:var(--amber)">Q</span>' : '') + m + '</div><div class="lock">' + p.conf + '% \ud83d\udd12</div></div>');
-    }
-    if (rows.length){
-      total += rows.length;
-      html += '<div class="card"><h2>' + esc(g.away.abbr) + ' @ ' + esc(g.home.abbr) + '</h2>' + rows.join('') + '</div>';
+      bets.push({ conf: p.conf, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(p.name) + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + hitTol('stat') +
+        (p.inj === 'questionable' ? ' <span style="color:var(--amber)">Q</span>' : '') + m + '</div><div class="lock">' + p.conf + '% \ud83d\udd12</div></div>' });
     }
   }
+  bets.sort(function(a, b){ return b.conf - a.conf; }); // strongest bets first, across all games
+  const total = bets.length;
+  const html = total ? '<div class="card"><h2>All bets \u00b7 highest confidence first</h2>' + bets.map(function(b){ return b.html; }).join('') + '</div>' : '';
   const head = '<div class="card"><h2>Locks \u00b7 ' + esc(state.slate.date) + '</h2><div class="small">' + total + ' qualifying bets' +
     (gradedN ? ' \u00b7 completed so far: <b>' + hitN + '/' + gradedN + '</b> <span class="muted">(view-only \u2014 stored units land in v0.4)</span>' : '') +
     '</div>' + th + '</div>';
