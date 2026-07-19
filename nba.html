@@ -822,7 +822,7 @@ async function buildData(fromStr, toStr){
   state.scan = { running: true, stop: false };
   const say = function(msg){ const el = document.getElementById('scanMsg'); if (el) el.textContent = msg; };
   const busy = function(dis){
-    ['updBtn', 'rangeBtn', 'rosterBtn', 'cloudBtn'].forEach(function(id){
+    ['updBtn', 'rangeBtn', 'rosterBtn', 'cloudBtn', 'pushBtn'].forEach(function(id){
       const b = document.getElementById(id); if (b) b.disabled = dis;
     });
     const s = document.getElementById('stopBtn'); if (s) s.classList.toggle('hidden', !dis);
@@ -1261,15 +1261,17 @@ async function runCronGrade(){
     const seed = await pullRecsFB();
     clog('seed: ' + seed.dates + ' cloud dates, ' + seed.seeded + ' records loaded');
 
-    // PROBE — is ESPN actually reachable from this runner? Fetch one mid-season
-    // slate directly. If this shows HTTP 403 or a network error, ESPN is
-    // refusing the GitHub Actions IP and buildData can never populate here.
+    // PROBE — ESPN blocks SOME GitHub runner IPs (each run draws a different
+    // one; the NFL app hit ESPN fine from the same infrastructure). This tells
+    // us which kind of run this is, and drives the skip/continue choice below.
+    let espnOK = false;
     try {
       const probe = toESPN(addDays(SEASON.start, 90)); // ~mid-January, a day with games
       const r = await fetch(ESPN.scoreboard(probe), { cache: 'no-store' });
       let g = 0; if (r.ok){ try { g = (parseScoreboard(await r.json()) || []).length; } catch (e) {} }
+      espnOK = r.ok;
       clog('ESPN probe ' + probe + ': HTTP ' + r.status + ' \u00b7 ' + g + ' games seen');
-    } catch (e){ clog('ESPN probe FAILED (' + e.message + ') \u2014 ESPN is likely blocking this runner IP'); }
+    } catch (e){ clog('ESPN probe FAILED (' + e.message + ') \u2014 this runner IP is blocked by ESPN'); }
 
     clog('building roster position map');
     try { await buildPosMap(false, function(m){ clog(String(m || '')); }); }
@@ -1280,14 +1282,27 @@ async function runCronGrade(){
     await buildData(SEASON.start, todayPT());
     const after = countRecs();
     clog('build complete: ' + after + ' total records (' + (after - before) + ' new this run)');
-    if (after === 0){ throw new Error('0 game records after build \u2014 ESPN fetches returned nothing (see probe line above)'); }
+
+    if (after === 0){
+      if (!espnOK){
+        // Blocked-IP run before the first successful build: nothing to grade
+        // yet, and that's expected. The next scheduled run gets a fresh runner
+        // (new IP) and retries; the first clean run does the one-time full
+        // build and mirrors it, after which even blocked runs succeed.
+        clog('SKIPPED \u2014 ESPN refused this runner IP and the cloud has no records yet. Retries automatically next run (each run gets a new IP).');
+        window.__cronDone = true;
+        return;
+      }
+      throw new Error('0 game records after build even though ESPN probe succeeded \u2014 something else is wrong (see log)');
+    }
 
     clog('regrading season');
     await regradeAll();                 // saveGateSummary inside writes nba/allTime
     clog('mirroring new records to nba_recs');
     const pushed = await pushRecsFB();
     const dates = Object.keys(state.seasonUnits || {}).length;
-    clog('done \u2014 ' + after + ' records, ' + dates + ' dates graded, ' + pushed + ' day(s) mirrored, nba/allTime updated');
+    const note = espnOK ? '' : ' (ESPN unreachable this run \u2014 graded from cloud records)';
+    clog('done \u2014 ' + after + ' records, ' + dates + ' dates graded, ' + pushed + ' day(s) mirrored, nba/allTime updated' + note);
   } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
   window.__cronDone = true;
 }
@@ -1941,6 +1956,7 @@ function renderFactsDataCard(){
     '<div class="row" style="margin-top:10px">' +
       '<button class="btn" id="updBtn">Update</button>' +
       '<button class="btn ghost" id="cloudBtn">Pull from cloud</button>' +
+      '<button class="btn ghost" id="pushBtn">Push to cloud</button>' +
       '<button class="btn ghost" id="rosterBtn">Refresh rosters</button>' +
       '<button class="btn ghost hidden" id="stopBtn">Stop</button></div>' +
     '<div class="row" style="margin-top:8px">' +
@@ -1964,6 +1980,28 @@ function renderFactsDataCard(){
       say(r.games ? ('Loaded ' + r.games + ' games across ' + r.dates + ' dates from cloud.') : 'Cloud is empty \u2014 run the grading autopilot once, then pull again.');
     } catch (e){ say('Cloud pull failed \u2014 ' + e.message); }
     finally { b.disabled = false; renderFactsDataCard(); }
+  });
+  document.getElementById('pushBtn').addEventListener('click', async function(){
+    if (state.scan && state.scan.running) return;
+    if (!fbReady()){ toast('Firebase not configured'); return; }
+    const b = document.getElementById('pushBtn');
+    const say = function(m){ const x = document.getElementById('scanMsg'); if (x) x.textContent = m; };
+    const byDate = loadRecsByDate();
+    const dates = Object.keys(byDate).sort();
+    if (!dates.length){ say('Nothing to push \u2014 build the season first with Update.'); return; }
+    b.disabled = true;
+    let pushed = 0;
+    try {
+      for (let i = 0; i < dates.length; i++){
+        const d = dates[i];
+        say('Pushing to cloud\u2026 ' + (i + 1) + '/' + dates.length + ' (' + d + ')');
+        await fbWrite(FB_RECS, d, { recs: byDate[d] });
+        pushed++;
+        await sleep(60);
+      }
+      say('Pushed ' + pushed + ' day(s) to the cloud. Autopilot + other devices can now use them.');
+    } catch (e){ say('Push failed after ' + pushed + ' day(s) \u2014 ' + e.message); }
+    finally { b.disabled = false; }
   });
   document.getElementById('rangeBtn').addEventListener('click', function(){
     const f = document.getElementById('fromD').value.trim();

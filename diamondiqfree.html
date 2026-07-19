@@ -3147,6 +3147,11 @@ var __cronMode=new URLSearchParams(location.search).get('cron');
    The-Odds-API credits. DK lines still come from Firebase (your DK pull). */
 if(__cronMode){
   try{ maybeAutoPull=async function(){}; }catch(e){}
+  /* Headless runners are throwaway: localStorage persistence is pointless and
+     the shared jeells96.github.io origin is crowded, so predSave overflows the
+     quota ("exceeded the quota" in the Action log). Firebase is the real store
+     (pushSharedHistory reads PRED from memory), so just disable local saves. */
+  try{ predSave=function(){}; console.log('[DIQ] cron: local predSave disabled (throwaway browser; Firebase is the store)'); }catch(e){}
   /* The app fires pushSharedHistory()/pushGradeLog() fire-and-forget, once per
      day processed. On a fresh headless runner that queues ~14+ writes at once
      and Firestore throws resource-exhausted ("write stream exhausted"). Wrap

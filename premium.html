@@ -2097,9 +2097,23 @@ async function bootLeagueLoad(){
         const t0=Date.now();
         while(!FBH.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
         if(!FBH.ready)throw new Error('Firebase not ready after 15s');
-        await autoGradePriorDays(todayStr(),m=>{window.__cronStatus='cron: '+String(m||'');});
+        /* Count real grading work: storeResults runs once per day actually
+           graded, so "done" can never again hide a zero-work sweep. */
+        const _sr=storeResults; let gradedN=0;
+        storeResults=async function(d,g){gradedN++;console.log('[premium] graded '+d);return _sr(d,g);};
+        try{ await autoGradePriorDays(todayStr(),m=>{window.__cronStatus='cron: '+String(m||'');}); }
+        finally{ storeResults=_sr; }
         await computeSuccessStats();
-        window.__cronStatus='cron: done — prior days swept + summary pushed';
+        /* Picks-pipeline health: grading can only score saved picks. Say
+           plainly whether yesterday's picks exist so an empty sweep is
+           explained in the log instead of silent. */
+        try{
+          const yd=addDays(todayStr(),-1);
+          const doc=await fbPull(yd);
+          const nRows=doc&&doc.rows?doc.rows.length:0;
+          console.log('[premium] picks saved for '+yd+': '+(nRows?('yes ('+nRows+' rows)'):'NO — run the Make Picks workflow so grading has something to score'));
+        }catch(e){}
+        window.__cronStatus='cron: done — '+gradedN+' day(s) graded this run; summary pushed';
       }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;
     })();

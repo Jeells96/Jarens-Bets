@@ -34,7 +34,7 @@ const APPS = [
     const page = await context.newPage();
     page.on('console', (msg) => {
       const t = msg.text();
-      if (/error|warn|picks|odds|firebase|lineup/i.test(t)) console.log('    [page] ' + t.slice(0, 200));
+      if (/error|warn|fail|picks|odds|firebase|lineup|probe|http|save|graded|quota|\[diq\]|\[premium\]|\[nba\]|\[nfl\]/i.test(t)) console.log('    [page] ' + t.slice(0, 220));
     });
     page.on('pageerror', (err) => console.log('    [pageerror] ' + String(err).slice(0, 200)));
 
