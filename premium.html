@@ -476,7 +476,7 @@ let OAA_OK=null;
 let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
 let MK={hr:[],kP:[],kB:[],bbP:[],bbB:[]};
 let MARKET='hits';
-const MK_LABEL={hits:'HITS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gm:'GAME LINES'};
+const MK_LABEL={hits:'HITS',gm:'GAME PREDICTIONS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
 
 function toast(msg,kind){
   const wrap=document.getElementById('toasts');
@@ -2033,13 +2033,14 @@ function drawProbList(rows,tierFn,fmt){
 function drawGames(rows){
   const list=$('list');
   if(!list)return;
+  rows=[...rows].sort((a,b)=>(b.conf||0)-(a.conf||0)); // highest-confidence first, always
   list.innerHTML=rows.map(r=>{
     const chips=(r.reasons||[]).map(x=>`<span class="wc ${x.k}">${x.t}</span>`).join('');
     const res=DAY_RESULTS?.['g'+r.id];
     let mark='';
     if(res&&res.hs!=null&&res.as!=null&&res.hs!==res.as){
       const won=(res.hs>res.as)===(r.pick===r.team);
-      mark=won?'<span class="rmark Y">✓</span>':'<span class="rmark N">✗</span>';
+      mark=(won?'<span class="rmark Y">✓</span>':'<span class="rmark N">✗</span>')+` <span style="color:var(--mt2);font-size:.72rem">final ${res.as}-${res.hs}</span>`;
     }
     const dkBits=[];
     if(r.mlEdge!=null)dkBits.push(`ML edge ${r.mlEdge>=0?'+':''}${(r.mlEdge*100).toFixed(1)}%${r.mlLean==='VALUE'?' · <b style="color:var(--hit)">VALUE</b>':''}`);
@@ -2243,7 +2244,7 @@ async function bootLeagueLoad(){
     else {setTxt('hs14','—');setTxt('hs14N','no graded picks');}
   }
 
-  const MKL={hits:'HITS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gm:'GAME LINES'};
+  const MKL={hits:'HITS',gm:'GAME PREDICTIONS',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
   let VIEW='14d', MKT='hits', EXP=null;
   const DAYC={};
   window.__stat={

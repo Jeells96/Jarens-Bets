@@ -439,7 +439,7 @@ async function fetchAccuracy(cfg){
   if (!cfg || !cfg.projectId || !cfg.apiKey) return { skipped: true };
   try {
     if (cfg.mode === 'list'){
-      var lr = await fetch(listUrl(cfg));
+      var lr = await fetch(listUrl(cfg), { cache: 'no-store' });
       if (!lr.ok) return lr.status === 403 ? { blocked: true } : { error: 'HTTP ' + lr.status };
       var lj = await lr.json();
       var docs = (lj.documents || []).map(function(d){ return { id: d.name.split('/').pop(), data: fsFields(d.fields || {}) }; });
@@ -447,7 +447,7 @@ async function fetchAccuracy(cfg){
       var g = decodeGridline(docs);
       return g ? { data: g } : { unreadable: true };
     }
-    var res = await fetch(docUrl(cfg));
+    var res = await fetch(docUrl(cfg), { cache: 'no-store' });
     if (res.status === 404) return { missing: true };
     if (res.status === 403) return { blocked: true };
     if (!res.ok) return { error: 'HTTP ' + res.status };
@@ -598,6 +598,8 @@ function closeApp(fromPop){
   document.body.style.overflow = '';
   currentSite = null;
   document.title = 'The Board \u2014 MLB \u00b7 NFL \u00b7 NBA models';
+  // Using an app can change its record — re-read the board on the way out.
+  try { if (refreshRecords._onAppClose) setTimeout(refreshRecords._onAppClose, 400); } catch (e) {}
   if (!fromPop){
     try {
       if (history.state && history.state.app) history.back();
@@ -608,6 +610,32 @@ function closeApp(fromPop){
 window.addEventListener('popstate', function(){
   if (!byId('appview').classList.contains('hidden')) closeApp(true);
 });
+
+async function refreshRecords(){
+  var cards = SITES.filter(function(s){ return !s.hidden; });
+  if (refreshRecords._busy) return;
+  refreshRecords._busy = true;
+  try {
+    var results = await Promise.all(cards.map(function(s){ return fetchAccuracy(s.accuracy); }));
+    var live = 0, newestT = null;
+    results.forEach(function(r, i){
+      fillResult(cards[i], r);
+      if (r.data){
+        live++;
+        if (r.data.t && (!newestT || r.data.t > newestT)) newestT = r.data.t;
+      }
+    });
+    var status = document.getElementById('statusline');
+    var at = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (live){
+      var when = newestT ? ' \u00b7 updated ' + String(newestT).slice(0, 10) : '';
+      status.textContent = live + ' of ' + cards.length + ' records live' + when + ' \u00b7 refreshed ' + at;
+    } else {
+      status.textContent = 'Records come online as each app grades its first slate.';
+    }
+    refreshRecords._last = Date.now();
+  } finally { refreshRecords._busy = false; }
+}
 
 async function boot(){
   var cards = SITES.filter(function(s){ return !s.hidden; });
@@ -632,23 +660,20 @@ async function boot(){
     'The Board \u00b7 ' + cards.length + ' apps \u00b7 records read live at ' +
     new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  var results = await Promise.all(cards.map(function(s){ return fetchAccuracy(s.accuracy); }));
-  var live = 0, newestT = null;
-  results.forEach(function(r, i){
-    fillResult(cards[i], r);
-    if (r.data){
-      live++;
-      if (r.data.t && (!newestT || r.data.t > newestT)) newestT = r.data.t;
-    }
-  });
+  await refreshRecords();
 
-  var status = document.getElementById('statusline');
-  if (live){
-    var when = newestT ? ' \u00b7 updated ' + String(newestT).slice(0, 10) : '';
-    status.textContent = live + ' of ' + cards.length + ' records live' + when;
-  } else {
-    status.textContent = 'Records come online as each app grades its first slate.';
-  }
+  // LIVE: the Board re-reads every record when you come back to it —
+  // returning from an app, re-focusing the tab, iOS restoring the page —
+  // and on a 5-minute heartbeat while visible. Grades can never look stale.
+  var maybeRefresh = function(){
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - (refreshRecords._last || 0) < 20000) return; // gentle throttle
+    refreshRecords();
+  };
+  document.addEventListener('visibilitychange', maybeRefresh);
+  window.addEventListener('pageshow', maybeRefresh);
+  setInterval(maybeRefresh, 5 * 60 * 1000);
+  refreshRecords._onAppClose = maybeRefresh;
 }
 document.addEventListener('DOMContentLoaded', boot);
 </script>

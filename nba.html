@@ -55,6 +55,16 @@ input[type=checkbox]{ width:20px; height:20px; accent-color:var(--accent); }
   -webkit-appearance:none; appearance:none; }
 .datebar .dpick::-webkit-date-and-time-value{ text-align:center; }
 .datebar .dpick::-webkit-calendar-picker-indicator{ filter:invert(1); opacity:.7; }
+.gmark{ font-weight:800; }
+.gmark.y{ color:var(--green); }
+.gmark.n{ color:var(--red); }
+.dday{ border-bottom:1px solid var(--line); }
+.dday summary{ display:flex; justify-content:space-between; align-items:center;
+  padding:9px 2px; cursor:pointer; list-style:none; }
+.dday summary::-webkit-details-marker{ display:none; }
+.dday summary > span:first-child{ font-weight:700; }
+.dday[open] summary{ color:var(--accent2); }
+.ddaybody{ padding:2px 2px 10px; }
 .game{ display:flex; align-items:center; justify-content:space-between;
   background:var(--card); border:1px solid var(--line); border-radius:14px;
   padding:12px; margin-bottom:10px; }
@@ -1284,7 +1294,14 @@ async function autoCloudSync(){
       const pushed = await pushRecsFB();
       if (pushed) toast('Backed up ' + pushed + ' day(s) to the cloud', 3000);
     } catch (e){ logEvent('warn', 'data', 'auto push: ' + e.message); }
+    // Success rates should exist without taps: grade in the background when
+    // records are present but ungraded. regradeAll also refreshes nba/allTime,
+    // so the Board reflects this device's data automatically.
+    try {
+      if (state.coverage && state.coverage.games && !flatUnits().length) await regradeAll();
+    } catch (e){ logEvent('warn', 'data', 'auto grade: ' + e.message); }
     try { if (document.getElementById('updBtn')) renderFactsDataCard(); } catch (e) {}
+    try { if (document.getElementById('factsBody')) renderFactsBody(); } catch (e) {}
   } finally { state.cloudSync.running = false; }
 }
 
@@ -1739,6 +1756,13 @@ function renderGames(){
       return (g.home.abbr + ' ' + g.home.name + ' ' + g.away.abbr + ' ' + g.away.name).toLowerCase().indexOf(q) !== -1;
     });
   }
+  // Once projected, highest-grade bets lead the list; unprojected games sink.
+  if (Object.keys(state.projections).length){
+    games = games.slice().sort(function(a, b){
+      const pa = state.projections[a.id], pb = state.projections[b.id];
+      return ((pb ? pb.winMetric : -1) - (pa ? pa.winMetric : -1));
+    });
+  }
   if (!games.length){
     list.innerHTML = '<div class="card muted small">' + (state.slate.games.length ? 'No matches.' : 'No NBA games on this date.') + '</div>';
     return;
@@ -1749,8 +1773,15 @@ function renderGames(){
     const when = g.stateCode === 'pre' ? fmtTimePT(g.iso) : g.statusText;
     const recs = (g.away.record && g.home.record) ? esc(g.away.record) + ' \u00b7 ' + esc(g.home.record) : '';
     const proj = state.projections[g.id];
+    // Finished + projected -> grade the pick right on the card.
+    let mark = '';
+    if (proj && g.stateCode === 'post' && g.away.score != null && g.home.score != null && +g.away.score !== +g.home.score){
+      const actualWin = (+g.home.score > +g.away.score) ? g.home.abbr : g.away.abbr;
+      const won = actualWin === proj.winAb;
+      mark = won ? ' <span class="gmark y">\u2713</span>' : ' <span class="gmark n">\u2717</span>';
+    }
     const pline = proj
-      ? '<div class="small" style="margin-top:2px;color:var(--accent2)">' + proj.awayPts + '\u2013' + proj.homePts + ' \u00b7 ' + esc(proj.winAb) + ' ' + proj.winMetric + '%' + (proj.winMetric >= lockTh('winner') ? ' \ud83d\udd12' : '') + '</div>'
+      ? '<div class="small" style="margin-top:2px;color:var(--accent2)">' + proj.awayPts + '\u2013' + proj.homePts + ' \u00b7 ' + esc(proj.winAb) + ' ' + proj.winMetric + '%' + (proj.winMetric >= lockTh('winner') ? ' \ud83d\udd12' : '') + mark + '</div>'
       : '';
     return '<div class="game" data-gid="' + esc(g.id) + '">' +
       '<div><div class="teams">' + esc(g.away.abbr) + ' @ ' + esc(g.home.abbr) + '</div>' +
@@ -2034,12 +2065,20 @@ function renderFactsDataCard(){
 function renderFacts(){
   if (!state.coverage) hydrateFromStore(); // local read only — no network
   const el = document.getElementById('tab-facts');
-  el.innerHTML = '<div class="card" id="dataCard"></div>' +
-    '<div class="card" id="gradeCard"></div>' +
-    '<div id="factsBody"></div>';
+  el.innerHTML =
+    '<div id="factsBody"></div>' +
+    '<details class="card" id="maintWrap"><summary style="cursor:pointer;font-weight:700">Data &amp; maintenance</summary>' +
+      '<div id="gradeCard" style="margin-top:8px"></div>' +
+      '<div id="dataCard" style="margin-top:8px"></div>' +
+    '</details>';
   renderFactsDataCard();
   renderGradeCard();
   renderFactsBody();
+  // Success should just be there: if records exist but nothing's graded yet,
+  // grade quietly in the background and repaint.
+  if (!flatUnits().length && state.coverage && state.coverage.games){
+    regradeAll().then(function(){ renderFactsBody(); }).catch(function(){});
+  }
 }
 
 function renderGradeCard(){
@@ -2112,35 +2151,37 @@ function renderFactsBody(){
 
   const dl = document.getElementById('dateList');
   const dates = Object.keys(state.seasonUnits).sort().reverse();
-  const pick = function(d){
+  const pick = function(d, cat){
     const us = state.seasonUnits[d];
     return us.filter(function(u){
       if (!unitQualifies(u)) return false;
-      return state.factsCat === 'allLocks' ? true : u.cat === state.factsCat;
+      return cat === 'allLocks' ? true : u.cat === cat;
     });
   };
+  // Daily view: one dropdown per date. Summary shows the selected category's
+  // day record; open it for the full per-category table + every graded lock.
   dl.innerHTML = dates.map(function(d){
-    const q = pick(d);
+    const q = pick(d, state.factsCat);
     if (!q.length) return '';
     const hit = q.filter(unitHit).length;
     const pct = Math.round(100 * hit / q.length);
-    return '<div class="daterow" data-d="' + d + '"><div>' + d + '</div>' +
-      '<div class="small"><b>' + pct + '%</b> <span class="muted">' + hit + '/' + q.length + '</span></div></div>';
+    const catRows = Object.keys(CAT_META).map(function(k){
+      const cq = pick(d, k);
+      if (!cq.length) return '';
+      const ch = cq.filter(unitHit).length;
+      return '<tr><td>' + esc(CAT_META[k].label) + '</td><td><b>' + Math.round(100 * ch / cq.length) + '%</b></td><td class="muted">' + ch + '/' + cq.length + '</td></tr>';
+    }).join('');
+    const units = q.slice().sort(function(a, b){ return b.metric - a.metric; }).map(function(u){
+      const h = unitHit(u);
+      return '<div class="small" style="padding:3px 0"><span class="gmark ' + (h ? 'y' : 'n') + '">' + (h ? '\u2713' : '\u2717') + '</span> ' +
+        '<b>' + esc(u.game) + '</b> ' + esc(u.desc) + ' <span class="muted">' + u.metric + '%</span></div>';
+    }).join('');
+    return '<details class="dday"><summary><span>' + d + '</span>' +
+      '<span class="small"><b>' + pct + '%</b> <span class="muted">' + hit + '/' + q.length + '</span></span></summary>' +
+      '<div class="ddaybody"><table class="tbl">' +
+      '<tr><th>Category</th><th>Hit</th><th>n</th></tr>' + catRows + '</table>' +
+      '<div style="margin-top:6px">' + units + '</div></div></details>';
   }).join('') || '<div class="muted small">No qualifying locks for this category at current thresholds.</div>';
-  Array.prototype.forEach.call(dl.querySelectorAll('.daterow'), function(row){
-    row.addEventListener('click', function(){
-      const existing = row.nextElementSibling;
-      if (existing && existing.classList.contains('drill')){ existing.remove(); return; }
-      const d = row.getAttribute('data-d');
-      const q = pick(d).slice().sort(function(a, b){ return (a.game < b.game ? -1 : a.game > b.game ? 1 : 0) || (b.metric - a.metric); });
-      const inner = q.map(function(u){
-        const h = unitHit(u);
-        return '<div class="small" style="padding:3px 0"><span class="' + (h ? 'rate-good' : 'rate-bad') + '">' + (h ? '\u2713' : '\u2717') + '</span> ' +
-          '<b>' + esc(u.game) + '</b> ' + esc(u.desc) + ' <span class="muted">' + u.metric + '%</span></div>';
-      }).join('');
-      row.insertAdjacentHTML('afterend', '<div class="drill" style="padding:6px 0 8px;border-bottom:1px solid var(--line)">' + inner + '</div>');
-    });
-  });
 }
 
 function marketRows(s){
