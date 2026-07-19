@@ -830,7 +830,16 @@ async function buildData(fromStr, toStr){
   busy(true);
   let recorded = 0, failures = 0;
   try {
-    await buildPosMap(false, say);
+    // ESPN's /teams and /roster endpoints don't send CORS headers, so this
+    // fetch fails in real browsers (phone AND autopilot). It was aborting the
+    // whole build. It's optional by design: parsePlayers reads each player's
+    // position straight from the box score (posForPlayer falls back to it),
+    // so a missing roster map only means no live-roster override.
+    try { await buildPosMap(false, say); }
+    catch (e){
+      say('Roster map unavailable \u2014 using positions from box scores.');
+      logEvent('warn', 'data', 'posMap skipped: ' + e.message);
+    }
     let d = fromStr;
     while (d <= toStr){
       if (state.scan.stop){
