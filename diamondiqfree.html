@@ -3171,6 +3171,7 @@ bootPullWithRetry();
 if(__cronMode==='1'){
   (async function(){
     window.__cronStatus='cron: starting';
+    try{const pd=todayStr();const pr=await fetch('https://statsapi.mlb.com/api/v1/schedule?sportId=1&date='+pd,{cache:'no-store'});const pj=pr.ok?await pr.json():null;const pg=pj&&pj.dates&&pj.dates[0]?(pj.dates[0].games||[]).length:0;console.log('[DIQ] StatsAPI probe '+pd+': HTTP '+pr.status+' \u00b7 '+pg+' games');}catch(e){console.log('[DIQ] StatsAPI probe FAILED ('+e.message+') \u2014 MLB API may block this runner IP');}
     try{
       const t0=Date.now();
       while(!FB.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
@@ -3184,8 +3185,9 @@ if(__cronMode==='1'){
         if(HISTORY.fetched[d]&&HISTORY.byDate[d])continue;
         window.__cronStatus='cron: grading '+d;
         await fetchHistoryForDate(d);
-        graded++;
+        if(HISTORY.byDate[d])graded++;   // count only days that actually produced results
       }
+      console.log('[DIQ] grading finished: '+graded+' day(s) with results of '+dates.length+' tracked');
       window.__cronStatus='cron: done — '+graded+' day(s) graded/refreshed of '+dates.length+' tracked';
     }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
     window.__cronDone=true;

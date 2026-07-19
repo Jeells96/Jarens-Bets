@@ -2091,6 +2091,7 @@ async function bootLeagueLoad(){
   if(cronMode==='1'){
     (async function(){
       window.__cronStatus='cron: starting';
+      try{const pd=todayStr();const pr=await fetch('https://statsapi.mlb.com/api/v1/schedule?sportId=1&date='+pd,{cache:'no-store'});const pj=pr.ok?await pr.json():null;const pg=pj&&pj.dates&&pj.dates[0]?(pj.dates[0].games||[]).length:0;console.log('[premium] StatsAPI probe '+pd+': HTTP '+pr.status+' \u00b7 '+pg+' games');}catch(e){console.log('[premium] StatsAPI probe FAILED ('+e.message+') \u2014 MLB API may block this runner IP');}
       try{localStorage.setItem('fablehits_access_ok','1');localStorage.setItem('fablehits_user',JSON.stringify({name:'cron',key:'cron'}));}catch(e){}
       try{
         const t0=Date.now();

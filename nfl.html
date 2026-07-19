@@ -5327,6 +5327,11 @@ initPaywall();
 if (new URLSearchParams(location.search).get('cron') === '1') {
   (async function () {
     window.__cronStatus = 'cron: starting';
+    try {
+      const pr = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20250908', { cache: 'no-store' });
+      let pg = 0; if (pr.ok) { try { const pj = await pr.json(); pg = (pj.events || []).length; } catch (e) {} }
+      console.log('[nfl] ESPN probe (2025 wk1): HTTP ' + pr.status + ' \u00b7 ' + pg + ' games');
+    } catch (e) { console.log('[nfl] ESPN probe FAILED (' + e.message + ') \u2014 ESPN is likely blocking this runner IP (same as NBA)'); }
     try { sessionStorage.setItem('gl_member_ok', '1'); } catch (e) {}
     try { document.getElementById('paywall').classList.add('hidden'); } catch (e) {}
     try {
@@ -5336,8 +5341,11 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
       }, 1000);
       await scanFullSeason();
       clearInterval(prog);
-      const weeks = state.seasonScan && state.seasonScan.weeks ? state.seasonScan.weeks.length : 0;
-      window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks), accuracy synced';
+      const scan = state.seasonScan || {};
+      const weeks = scan.weeks ? scan.weeks.length : 0;
+      let graded = 0; try { (scan.weeks || []).forEach(function (w) { graded += (w && w.n) || (w && w.graded) || 0; }); } catch (e) {}
+      console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
+      window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks, ~' + graded + ' results), accuracy synced';
     } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
     window.__cronDone = true;
   })();
