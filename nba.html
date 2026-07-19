@@ -1350,8 +1350,12 @@ async function runCronGrade(){
       throw new Error('0 game records after build even though ESPN probe succeeded \u2014 something else is wrong (see log)');
     }
 
+    clog('applying shared lock config');
+    try { await pullSharedLockCfg(); } catch (e) {}
     clog('regrading season');
     await regradeAll();                 // saveGateSummary inside writes nba/allTime
+    clog('pushing raw units to nba_accuracy (powers the Board’s lock-grade preview)');
+    try { await pushSeasonFB(); } catch (e){ clog('units push warn: ' + e.message); }
     clog('mirroring new records to nba_recs');
     const pushed = await pushRecsFB();
     const dates = Object.keys(state.seasonUnits || {}).length;
@@ -1463,6 +1467,19 @@ function flatUnits(){
   const dates = Object.keys(state.seasonUnits).sort();
   for (const d of dates) out = out.concat(state.seasonUnits[d]);
   return out;
+}
+
+/* Shared lock config: the Board writes nba/lockcfg; every device and the cron
+   merge it over local settings so lock grades are league-wide, not per-device. */
+async function pullSharedLockCfg(){
+  try {
+    const cfg = await fbRead(FB_NS, 'lockcfg');
+    if (!cfg) return false;
+    state.settings.lockThresholds = Object.assign({}, state.settings.lockThresholds, cfg.lockThresholds || {});
+    state.settings.hitTol = Object.assign({}, state.settings.hitTol, cfg.hitTol || {});
+    logEvent('info', 'fb', 'shared lock config applied: ' + JSON.stringify(cfg.lockThresholds || {}));
+    return true;
+  } catch (e){ return false; }
 }
 
 function saveGateSummary(){
@@ -2489,6 +2506,8 @@ function boot(){
   document.getElementById('fbPill').textContent = fbReady() ? 'FB: ' + FB.projectId : 'Firebase: not set';
   purgeStaleCache(); // quota hygiene only — no data fetches on boot
   state.settings = loadSettings();
+  // League-wide lock config from the Board overrides device settings on open.
+  pullSharedLockCfg().then(function(got){ if (got){ try { renderFactsBody(); } catch (e) {} } }).catch(function(){});
   state.slateDate = todayPT();
 
   document.getElementById('dPrev').addEventListener('click', function(){

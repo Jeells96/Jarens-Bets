@@ -4240,7 +4240,7 @@ async function scanFullSeason() {
       if (gameCount === 0) { weekResults.push({ week: W, games: 0, units: [] }); continue; }
 
       // Push this week's results (at CURRENT thresholds) to Firebase
-      syncWeekAccuracy(aggregateUnits(graded.units), W);
+      syncWeekAccuracy(aggregateUnits(graded.units), W, graded.units);
       weekResults.push({ week: W, games: gameCount, units: graded.units });
     }
   } catch (e) { console.warn('season scan error', e); }
@@ -4348,7 +4348,7 @@ function catsToPlain(cats) {
   for (const k in cats) out[k] = { hit: cats[k].hit, n: cats[k].n, label: cats[k].label || k };
   return out;
 }
-async function syncWeekAccuracy(cats, weekOverride) {
+async function syncWeekAccuracy(cats, weekOverride, units) {
   if (!state.settings.accSyncEnabled) return;
   const wk = weekOverride != null ? weekOverride : state.week;
   const plain = catsToPlain(cats);
@@ -4361,11 +4361,35 @@ async function syncWeekAccuracy(cats, weekOverride) {
     await fsSetDoc('accuracy/' + docId, {
       season: state.season, week: wk, updatedAt: Date.now(), cats: plain,
     });
+    // Raw units alongside the aggregate — the Board's lock-grade preview
+    // re-grades these at any proposed thresholds. Compact: c=cat, m=metric,
+    // a=miss distance, h=baked hit for binary bets.
+    if (units && units.length) {
+      const compact = units.map(u => ({ c: u.cat, m: Math.round((u.metric || 0) * 10) / 10,
+        a: u.adelta != null ? Math.round(u.adelta * 10) / 10 : null, h: u.hit ? 1 : 0 }));
+      await fsSetDoc('accuracy/' + docId + '_units', {
+        season: state.season, week: wk, updatedAt: Date.now(), units: JSON.stringify(compact),
+      });
+    }
     _accSyncMemo[docId] = fingerprint;
     logEvent('info', 'sync', 'accuracy ' + docId + ' → Firebase (' + totalN + ' graded)');
   } catch (e) {
     logEvent('warn', 'sync', 'accuracy write failed (' + docId + '): ' + e.message);
   }
+}
+
+/* Shared lock config from the Board (accuracy/config_locks): league-wide
+   thresholds + tolerances override device settings on open and before scans. */
+async function pullSharedLockCfg() {
+  try {
+    const res = await fetch(FS_BASE + '/accuracy/config_locks?key=' + FIREBASE.apiKey, { cache: 'no-store' });
+    if (!res.ok) return false;
+    const d = fsDecodeDoc(await res.json()) || {};
+    if (d.lockThresholds) state.settings.lockThresholds = Object.assign({}, state.settings.lockThresholds, d.lockThresholds);
+    if (d.hitTol) state.settings.hitTol = Object.assign({}, state.settings.hitTol, d.hitTol);
+    logEvent('info', 'sync', 'shared lock config applied');
+    return true;
+  } catch (e) { return false; }
 }
 async function syncSeasonSummary(ss) {
   if (!state.settings.accSyncEnabled || !ss) return;
@@ -4540,7 +4564,7 @@ function renderFacts(main) {
   if (state.loaded && state.games.some(g => g.completed)) {
     const graded = gradeWeek();
     const cats = graded.cats;
-    syncWeekAccuracy(cats);
+    syncWeekAccuracy(cats, null, graded.units);
 
     const eligible = Object.entries(cats).filter(e => e[1].n > 0 && e[0] !== 'allLocks');
     const best = eligible.length ? eligible.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
@@ -5351,6 +5375,7 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
     } catch (e) { console.log('[nfl] ESPN probe FAILED (' + e.message + ') \u2014 ESPN is likely blocking this runner IP (same as NBA)'); }
     try { sessionStorage.setItem('gl_member_ok', '1'); } catch (e) {}
     try { document.getElementById('paywall').classList.add('hidden'); } catch (e) {}
+    try { await pullSharedLockCfg(); } catch (e) {}
     try {
       if (!state.settings.accSyncEnabled) throw new Error('accSyncEnabled is off — nothing would be written');
       const prog = setInterval(function () {
@@ -5403,7 +5428,7 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
 // Background automation (GitHub Action) handles scheduled pulls now.
 // On boot: adopt any newer background odds + show automation status.
-setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); }, 600);
+setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg().then(ok => { if (ok && state.activeTab === 'facts') render(); }); }, 600);
 </script>
 </body>
 </html>
