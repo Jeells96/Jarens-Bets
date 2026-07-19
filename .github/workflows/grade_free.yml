@@ -1,0 +1,27 @@
+name: Grade - Diamond IQ Free
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "51 */2 * * *"
+
+concurrency:
+  group: grade-free
+  cancel-in-progress: false
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+      - name: Grade Free
+        run: node grade_cron.js free
