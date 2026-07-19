@@ -1254,20 +1254,40 @@ async function pushRecsFB(){
 async function runCronGrade(){
   window.__cronStatus = 'cron: starting';
   try { localStorage.setItem(PIN_OK_KEY, '1'); } catch (e) {}
+  const clog = function(m){ window.__cronStatus = 'cron: ' + m; try { console.log('[nba] ' + m); } catch (e) {} };
+  const countRecs = function(){ let n = 0; try { eachStoredRecord(function(){ n++; }); } catch (e) {} return n; };
   try {
-    window.__cronStatus = 'cron: seeding records from Firebase';
+    clog('seeding records from Firebase (nba_recs)');
     const seed = await pullRecsFB();
-    window.__cronStatus = 'cron: building roster position map';
-    try { await buildPosMap(false, function(m){ window.__cronStatus = 'cron: ' + String(m || ''); }); }
-    catch (e){ /* degraded positions beat no grade — records freeze pos at parse */ }
-    window.__cronStatus = 'cron: building new days (' + seed.dates + ' seeded dates)';
+    clog('seed: ' + seed.dates + ' cloud dates, ' + seed.seeded + ' records loaded');
+
+    // PROBE — is ESPN actually reachable from this runner? Fetch one mid-season
+    // slate directly. If this shows HTTP 403 or a network error, ESPN is
+    // refusing the GitHub Actions IP and buildData can never populate here.
+    try {
+      const probe = toESPN(addDays(SEASON.start, 90)); // ~mid-January, a day with games
+      const r = await fetch(ESPN.scoreboard(probe), { cache: 'no-store' });
+      let g = 0; if (r.ok){ try { g = (parseScoreboard(await r.json()) || []).length; } catch (e) {} }
+      clog('ESPN probe ' + probe + ': HTTP ' + r.status + ' \u00b7 ' + g + ' games seen');
+    } catch (e){ clog('ESPN probe FAILED (' + e.message + ') \u2014 ESPN is likely blocking this runner IP'); }
+
+    clog('building roster position map');
+    try { await buildPosMap(false, function(m){ clog(String(m || '')); }); }
+    catch (e){ clog('posMap warn: ' + e.message); }
+
+    const before = countRecs();
+    clog('building season ' + SEASON.start + ' \u2192 ' + todayPT() + ' (have ' + before + ' records)');
     await buildData(SEASON.start, todayPT());
-    window.__cronStatus = 'cron: regrading season';
+    const after = countRecs();
+    clog('build complete: ' + after + ' total records (' + (after - before) + ' new this run)');
+    if (after === 0){ throw new Error('0 game records after build \u2014 ESPN fetches returned nothing (see probe line above)'); }
+
+    clog('regrading season');
     await regradeAll();                 // saveGateSummary inside writes nba/allTime
-    window.__cronStatus = 'cron: mirroring new records';
+    clog('mirroring new records to nba_recs');
     const pushed = await pushRecsFB();
-    const dates = Object.keys(state.seasonUnits).length;
-    window.__cronStatus = 'cron: done — ' + dates + ' dates graded, ' + pushed + ' record day(s) mirrored, nba/allTime updated';
+    const dates = Object.keys(state.seasonUnits || {}).length;
+    clog('done \u2014 ' + after + ' records, ' + dates + ' dates graded, ' + pushed + ' day(s) mirrored, nba/allTime updated');
   } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
   window.__cronDone = true;
 }
