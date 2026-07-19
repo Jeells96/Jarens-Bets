@@ -34,7 +34,7 @@ const APPS = key ? [ALL[key]] : Object.values(ALL); // one app, or all when no k
     const page = await context.newPage();
     page.on('console', (msg) => {
       const t = msg.text();
-      if (/error|warn|cron|grade|firebase/i.test(t)) console.log('    [page] ' + t.slice(0, 200));
+      if (/error|warn|cron|grade|firebase|espn|probe|http|record|seed|built|build|mirror|picks|lineup|\[nba\]|\[diq\]|\[page\]/i.test(t)) console.log('    [page] ' + t.slice(0, 220));
     });
     page.on('pageerror', (err) => console.log('    [pageerror] ' + String(err).slice(0, 200)));
 
