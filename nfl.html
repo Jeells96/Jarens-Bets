@@ -5382,10 +5382,22 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
         window.__cronStatus = 'cron: ' + (state.seasonScanProgress || 'scanning…');
       }, 1000);
       await scanFullSeason();
-      clearInterval(prog);
-      const scan = state.seasonScan || {};
-      const weeks = scan.weeks ? scan.weeks.length : 0;
+      let scan = state.seasonScan || {};
+      let weeks = scan.weeks ? scan.weeks.length : 0;
       let graded = 0; try { (scan.weeks || []).forEach(function (w) { graded += (w && w.n) || (w && w.graded) || 0; }); } catch (e) {}
+      // Offseason: the current season has no completed games yet, so scan the
+      // previous one instead — keeps the record verified and the per-week raw
+      // units (the Board's lock-grade preview reads them) populated year-round.
+      if (graded === 0) {
+        const cur = state.season;
+        state.season = cur - 1;
+        console.log('[nfl] season ' + cur + ' has no completed games — scanning ' + state.season + ' instead');
+        await scanFullSeason();
+        scan = state.seasonScan || {};
+        weeks = scan.weeks ? scan.weeks.length : 0;
+        graded = 0; try { (scan.weeks || []).forEach(function (w) { graded += (w && w.n) || (w && w.graded) || 0; }); } catch (e) {}
+      }
+      clearInterval(prog);
       console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
       window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks, ~' + graded + ' results), accuracy synced';
     } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
