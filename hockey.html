@@ -744,7 +744,12 @@ async function runCronGrade(){
     const pushed = await pushUnitsFB(clog);
     clog('mirroring records to nhl_recs');
     const mirrored = await pushRecsFB(clog);
-    const summary = saveGateSummary();
+    const agg = aggregateUnits(flatUnits());
+    const entries = Object.keys(agg).filter(k => k !== 'allLocks' && agg[k].n >= 20)
+      .map(k => ({ label: agg[k].label, pct: Math.round(100 * agg[k].hit / Math.max(1, agg[k].n)), n: agg[k].n }))
+      .sort((a, b) => b.pct - a.pct).slice(0, 3);
+    const summary = { t: new Date().toISOString(), all: { hit: agg.allLocks.hit, n: agg.allLocks.n }, top: entries };
+    await fbWrite(FB_NS, 'allTime', summary); // awaited — the verify below must see THIS write
     // verify-don't-trust: read the summary back before claiming success
     const check = await fbRead(FB_NS, 'allTime');
     if (!check || !check.all || check.all.n !== summary.all.n) throw new Error('summary verify failed — wrote n=' + summary.all.n + ' but read back ' + JSON.stringify(check && check.all));
