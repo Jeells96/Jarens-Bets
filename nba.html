@@ -456,9 +456,10 @@ function unitHit(u){
 }
 function aggregateUnits(units){
   const cats = {};
-  for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: CAT_META[k].label };
+  for (const k in CAT_META){ if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(k)) continue; cats[k] = { hit: 0, n: 0, label: CAT_META[k].label }; }
   const all = { hit: 0, n: 0, label: 'All Locks' };
   for (const u of units){
+    if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(u.cat)) continue; 
     if (!cats[u.cat] || !unitQualifies(u)) continue;
     const h = unitHit(u);
     cats[u.cat].n++; if (h) cats[u.cat].hit++;
@@ -2668,11 +2669,114 @@ function boot(){
   });
 
   renderGames();
-  if (isUnlocked()) hideGate(); else showGate();
+  try{localStorage.setItem(PIN_OK_KEY,'1');}catch(e){} hideGate();
   logEvent('info', 'boot', APP.name + ' v' + APP.version + ' ready \u2014 cloud sync starting');
   setTimeout(function(){ autoCloudSync(); }, 60); // mandatory, non-blocking, quiet when in sync
 }
 document.addEventListener('DOMContentLoaded', boot);
+</script>
+
+<script>window.__APPKEY='nba';</script>
+<script>
+/* ═══ UNIFIED BOARD GATE ═══════════════════════════════════════════════════
+   Single source of truth for access: the Board's member list
+   (app_settings/board_access in mlb-bets-d196c). Every app validates the
+   device's saved identity against the live list + that member's granted apps
+   and active flag, so removing someone (or an app from them) locks them out on
+   their next open. Admin PIN (2325) and any ?cron= run always bypass, so the
+   owner and the automation can never be locked out. The free app (mlbfree)
+   only needs a name. Also carries the global DK-visibility switch. */
+(function(){
+  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
+  var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
+  var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';
+  var LS = 'board_member_v3';
+  var norm = function(v){ return String(v == null ? '' : v).trim().toLowerCase(); };
+  var pinOk = function(v){ try { return String(v).trim() === atob('MjMyNQ=='); } catch (e){ return false; } };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  function saved(){ try { return JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e){ return null; } }
+  function parseMembers(f){ if (f && f.members && f.members.stringValue){ try { return JSON.parse(f.members.stringValue) || []; } catch (e){ return []; } } return []; }
+  function grantOf(s, list){
+    if (!s) return { ok: false };
+    if (s.free) return { ok: true, apps: ['mlbfree'] };
+    if (s.code && pinOk(s.code)) return { ok: true, apps: null };
+    for (var i = 0; i < list.length; i++){ var m = list[i];
+      if (m.active === false) continue;
+      if (norm(m.code) !== norm(s.code)) continue;
+      if (m.name != null && norm(m.name) !== norm(s.name)) continue;
+      return { ok: true, apps: (m.apps && m.apps.length) ? m.apps : null };
+    }
+    return { ok: false };
+  }
+  function okApp(g){ return g.ok && (!g.apps || g.apps.indexOf(APPKEY) >= 0); }
+  var ov;
+  function cover(html){
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#0a0d12;color:#e8edf4;display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif';
+    ov.innerHTML = html;
+    document.body.appendChild(ov);
+    document.documentElement.style.overflow = 'hidden';
+  }
+  function pass(){ if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
+  function inp(id, ph, cap){ return '<input id="' + id + '" placeholder="' + ph + '" autocomplete="off" autocapitalize="' + cap + '" style="width:100%;box-sizing:border-box;background:#182231;border:1px solid #243146;border-radius:9px;color:#e8edf4;padding:12px;font-size:16px;margin-bottom:10px">'; }
+  function logFree(name){
+    try {
+      fetch(DOC + 'app_settings/free_log?key=' + MK).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+        var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
+        if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now() });
+        arr = arr.slice(0, 200);
+        fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  function showGate(list){
+    var fields = FREE
+      ? inp('bg-name', 'Your name', 'words')
+      : inp('bg-name', 'Your name', 'words') + inp('bg-code', 'Access code', 'none');
+    cover('<div style="width:100%;max-width:340px;text-align:center">' +
+      '<div style="font-size:26px;font-weight:800;margin-bottom:6px">Members only</div>' +
+      '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your name to use the free app.' : 'Enter your name and access code.') + '</div>' +
+      fields +
+      '<div id="bg-err" style="color:#ff7a7a;font-size:12.5px;min-height:16px;margin:6px 0"></div>' +
+      '<button id="bg-go" style="width:100%;border:0;border-radius:9px;padding:13px;font-weight:800;background:#e8edf4;color:#0b0d12;font-size:15px">Enter</button></div>');
+    var err = function(t){ document.getElementById('bg-err').textContent = t; };
+    var go = function(){
+      var name = ((document.getElementById('bg-name') || {}).value || '').trim();
+      if (FREE){
+        if (!name){ err('Enter your name.'); return; }
+        try { localStorage.setItem(LS, JSON.stringify({ free: true, name: name })); } catch (e) {}
+        logFree(name); pass(); return;
+      }
+      var code = (document.getElementById('bg-code') || {}).value || '';
+      if (!name && !pinOk(code)){ err('Enter your name too.'); return; }
+      var g = grantOf({ name: name, code: code }, list);
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name || 'admin', code: String(code).trim() })); } catch (e) {} pass(); }
+      else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
+      else { err('No match — check your name and code, or your access was turned off.'); }
+    };
+    document.getElementById('bg-go').addEventListener('click', go);
+    ov.querySelectorAll('input').forEach(function(i){ i.addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); }); });
+    setTimeout(function(){ var i = document.getElementById('bg-name'); if (i) i.focus(); }, 200);
+  }
+  cover('<div style="color:#5c6b80;font:600 12px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase">Checking access…</div>');
+  (async function(){
+    var list = null, dkVis = true;
+    try { var r = await fetch(DOC + 'app_settings/board_access?key=' + MK, { cache: 'no-store' }); if (r.ok) list = parseMembers((await r.json()).fields || {}); } catch (e) {}
+    try { var r2 = await fetch(DOC + 'app_settings/dk_auto?key=' + MK, { cache: 'no-store' }); if (r2.ok){ var f = (await r2.json()).fields || {}; if (f.dkVisible && f.dkVisible.booleanValue === false) dkVis = false; } } catch (e) {}
+    window.__DK_OK = dkVis;
+    if (!dkVis) document.documentElement.classList.add('dk-off');
+    try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(dkVis); } catch (e) {}
+    var s = saved();
+    if (list === null){ // offline: trust a known device rather than lock it out on a network blip
+      if (s && (s.free || s.name || (s.code && pinOk(s.code)))){ pass(); return; }
+      list = [];
+    }
+    if (okApp(grantOf(s, list))){ pass(); return; }
+    showGate(list);
+  })();
+})();
 </script>
 </body>
 </html>

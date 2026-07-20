@@ -557,6 +557,7 @@ function fillResult(s, result){
   if (!sb) return;
   if (result.data && result.data.markets && result.data.markets.length){
     var mk = result.data.markets;
+    if (!BOARD_DK_OK) mk = mk.filter(function(m){ return !/\bDK\b|DraftKings|vs DK/i.test(m.label || ''); });
     sb.classList.remove('state');
     var rows = mk.map(function(m, i){
       return '<li class="t3row' + (i === 0 ? ' lead' : '') + '">' +
@@ -724,6 +725,7 @@ async function boot(){
     'The Board \u00b7 ' + cards.length + ' apps \u00b7 records read live at ' +
     new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+  try { var dka = await adminGetDoc('dk_auto'); if (dka && dka.dkVisible === false){ BOARD_DK_OK = false; } } catch (e) {}
   await refreshRecords();
 
   // LIVE: the Board re-reads every record when you come back to it —
@@ -785,6 +787,18 @@ async function fsPatch(cfg, path, obj){
   return true;
 }
 async function adminSetDoc(collection, doc, obj){ return fsPatch(ADMIN, collection + '/' + doc, obj); }
+var BOARD_DK_OK = true; // global DK-visibility, read from dk_auto on boot
+function logFreeSignin(name){
+  try {
+    fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+      var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
+      var norm = function(v){ return String(v || '').trim().toLowerCase(); };
+      if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now() });
+      arr = arr.slice(0, 200);
+      fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
+    }).catch(function(){});
+  } catch (e) {}
+}
 
 /* ---- members: [{name, code, apps:['mlb',...]|null, active}] ---- */
 var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','Icing']];
@@ -843,8 +857,11 @@ async function runGate(){
   document.body.appendChild(ovl);
   document.body.style.overflow = 'hidden';
   var enterFree = function(){
+    var nm = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
+    if (!nm){ document.getElementById('gateerr').textContent = 'Enter your name first — even for the free app.'; var gn = document.getElementById('gatename'); if (gn) gn.focus(); return; }
     GRANTS = new Set(['mlbfree']);
-    try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true })); } catch (e) {}
+    try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: nm })); } catch (e) {}
+    logFreeSignin(nm);
     ovl.remove(); document.body.style.overflow = '';
     markLockedCards();
   };
@@ -1100,6 +1117,8 @@ async function openSettingsPanel(){
   var nflTol = Object.assign({}, NFL_TOL_DEF, (nflCfg && nflCfg.hitTol) || {});
   var iceTh = Object.assign({}, ICE_TH_DEF, (iceCfg && iceCfg.lockThresholds) || {});
   var iceTol = Object.assign({}, ICE_TOL_DEF, (iceCfg && iceCfg.hitTol) || {});
+  var freeLog = [];
+  try { var flr = await fsGetRaw(ADMIN, 'app_settings/free_log'); if (flr && flr.fields && flr.fields.list){ freeLog = JSON.parse(flr.fields.list.stringValue || '[]'); } } catch (e) {}
   var members = parseMembers(access);
   if (!members.length) members = [{ name: 'Jaren', code: 'greenlight', apps: null, active: true }];
 
@@ -1154,6 +1173,8 @@ async function openSettingsPanel(){
     '<h3>Board Settings</h3>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">Pacific time \u00b7 fully custom</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Pick the DAYS each app pulls, then the hours (like <b>8,12,15</b> = 8am, noon, 3pm PT). Off-days and off-hours cost zero API quota.</p>' +
+    '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
+    '<p class="sub" style="margin:0 0 12px">Master switch. Off = no DraftKings info (lines, edges, vs-DK records) is viewable in any app, for anyone.</p>' +
     '<div class="row"><span class="lbl">Diamond IQ \u00b7 props</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.premiumCalls, dkStat.premiumAt) +
     dayChips('s-pdays', dk.premiumDays) +
@@ -1173,7 +1194,10 @@ async function openSettingsPanel(){
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Each member enters their name + their code once; their device then remembers them. Flip the switch off (or change their code) to revoke — their device re-checks every open.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
-    '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button></div>' +
+    '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
+    (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
+      freeLog.slice(0, 40).map(function(x){ return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(x.n) + '</span><span class="hint">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>'; }).join('') : '') +
+    '</div>' +
     lockSect('Lock grades \u00b7 Diamond IQ Premium',
       'Hits/HR are lock probabilities (0\u20131, e.g. 0.80). The rest are edge-vs-line margins. Preview = lock-tier success from real graded history.',
       PREM_KNOBS, 'pk-', premCfg, 'p-preview', 'p-prevout') +
@@ -1495,7 +1519,8 @@ async function openSettingsPanel(){
         premiumOn: box.querySelector('#s-pon').checked, premiumHours: ph.replace(/\s/g, ''), premiumDays: pd,
         nflOn: box.querySelector('#s-non').checked, nflHours: nh.replace(/\s/g, ''), nflDays: nd,
         nbaOn: box.querySelector('#s-bon').checked, nbaHours: (box.querySelector('#s-bhrs').value || '').replace(/\s/g, ''), nbaDays: bd,
-        hockeyOn: box.querySelector('#s-hon').checked, hockeyHours: (box.querySelector('#s-hhrs').value || '').replace(/\s/g, ''), hockeyDays: hd
+        hockeyOn: box.querySelector('#s-hon').checked, hockeyHours: (box.querySelector('#s-hhrs').value || '').replace(/\s/g, ''), hockeyDays: hd,
+        dkVisible: box.querySelector('#s-dkvis').checked
       });
       await adminSetDoc('app_settings', 'board_access', { members: JSON.stringify(mems) });
       await adminSetDoc('fable_settings', 'config', premOut);
