@@ -428,6 +428,8 @@ details summary::-webkit-details-marker{display:none}
 details summary::before{content:'▶ ';color:var(--mt);font-size:.55rem;margin-right:4px}
 details[open] summary::before{content:'▼ '}
 details summary:hover{color:var(--tx)}
+.devonly{display:none!important}
+body.devmode .devonly{display:inline-block!important}
 </style>
 <!-- Firebase compat (no build step) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -3450,14 +3452,14 @@ function renderOddsPanel(){
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
       <button class="btn bg" style="font-size:.62rem" onclick="triggerOddsFetch(false)">${ODDS.loading?'Loading…':'↻ Refresh'}</button>
       <button class="btn" style="font-size:.6rem;background:var(--bg2)" onclick="triggerSharedOddsPull()">↓ Pull from Firebase</button>
-      ${entry&&fresh?`<button class="btn" style="font-size:.6rem;background:var(--bg2)" onclick="triggerOddsFetch(true)">⚠ Force Refresh</button>`:''}
+      ${entry&&fresh?`<button class="btn devonly" style="font-size:.6rem;background:var(--bg2)" onclick="triggerOddsFetch(true)">⚠ Force Refresh</button>`:''}
     </div>
     
     <div style="margin-top:10px;font-size:.6rem;color:var(--ac);font-weight:600;letter-spacing:.05em">PLAYER PROPS (~${eventCount||15} calls — one per game)</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
       <span style="font-size:.6rem;color:var(--gd)">⭐ Player-prop pulls are Premium-only now — pull from Premium ⚙ Settings. Lines still display here once pulled.</span>
       <button class="btn" style="font-size:.6rem;background:var(--bg2)" onclick="triggerSharedPropsPull()">↓ Pull from Firebase</button>
-      ${propsEntry&&propsFresh?`<button class="btn" style="font-size:.6rem;background:var(--bg2)" onclick="triggerPropsFetch(true)">⚠ Force Refresh</button>`:''}
+      ${propsEntry&&propsFresh?`<button class="btn devonly" style="font-size:.6rem;background:var(--bg2)" onclick="triggerPropsFetch(true)">⚠ Force Refresh</button>`:''}
     </div>
     <div style="font-size:.5rem;color:var(--mt);margin-top:6px;line-height:1.4">
       Player props uses 1 call per game. With ~15 MLB games per day, this consumes ~15 calls.<br>
@@ -3708,6 +3710,43 @@ const roundConservative=v=>{
   return frac>=0.7?floor+1:floor;
 };
 const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
+/* Inline ✓/✗ for the Home locks list — SAME actuals + rules the Fact Check tab
+   grades with (HISTORY.byDate results), so the two screens can never disagree.
+   Returns an empty cell until results exist for the viewed date. */
+function freeLockMark(kind,payload){
+  const R=HISTORY.byDate[STATE.date];
+  const cell=v=>`<td style="padding:5px 8px;text-align:center"><strong style="color:${v==='P'?'var(--gd)':v?'var(--gn)':'var(--rd)'}">${v==='P'?'P':v?'\u2713':'\u2717'}</strong></td>`;
+  const blank='<td style="padding:5px 8px"></td>';
+  if(!R)return blank;
+  if(kind==='hit'||kind==='hr'){
+    const b=R.batters?.[payload];
+    if(!b||!((b.ab||0)>=1||(b.pa||0)>=1||(b.actualHits||0)>=1))return blank;
+    return cell(kind==='hit'?(b.actualHits||0)>0:(b.actualHR||0)>0);
+  }
+  if(kind==='dk'){
+    let actual=null;
+    if(payload.marketKey==='pitcher_strikeouts')actual=R.pitchers?.[payload.id]?.k??null;
+    else if(payload.marketKey==='pitcher_walks')actual=R.pitchers?.[payload.id]?.bb??null;
+    else{
+      const b=R.batters?.[payload.id];
+      if(b&&((b.ab||0)>=1||(b.pa||0)>=1||(b.actualHits||0)>=1)){
+        actual=payload.marketKey==='batter_total_bases'?b.actualTB??null
+          :payload.marketKey==='batter_walks'?b.actualBB??null
+          :payload.marketKey==='batter_strikeouts'?b.actualK??null:null;
+      }
+    }
+    if(actual==null)return blank;
+    if(actual===payload.line)return cell('P');
+    return cell(payload.pick==='OVER'?actual>payload.line:actual<payload.line);
+  }
+  if(kind==='tot'){
+    const g=R.games?.[payload.gamePk];
+    if(!g||g.total==null)return blank;
+    if(g.total===payload.line)return cell('P');
+    return cell(payload.pick==='OVER'?g.total>payload.line:g.total<payload.line);
+  }
+  return blank;
+}
 const norm=s=>s?s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/gi,'').toUpperCase().trim():'';
 const pct=(v,d=1)=>v==null?'—':(v*(v<1&&v>-1?100:1)).toFixed(d)+'%';
 const fmt=(v,d=3)=>{if(v==null||isNaN(v))return'—';return parseFloat(v).toFixed(d);};
@@ -7896,7 +7935,7 @@ function collectDKLocks(items,marketKey,modelField,lockMargin,nameField){
     if(modelVal==null)return null;
     const edge=modelVal-market.line;
     if(Math.abs(edge)<lockMargin)return null;
-    return {m,marketLine:market.line,edge,pick:edge>0?'OVER':'UNDER',modelVal};
+    return {m,marketKey,marketLine:market.line,edge,pick:edge>0?'OVER':'UNDER',modelVal};
   }).filter(x=>x).sort((a,b)=>Math.abs(b.edge)-Math.abs(a.edge));
 }
 
@@ -7983,6 +8022,7 @@ function batterScoreLockRow(m,scoreVal,scoreType){
     <td style="padding:5px 8px" class="l"><strong>${m.batterName}</strong></td>
     <td style="padding:5px 8px;color:var(--mt2)">${m.team.abbr||m.team.name}</td>
     <td style="padding:5px 8px;color:var(--mt2);font-size:.55rem">vs ${m.pitcherName}</td>
+    ${freeLockMark(scoreType==='hit'?'hit':'hr',String(m.batterId))}
   </tr>`;
 }
 
@@ -8006,6 +8046,7 @@ function dkPickRow(item){
     <td style="padding:5px 8px;color:var(--mt2);font-size:.55rem">model ${item.modelVal.toFixed(2)} (${item.edge>0?'+':''}${item.edge.toFixed(1)})</td>
     <td style="padding:5px 8px" class="l"><strong>${name}</strong></td>
     <td style="padding:5px 8px;color:var(--mt2)">${m.team?.abbr||m.team?.name||''}</td>
+    ${freeLockMark('dk',{marketKey:item.marketKey,line:item.marketLine,pick:item.pick,id:String(isPitcher?m.pitcherId:m.batterId)})}
   </tr>`;
 }
 
@@ -8018,6 +8059,7 @@ function gameTotalRow(item){
     <td style="padding:5px 8px"><strong style="color:${pickColor}">${item.pick}</strong> <span style="color:var(--ac);font-size:.6rem">${item.dkLine}</span></td>
     <td style="padding:5px 8px;color:var(--mt2);font-size:.55rem">model ${modelStr} (${item.edge>0?'+':''}${item.edge.toFixed(1)})</td>
     <td style="padding:5px 8px" class="l"><strong>${g.away.abbr||g.away.name} @ ${g.home.abbr||g.home.name}</strong></td>
+    ${freeLockMark('tot',{gamePk:String(g.gamePk),line:item.dkLine,pick:item.pick})}
   </tr>`;
 }
 
@@ -9218,7 +9260,7 @@ function renderSettings(){
         <div style="font-size:.6rem;color:var(--mt2);line-height:1.5;margin-bottom:8px">Predictions are saved to Firebase the first time anyone loads them, so they don't change as the day goes on. Use Override to force-recalculate today's predictions (e.g. after lineups confirm) and overwrite the saved snapshot for everyone.</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn bg" style="font-size:.65rem" onclick="overrideTodayPredictions()">⚠ Override Today's Predictions</button>
-          <button class="btn bg" style="font-size:.65rem;border-color:var(--rd);color:var(--rd)" onclick="forceDefaultGrading()">↺ Force v6.2 Default Grading</button>
+          <button class="btn bg devonly" style="font-size:.65rem;border-color:var(--rd);color:var(--rd)" onclick="forceDefaultGrading()">↺ Force v6.2 Default Grading</button>
         </div>
         <div style="font-size:.55rem;color:var(--mt2);margin-top:6px;line-height:1.4"><strong style="color:var(--rd)">Force v6.2 Default Grading</strong> wipes ALL learning state (weights, archives, logs) and recomputes today's slate with original v6.2 baseline weights — overriding any verified locks. Useful if you suspect old verified grades carry stale learned weights. Cannot be undone.</div>
         <div id="override-log" style="margin-top:8px;font-size:.55rem;color:var(--mt);font-family:'DM Mono',monospace"></div>
@@ -9253,9 +9295,10 @@ function renderSettings(){
         <div class="sw-gt">☁️ Shared History (Firebase)</div>
         <div style="font-size:.62rem;color:var(--mt2);line-height:1.6" id="fb-status">Loading status…</div>
         <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn bg" style="font-size:.65rem" onclick="fbDebugPull()">↓ Force Pull</button>
-          <button class="btn bg" style="font-size:.65rem" onclick="fbDebugPushAll()">↑ Push All Local Days</button>
-          <button class="btn bg" style="font-size:.65rem" onclick="fbDebugRefreshStatus()">↻ Refresh Status</button>
+          <button class="btn bg" style="font-size:.62rem;opacity:.8" onclick="document.body.classList.toggle(&#39;devmode&#39;)">🛠 Developer tools</button>
+          <button class="btn bg devonly" style="font-size:.65rem" onclick="fbDebugPull()">↓ Force Pull</button>
+          <button class="btn bg devonly" style="font-size:.65rem" onclick="fbDebugPushAll()">↑ Push All Local Days</button>
+          <button class="btn bg devonly" style="font-size:.65rem" onclick="fbDebugRefreshStatus()">↻ Refresh Status</button>
         </div>
         <div id="fb-log" style="margin-top:8px;font-size:.55rem;color:var(--mt);font-family:'DM Mono',monospace;line-height:1.5;max-height:200px;overflow-y:auto;background:var(--s1);padding:6px 8px;border-radius:4px"></div>
       </div>

@@ -6,7 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Jaren&#39;s Bets">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#0b0d12">
+<link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png">
 <link rel="icon" type="image/png" sizes="180x180" href="./apple-touch-icon.png">
@@ -563,9 +564,19 @@ function fillResult(s, result){
         '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
         '<span class="nn">n=' + m.n + '</span></li>';
     }).join('');
+    var freshLine = '';
+    if (result.data.t){
+      var ageMs = Date.now() - new Date(String(result.data.t)).getTime();
+      var ageDays = ageMs / 86400000;
+      var ageTxt = ageDays < 1 ? Math.max(1, Math.round(ageMs / 3600000)) + 'h ago' : Math.round(ageDays) + 'd ago';
+      var staleAfter = s.key === 'nfl' ? 8 : 2.5; // weekly league vs daily leagues
+      var stale = ageDays > staleAfter;
+      freshLine = '<div class="lab" style="margin-top:7px;' + (stale ? 'color:#ffb454' : '') + '">' +
+        (stale ? '\u26a0 record last graded ' + ageTxt : 'graded ' + ageTxt) + '</div>';
+    }
     sb.innerHTML =
       '<div class="lab">Most accurate markets</div>' +
-      '<ol class="top3">' + rows + '</ol>';
+      '<ol class="top3">' + rows + '</ol>' + freshLine;
     var nums = sb.querySelectorAll('.num');
     Array.prototype.forEach.call(nums, function(el, i){
       setTimeout(function(){ countUp(el, +el.getAttribute('data-v')); }, REDUCE ? 0 : i * 120);

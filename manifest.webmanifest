@@ -1,0 +1,14 @@
+{
+  "name": "The Board — Jaren's Bets",
+  "short_name": "The Board",
+  "description": "Model-driven picks for MLB, NFL, NBA, and NHL — each with a verified hit rate.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "icons": [
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
