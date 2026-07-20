@@ -869,6 +869,7 @@ function markLockedCards(){
 /* ---- lock-grade preview engines (each mirrors its app\u2019s grading exactly) ---- */
 var PREM_KNOBS = [
   ['lock','Batter hits \u00b7 lock \u2265 %',true],['hrLock','Home runs \u00b7 lock \u2265 %',true],
+  ['gmLock','Game predictions \u00b7 lock \u2265 %',true],
   ['kEdge','Strikeout props \u00b7 edge \u2265',false],['bbEdge','Walk props \u00b7 edge \u2265',false],
   ['tbEdge','Total bases \u00b7 edge \u2265',false],['gkEdge','Game K \u00b7 edge \u2265',false],['hrlEdge','Game HRs \u00b7 edge \u2265',false]
 ];
@@ -893,7 +894,7 @@ async function listAllDocs(cfg, coll){
 }
 function premiumRates(days, cfg){
   var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
-  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{w:0,l:0}, bbB:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmK:{w:0,l:0}, hrL:{w:0,l:0} };
+  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, gm:{w:0,l:0}, kB:{w:0,l:0}, bbB:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmK:{w:0,l:0}, hrL:{w:0,l:0} };
   var actual = { kB:'so', bbB:'bb', kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
   var edgeKey = { kB:'kEdge', bbB:'bbEdge', kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
   days.forEach(function(day){
@@ -904,6 +905,12 @@ function premiumRates(days, cfg){
       agg.hits.n++; if ((o.h || 0) >= 1) agg.hits.h++;
     });
     var mk = day.data.mk || {};
+    (mk.gm || []).forEach(function(r){
+      if (!r.verified || (r.conf || 0) < (cfg.gmLock || 0)) return;
+      var g = res['g' + r.id];
+      if (!g || g.hs == null || g.as == null || g.hs === g.as) return;
+      if ((g.hs > g.as) === (r.pick === r.team)) agg.gm.w++; else agg.gm.l++;
+    });
     (mk.hr || []).forEach(function(r){
       if (!r.verified || r.gradeFlag || (r.prob || 0) < cfg.hrLock) return;
       var o = res[r.id]; if (!played(o)) return;
@@ -1069,7 +1076,7 @@ async function openSettingsPanel(){
   }
   var nflCfg = nflRaw ? fsFields(nflRaw.fields || {}) : null;
 
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
   var NBA_TH_DEF = { winner: 60, lines: 0, props: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
   var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
@@ -1202,6 +1209,7 @@ async function openSettingsPanel(){
     });
     return out;
   };
+  var normPremProbs = function(o){ if (o) ['lock','hrLock','gmLock'].forEach(function(k){ if (o[k] > 1) o[k] = o[k] / 100; }); return o; };
   var readNums = function(knobs, prefix, max){
     var out = {}, bad = false;
     knobs.forEach(function(k){
@@ -1292,11 +1300,11 @@ async function openSettingsPanel(){
     });
   };
   hookPreview('p-preview', 'p-prevout', async function(){
-    var prop = readNums(PREM_KNOBS, 'pk-');
+    var prop = normPremProbs(readNums(PREM_KNOBS, 'pk-'));
     if (!prop) throw new Error('Every field needs a number \u2265 0.');
     await ensurePrem();
     var cur = premiumRates(PREVIEW_CACHE.prem, premCfg), nxt = premiumRates(PREVIEW_CACHE.prem, prop);
-    var L = { hits:'Batter hits', hr:'Home runs', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmK:'Game K', hrL:'Game HRs' };
+    var L = { hits:'Batter hits', hr:'Home runs', gm:'Game predictions', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmK:'Game K', hrL:'Game HRs' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -1356,7 +1364,7 @@ async function openSettingsPanel(){
 
   hookSolve('pk-', PREM_KNOBS, [], async function(target){
     var days = await ensurePrem();
-    var pools = { lock: [], hrLock: [], kEdge: [], bbEdge: [], tbEdge: [], gkEdge: [], hrlEdge: [] };
+    var pools = { lock: [], hrLock: [], gmLock: [], kEdge: [], bbEdge: [], tbEdge: [], gkEdge: [], hrlEdge: [] };
     var edgeOf = { kB:'kEdge', kP:'kEdge', bbB:'bbEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
     var actual = { kB:'so', bbB:'bb', kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
     var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
@@ -1368,6 +1376,12 @@ async function openSettingsPanel(){
         pools.lock.push({ m: r.prob, h: (o.h || 0) >= 1 });
       });
       var mk = day.data.mk || {};
+      (mk.gm || []).forEach(function(r){
+        if (!r.verified || r.conf == null) return;
+        var g = res['g' + r.id];
+        if (!g || g.hs == null || g.as == null || g.hs === g.as) return;
+        pools.gmLock.push({ m: r.conf, h: (g.hs > g.as) === (r.pick === r.team) });
+      });
       (mk.hr || []).forEach(function(r){
         if (!r.verified || r.gradeFlag || r.prob == null) return;
         var o = res[r.id]; if (!played(o)) return;
@@ -1383,7 +1397,7 @@ async function openSettingsPanel(){
         });
       });
     });
-    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', kEdge:'K props edge', bbEdge:'BB props edge', tbEdge:'Total bases edge', gkEdge:'Game K edge', hrlEdge:'Game HRs edge' };
+    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', gmLock:'Game predictions lock', kEdge:'K props edge', bbEdge:'BB props edge', tbEdge:'Total bases edge', gkEdge:'Game K edge', hrlEdge:'Game HRs edge' };
     var f3 = function(v){ return (Math.round(v * 1000) / 1000); };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '%, set each knob to \u2265 the value shown</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k], target), f3); }).join('');
@@ -1450,7 +1464,7 @@ async function openSettingsPanel(){
     var hrsOk = function(v){ return String(v).split(',').every(function(x){ var n = parseInt(x.trim(), 10); return !isNaN(n) && n >= 0 && n <= 23; }); };
     var ph = box.querySelector('#s-phrs').value, nh = box.querySelector('#s-nhrs').value;
     var mems = readMembers();
-    var premOut = readNums(PREM_KNOBS, 'pk-'), freeOut = readNums(FREE_KNOBS, 'fk-', 100);
+    var premOut = normPremProbs(readNums(PREM_KNOBS, 'pk-')), freeOut = readNums(FREE_KNOBS, 'fk-', 100);
     var nbaOut = readNums(NBA_KNOBS, 'bk-'), nflOut = readNums(NFL_KNOBS, 'gk-'), iceOut = readNums(ICE_KNOBS, 'ik-');
     if (!hrsOk(ph) || !hrsOk(nh)){ msg.style.color = '#ff7a7a'; msg.textContent = 'DK hours must be numbers 0\u201323, separated by commas.'; return; }
     if (!mems.length){ msg.style.color = '#ff7a7a'; msg.textContent = 'Keep at least one member (name + 4-character code).'; return; }

@@ -49,6 +49,10 @@ nav .ico{font-size:19px;line-height:1}
 #toast.hidden{opacity:0;pointer-events:none}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--hair);border-top-color:var(--ice);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* unified readability pass */
+body{font-size:16px}
+nav button{font-size:12px;padding-top:10px;padding-bottom:9px}
+nav .ico{font-size:21px}
 </style>
 </head>
 <body>
@@ -63,9 +67,9 @@ nav .ico{font-size:19px;line-height:1}
   <section id="tab-settings" class="hidden"></section>
 </main>
 <nav>
-  <button data-tab="games" class="on"><span class="ico">&#127954;</span>Games</button>
+  <button data-tab="games" class="on"><span class="ico">&#127954;</span>Today</button>
   <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
-  <button data-tab="facts"><span class="ico">&#128202;</span>Facts</button>
+  <button data-tab="facts"><span class="ico">&#128202;</span>Results</button>
   <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
 </nav>
 <div id="toast" class="hidden"></div>

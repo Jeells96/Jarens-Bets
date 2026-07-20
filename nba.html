@@ -99,6 +99,10 @@ nav#tabbar button.active{ color:var(--accent); }
   bottom:calc(96px + env(safe-area-inset-bottom)); background:var(--card2);
   border:1px solid var(--line); color:var(--text); padding:10px 14px;
   border-radius:12px; font-size:13px; z-index:60; max-width:86%; }
+/* unified readability pass */
+body{font-size:16px}
+#tabbar button{font-size:12px;padding-top:10px;padding-bottom:9px}
+#tabbar .ico{font-size:21px}
 </style>
 </head>
 <body>
@@ -142,9 +146,9 @@ nav#tabbar button.active{ color:var(--accent); }
     <section id="tab-settings" class="hidden"></section>
   </main>
   <nav id="tabbar">
-    <button data-tab="games" class="active"><span class="ico">&#127936;</span>Games</button>
+    <button data-tab="games" class="active"><span class="ico">&#127936;</span>Today</button>
     <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
-    <button data-tab="facts"><span class="ico">&#128202;</span>Facts</button>
+    <button data-tab="facts"><span class="ico">&#128202;</span>Results</button>
     <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
   </nav>
 </div>

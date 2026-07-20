@@ -276,10 +276,10 @@ function showView(v){
 
 /* ── config (lock threshold), PIN, and access gate ── */
 const PIN='2325';
-const CONFIG={lock:0.78,hrLock:0.10,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gkEdge:1.5,hrlEdge:0.4};
+const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gkEdge:1.5,hrlEdge:0.4};
 try{
   const c=JSON.parse(localStorage.getItem('fablehits_cfg')||'null');
-  if(c)['lock','hrLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
+  if(c)['lock','hrLock','gmLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
 }catch(e){}
 window.CONFIG=CONFIG; // shared with the standalone stats engine
 function cfgSave(){try{localStorage.setItem('fablehits_cfg',JSON.stringify(CONFIG));}catch(e){}}
@@ -289,14 +289,14 @@ async function cfgPull(){
     const doc=await withTO(FBH.db.collection('fable_settings').doc('config').get(),6000);
     if(doc.exists){
       const d=doc.data();
-      ['lock','hrLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
+      ['lock','hrLock','gmLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
     }
     cfgSave();
   }catch(e){}
 }
 async function cfgPush(){
   if(!FBH.ready)return;
-  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gkEdge:CONFIG.gkEdge,hrlEdge:CONFIG.hrlEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
+  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gkEdge:CONFIG.gkEdge,hrlEdge:CONFIG.hrlEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
 }
 
 const nameKey=n=>n.trim().toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,'_');
@@ -1615,7 +1615,7 @@ function showCached(){
 function dayTallies(rows,mk,res,dbgDate){
   const t={hits:{h:0,n:0},hr:{h:0,n:0},kP:{w:0,l:0,p:0},kB:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},bbB:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
-    if(!r.verified)return;
+    if(!r.verified||(r.conf||0)<(CONFIG.gmLock||0))return;
     const g=res['g'+r.id];
     if(!g||g.hs==null||g.as==null||g.hs===g.as)return;
     const homeWon=g.hs>g.as;
@@ -2229,7 +2229,7 @@ async function bootLeagueLoad(){
            in-app Save uses. The app + hub then show new-threshold rates. */
         try{
           await cfgPull();
-          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
+          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
           if(oldHash!==cfgHash){

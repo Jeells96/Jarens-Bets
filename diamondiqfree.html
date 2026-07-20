@@ -430,6 +430,9 @@ details[open] summary::before{content:'▼ '}
 details summary:hover{color:var(--tx)}
 .devonly{display:none!important}
 body.devmode .devonly{display:inline-block!important}
+/* unified readability pass */
+body{font-size:15.5px}
+.tw .tab{font-size:.72rem;padding-top:10px;padding-bottom:10px}
 </style>
 <!-- Firebase compat (no build step) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -454,8 +457,8 @@ body.devmode .devonly{display:inline-block!important}
 
 <div class="tw">
   <div class="tabs">
-    <div class="tab active" id="t-dash" onclick="sw('dash')">🏠 Home</div>
-    <div class="tab" id="t-res" onclick="sw('res')">📊 Fact Check</div>
+    <div class="tab active" id="t-dash" onclick="sw('dash')">🏠 Today</div>
+    <div class="tab" id="t-res" onclick="sw('res')">📊 Results</div>
     <div class="tab" id="t-srch" onclick="sw('srch')">🔍 Player</div>
     <div class="tab tab-prem" id="t-prem" onclick="sw('prem')">⭐ PREMIUM <span class="prem-badge" id="premBadge"></span></div>
     <div class="tab" id="t-set" onclick="sw('set')">⚙️</div>
