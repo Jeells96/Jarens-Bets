@@ -12,6 +12,8 @@ const BASE = 'https://jeells96.github.io/Jarens-Bets/';
 const APPS = [
   { name: 'Diamond IQ Premium (MLB props)', file: 'premium.html', timeoutMin: 8 },
   { name: 'Gridline (NFL odds)',            file: 'nfl.html',     timeoutMin: 8 },
+  { name: 'The Key (NBA odds)',             file: 'nba.html',     timeoutMin: 8 },
+  { name: 'Icing (NHL odds)',               file: 'hockey.html',  timeoutMin: 8 },
 ];
 
 (async () => {

@@ -820,6 +820,8 @@ async function runGate(){
   var cfg = await adminGetDoc('board_access');
   var list = parseMembers(cfg);
   if (!list.length) list = [{ name: null, code: 'greenlight', apps: null, active: true }]; // until first save
+  // Free-tier device: remembered as free, gets ONLY the Diamond IQ Free app.
+  if (saved && saved.free){ GRANTS = new Set(['mlbfree']); markLockedCards(); return; }
   if (saved && saved.code){
     var g0 = memberMatch(saved.name, saved.code, list);
     if (g0.ok){ GRANTS = g0.apps ? new Set(g0.apps) : null; markLockedCards(); return; }
@@ -836,9 +838,17 @@ async function runGate(){
         '<input type="text" id="gatename" placeholder="Your name" autocomplete="off" autocapitalize="words">') +
     '<input type="text" id="gatein" placeholder="Access code" autocomplete="off" autocapitalize="none">' +
     '<div class="err" id="gateerr"></div>' +
-    '<button class="go" id="gatego">Enter The Board</button></div>';
+    '<button class="go" id="gatego">Enter The Board</button>' +
+    '<button class="close" id="gatefree" style="margin-top:12px">No code? Enter the free app &rarr;</button></div>';
   document.body.appendChild(ovl);
   document.body.style.overflow = 'hidden';
+  var enterFree = function(){
+    GRANTS = new Set(['mlbfree']);
+    try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true })); } catch (e) {}
+    ovl.remove(); document.body.style.overflow = '';
+    markLockedCards();
+  };
+  document.getElementById('gatefree').addEventListener('click', enterFree);
   var tryIt = function(){
     var name = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
     var code = document.getElementById('gatein').value;
@@ -875,8 +885,8 @@ var PREM_KNOBS = [
   ['tbEdge','Total bases \u00b7 edge \u2265',false],['gkEdge','Game K \u00b7 edge \u2265',false],['hrlEdge','Game HRs \u00b7 edge \u2265',false]
 ];
 var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs'],['bb','Batter walks'],['bbat','Batter strikeouts'],['k','Pitcher strikeouts'],['pbb','Pitcher walks'],['hrLine','HR line'],['gnoHR','No-HR game'],['gmultiHR','Multi-HR game']];
-var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1']];
-var ICE_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals \u00b7 lock \u2265 %'],['props','Goal/point scorers \u00b7 lock \u2265 %'],['goals','Total tolerance \u00b1'],['p1','1st-period tolerance \u00b1']];
+var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1']];
+var ICE_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals \u00b7 lock \u2265 %'],['props','Goal/point scorers \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['goals','Total tolerance \u00b1'],['p1','1st-period tolerance \u00b1']];
 var NFL_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['anytimeTd','Anytime TD \u00b7 lock \u2265 %'],['firstTd','First TD \u00b7 lock \u2265 %'],['lines','Totals/scores/team yds \u00b7 lock \u2265 %'],['yards','Player yards \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['yds','Yards tolerance \u00b1']];
 var PREVIEW_CACHE = {};
 async function listAllDocs(cfg, coll){
@@ -964,7 +974,7 @@ function freeRates(days, locks){
 // The Key: units [{cat, metric, adelta, hit}] per slate doc (nba_accuracy/{date},
 // stored as {data:<json>}). Mirrors nba.html unitQualifies/unitHit exactly.
 function nbaRates(units, th, tol){
-  var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props' };
+  var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' };
   var TOLK = { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' };
   var agg = { allLocks:{h:0,n:0} };
   Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
@@ -980,7 +990,7 @@ function nbaRates(units, th, tol){
 // IceLine: units [{cat, metric, adelta, hit}] per date doc (nhl_accuracy/{date},
 // stored as {data:<json>}). Mirrors hockey.html unitQualifies/unitHit exactly.
 function iceRates(units, th, tol){
-  var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props' };
+  var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk' };
   var TOLK = { total:'goals', p1:'p1' };
   var agg = { allLocks:{h:0,n:0} };
   Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
@@ -1079,9 +1089,9 @@ async function openSettingsPanel(){
 
   var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
-  var NBA_TH_DEF = { winner: 60, lines: 0, props: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
+  var NBA_TH_DEF = { winner: 60, lines: 0, props: 0, dk: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
   var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
-  var ICE_TH_DEF = { winner: 58, lines: 0, props: 40 }, ICE_TOL_DEF = { goals: 1, p1: 1 };
+  var ICE_TH_DEF = { winner: 58, lines: 0, props: 40, dk: 0 }, ICE_TOL_DEF = { goals: 1, p1: 1 };
   var premCfg = {}; Object.keys(PREM_DEF).forEach(function(k){ premCfg[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
   var freeCfg = {}; Object.keys(FREE_DEF).forEach(function(k){ freeCfg[k] = (typeof freeLocks[k] === 'number') ? freeLocks[k] : FREE_DEF[k]; });
   var nbaTh = Object.assign({}, NBA_TH_DEF, (nbaCfg && nbaCfg.lockThresholds) || {});
@@ -1151,7 +1161,15 @@ async function openSettingsPanel(){
     '<div class="row" style="margin-top:10px"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nflCalls, dkStat.nflAt) +
     dayChips('s-ndays', dk.nflDays) +
-    '<input type="text" id="s-nhrs" value="' + esc(dk.nflHours || '8,14') + '" placeholder="Hours PT, e.g. 8,14"></div>' +
+    '<input type="text" id="s-nhrs" value="' + esc(dk.nflHours || '8,14') + '" placeholder="Hours PT, e.g. 8,14">' +
+    '<div class="row" style="margin-top:10px"><span class="lbl">The Key \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-bon"' + (dk.nbaOn !== false ? ' checked' : '') + '><span></span></label></div>' +
+    quotaLine(dkStat.nbaCalls, dkStat.nbaAt) +
+    dayChips('s-bdays', dk.nbaDays) +
+    '<input type="text" id="s-bhrs" value="' + esc(dk.nbaHours || '9,15') + '" placeholder="Hours PT, e.g. 9,15">' +
+    '<div class="row" style="margin-top:10px"><span class="lbl">Icing \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-hon"' + (dk.hockeyOn !== false ? ' checked' : '') + '><span></span></label></div>' +
+    quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
+    dayChips('s-hdays', dk.hockeyDays) +
+    '<input type="text" id="s-hhrs" value="' + esc(dk.hockeyHours || '9,15') + '" placeholder="Hours PT, e.g. 9,15"></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Each member enters their name + their code once; their device then remembers them. Flip the switch off (or change their code) to revoke — their device re-checks every open.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
@@ -1325,7 +1343,7 @@ async function openSettingsPanel(){
     await ensureNBA();
     if (!PREVIEW_CACHE.nba.units.length) throw new Error('No stored picks yet — the next NBA grading run uploads them (every 2h). Try again after it runs.');
     var cur = nbaRates(PREVIEW_CACHE.nba.units, nbaTh, nbaTol), nxt = nbaRates(PREVIEW_CACHE.nba.units, sp.th, sp.tol);
-    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', teamPts:'Team points', playerPts:'Player points', playerReb:'Player rebounds', playerAst:'Player assists' };
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', teamPts:'Team points', playerPts:'Player points', playerReb:'Player rebounds', playerAst:'Player assists', dkML:'vs DK ML value', dkTotal:'vs DK Total', dkSpread:'vs DK Spread' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.nba.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -1358,7 +1376,7 @@ async function openSettingsPanel(){
     await ensureICE();
     if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next Icing grading run uploads them (every 2h). Try again after it runs.');
     var cur = iceRates(PREVIEW_CACHE.ice.units, iceTh, iceTol), nxt = iceRates(PREVIEW_CACHE.ice.units, sp.th, sp.tol);
-    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers' };
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers', dkML:'vs DK ML value', dkTotal:'vs DK Total' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -1428,10 +1446,10 @@ async function openSettingsPanel(){
     await ensureNBA();
     var tolVals = { pts: parseFloat(box.querySelector('#bk-pts').value) || 4, stat: parseFloat(box.querySelector('#bk-stat').value) || 3 };
     var pools = unitPools(PREVIEW_CACHE.nba.units,
-      { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props' },
+      { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' },
       { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' },
       tolVals, 'metric', 'cat', 'adelta', 'hit');
-    var L = { winner:'Winner lock %', lines:'Totals/team pts lock %', props:'Player props lock %' };
+    var L = { winner:'Winner lock %', lines:'Totals/team pts lock %', props:'Player props lock %', dk:'vs DK bets lock %' };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
   });
@@ -1451,10 +1469,10 @@ async function openSettingsPanel(){
     await ensureICE();
     var tolVals = { goals: parseFloat(box.querySelector('#ik-goals').value) || 1, p1: parseFloat(box.querySelector('#ik-p1').value) || 1 };
     var pools = unitPools(PREVIEW_CACHE.ice.units,
-      { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props' },
+      { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk' },
       { total:'goals', p1:'p1' },
       tolVals, 'metric', 'cat', 'adelta', 'hit');
-    var L = { winner:'Winner lock %', lines:'Totals lock %', props:'Goal/point scorers lock %' };
+    var L = { winner:'Winner lock %', lines:'Totals lock %', props:'Goal/point scorers lock %', dk:'vs DK bets lock %' };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
   });
@@ -1467,15 +1485,17 @@ async function openSettingsPanel(){
     var mems = readMembers();
     var premOut = normPremProbs(readNums(PREM_KNOBS, 'pk-')), freeOut = readNums(FREE_KNOBS, 'fk-', 100);
     var nbaOut = readNums(NBA_KNOBS, 'bk-'), nflOut = readNums(NFL_KNOBS, 'gk-'), iceOut = readNums(ICE_KNOBS, 'ik-');
-    if (!hrsOk(ph) || !hrsOk(nh)){ msg.style.color = '#ff7a7a'; msg.textContent = 'DK hours must be numbers 0\u201323, separated by commas.'; return; }
+    if (!hrsOk(ph) || !hrsOk(nh) || !hrsOk(box.querySelector('#s-bhrs').value) || !hrsOk(box.querySelector('#s-hhrs').value)){ msg.style.color = '#ff7a7a'; msg.textContent = 'DK hours must be numbers 0\u201323, separated by commas.'; return; }
     if (!mems.length){ msg.style.color = '#ff7a7a'; msg.textContent = 'Keep at least one member (name + 4-character code).'; return; }
     if (!premOut || !freeOut || !nbaOut || !nflOut || !iceOut){ msg.style.color = '#ff7a7a'; msg.textContent = 'Check the lock-grade numbers.'; return; }
     try {
-      var pd = readDays('s-pdays'), nd = readDays('s-ndays');
-      if (!pd || !nd){ msg.style.color = '#ff7a7a'; msg.textContent = 'Each app needs at least one pull day selected.'; return; }
+      var pd = readDays('s-pdays'), nd = readDays('s-ndays'), bd = readDays('s-bdays'), hd = readDays('s-hdays');
+      if (!pd || !nd || !bd || !hd){ msg.style.color = '#ff7a7a'; msg.textContent = 'Each app needs at least one pull day selected.'; return; }
       await adminSetDoc('app_settings', 'dk_auto', {
         premiumOn: box.querySelector('#s-pon').checked, premiumHours: ph.replace(/\s/g, ''), premiumDays: pd,
-        nflOn: box.querySelector('#s-non').checked, nflHours: nh.replace(/\s/g, ''), nflDays: nd
+        nflOn: box.querySelector('#s-non').checked, nflHours: nh.replace(/\s/g, ''), nflDays: nd,
+        nbaOn: box.querySelector('#s-bon').checked, nbaHours: (box.querySelector('#s-bhrs').value || '').replace(/\s/g, ''), nbaDays: bd,
+        hockeyOn: box.querySelector('#s-hon').checked, hockeyHours: (box.querySelector('#s-hhrs').value || '').replace(/\s/g, ''), hockeyDays: hd
       });
       await adminSetDoc('app_settings', 'board_access', { members: JSON.stringify(mems) });
       await adminSetDoc('fable_settings', 'config', premOut);

@@ -194,6 +194,8 @@ const FB = {
 function fbReady(){ return FB.projectId.length > 0; }
 const FB_NS = 'nba';                 // singleton docs: nba/config, nba/dkOdds, ...
 const FB_ACC = 'nba_accuracy';       // per-slate unit docs: nba_accuracy/2026-01-15
+const FB_DK = 'nba_dk';              // per-date DK line snapshots: nba_dk/2026-01-15
+const ODDS_KEY_SHARED = '370bfb0e8958dcfc4e4880fedfb548b1'; // the-odds-api, used by the automated pull
 
 function fbDocUrl(col, doc){
   return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
@@ -278,6 +280,7 @@ const state = {
   lgCache: null,     // league baselines, keyed by beforeDate
   seasonUnits: {},   // date -> raw units[] (rebuilt from records; FB-syncable)
   dkGrades: {},      // date -> { n, usHit, dkHit } where DK snapshots exist
+  dkByDate: {},      // date -> DK snapshot (seeded from nba_dk for cron grading)
   dkOdds: null,      // { date, fetched, games: { 'AWY@HOM': {...} } }
   fbConfig: null,    // synced nba/config (pin + settings) once read
   factsCat: 'allLocks',
@@ -426,10 +429,13 @@ const CAT_META = {
   teamPts:   { label: 'Team Points \u00b1T', th: 'lines',  short: 'Team pts' },
   playerPts: { label: 'Player Points \u00b1T',   th: 'props', short: 'Points' },
   playerReb: { label: 'Player Rebounds \u00b1T', th: 'props', short: 'Rebounds' },
-  playerAst: { label: 'Player Assists \u00b1T',  th: 'props', short: 'Assists' }
+  playerAst: { label: 'Player Assists \u00b1T',  th: 'props', short: 'Assists' },
+  dkML:      { label: 'vs DK \u00b7 ML value',   th: 'dk', short: 'DK ML' },
+  dkTotal:   { label: 'vs DK \u00b7 Total O/U',  th: 'dk', short: 'DK Tot' },
+  dkSpread:  { label: 'vs DK \u00b7 Spread ATS', th: 'dk', short: 'DK ATS' }
 };
 const TOL_KEY_BY_CAT = { total: 'pts', teamPts: 'pts', playerPts: 'stat', playerReb: 'stat', playerAst: 'stat' };
-const LOCK_DEFAULTS = { winner: 60, lines: 0, props: 0 };
+const LOCK_DEFAULTS = { winner: 60, lines: 0, props: 0, dk: 0 };
 const TOL_DEFAULTS = { pts: 4, stat: 3 };
 
 function lockTh(key){
@@ -1309,6 +1315,59 @@ async function autoCloudSync(){
   } finally { state.cloudSync.running = false; }
 }
 
+/* Scheduled DK pull (?cron=dk): reads the Board's app_settings/dk_auto
+   (nbaOn/nbaDays/nbaHours, Pacific), and only spends odds-API quota when this
+   app is toggled on and the current PT day+hour is scheduled. Stores a per-date
+   snapshot to nba_dk so the grading cron can bet against DK historically. */
+const MLBCFG = { p: 'mlb-bets-d196c', k: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' };
+async function runCronDkPull(){
+  window.__cronStatus = 'dk: starting';
+  try {
+    let c = {};
+    try {
+      const r = await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_auto?key=' + MLBCFG.k, { cache: 'no-store' });
+      if (r.ok){ const f = (await r.json()).fields || {};
+        c = { on: f.nbaOn ? f.nbaOn.booleanValue !== false : true, hours: f.nbaHours ? f.nbaHours.stringValue : null, days: f.nbaDays ? f.nbaDays.stringValue : null }; }
+    } catch (e) {}
+    const on = c.on !== false;
+    const hours = String(c.hours || '9,15').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
+    const days = String(c.days || '0,1,2,3,4,5,6').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
+    const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+    const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    if (!on){ window.__cronStatus = 'dk: skipped — NBA auto pull is OFF'; window.__cronDone = true; return; }
+    if (!days.includes(ptNow.getDay())){ window.__cronStatus = 'dk: skipped — ' + DAYN[ptNow.getDay()] + ' not a scheduled day'; window.__cronDone = true; return; }
+    if (!hours.includes(ptNow.getHours())){ window.__cronStatus = 'dk: skipped — ' + ptNow.getHours() + ':xx PT not scheduled [' + hours.join(',') + ']'; window.__cronDone = true; return; }
+    const date = todayPT();
+    window.__cronStatus = 'dk: building slate ' + date;
+    let games = [];
+    try { const sb = await fetch(ESPN.scoreboard(toESPN(date)), { cache: 'no-store' }); if (sb.ok) games = parseScoreboard(await sb.json()); } catch (e) {}
+    if (!games.length){ window.__cronStatus = 'dk: no NBA games ' + date; window.__cronDone = true; return; }
+    window.__cronStatus = 'dk: pulling DK lines';
+    const res = await fetch(ODDS.gameLines(ODDS_KEY_SHARED));
+    if (!res.ok) throw new Error('odds API ' + res.status);
+    let remaining = null; try { remaining = res.headers.get('x-requests-remaining'); } catch (e) {}
+    const arr = await res.json();
+    const snapGames = {};
+    let n = 0;
+    for (const ev of (arr || [])){
+      if (ptDateStr(new Date(ev.commence_time)) !== date) continue;
+      const m = mapOddsEvent(ev, games);
+      if (m){ snapGames[m.gm] = m; n++; }
+    }
+    const snap = { date: date, fetched: new Date().toISOString(), games: snapGames };
+    await fbWrite(FB_DK, date, snap);
+    if (remaining != null){
+      try {
+        await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_status?key=' + MLBCFG.k + '&updateMask.fieldPaths=nbaCalls&updateMask.fieldPaths=nbaAt', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: { nbaCalls: { integerValue: String(parseInt(remaining, 10)) }, nbaAt: { integerValue: String(Date.now()) } } }) });
+      } catch (e) {}
+    }
+    window.__cronStatus = 'dk: done — ' + n + ' DK lines stored for ' + date + ' (' + (remaining != null ? remaining : '?') + ' calls left)';
+  } catch (e){ window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
+  window.__cronDone = true;
+}
+
 async function runCronGrade(){
   window.__cronStatus = 'cron: starting';
   try { localStorage.setItem(PIN_OK_KEY, '1'); } catch (e) {}
@@ -1429,6 +1488,47 @@ function unitsFromRecord(rec, proj){
   return units;
 }
 
+// Bet AGAINST DraftKings: emit graded vs-DK units when a DK line snapshot exists
+// for this game. ML value = we take our pick only when our win prob beats DK's
+// implied price (a real edge). Total/Spread = our lean vs DK's posted line.
+function dkUnitsFromRecord(rec, proj, snap){
+  const units = [];
+  if (!snap || !snap.games) return units;
+  const gm = rec.away.ab + '@' + rec.home.ab;
+  const e = snap.games[gm];
+  if (!e || rec.home.pts == null || rec.away.pts == null) return units;
+  const aTot = rec.home.pts + rec.away.pts;
+  const actHomeMargin = rec.home.pts - rec.away.pts;
+  const actW = rec.home.pts > rec.away.pts ? rec.home.ab : rec.away.ab;
+  const imp = function(p){ return p < 0 ? (-p) / ((-p) + 100) : 100 / (p + 100); };
+  if (e.mlHome != null && e.mlAway != null){
+    const pickHome = proj.winAb === rec.home.ab;
+    const dkP = imp(pickHome ? e.mlHome : e.mlAway);
+    if ((proj.winMetric / 100) > dkP + 0.03){ // only bet where WE see value vs the book
+      units.push({ cat: 'dkML', metric: proj.winMetric, hit: proj.winAb === actW, game: gm,
+        desc: 'ML value ' + proj.winAb + ' (' + proj.winMetric + '% vs DK ' + Math.round(dkP * 100) + '%) \u2192 ' + actW });
+    }
+  }
+  if (e.total != null && aTot !== e.total){
+    const lean = proj.total > e.total ? 'OVER' : 'UNDER';
+    const hit = lean === 'OVER' ? aTot > e.total : aTot < e.total;
+    units.push({ cat: 'dkTotal', metric: proj.winMetric, hit: hit, game: gm,
+      desc: lean + ' ' + e.total + ' (proj ' + proj.total + ') \u2192 ' + aTot });
+  }
+  if (e.spreadHome != null){
+    const homeCovers = actHomeMargin > -e.spreadHome;
+    const ourPickHome = proj.margin > -e.spreadHome;
+    units.push({ cat: 'dkSpread', metric: proj.winMetric, hit: ourPickHome === homeCovers, game: gm,
+      desc: 'ATS ' + (ourPickHome ? rec.home.ab : rec.away.ab) + ' (DK ' + e.spreadHome + ') \u2192 ' + (homeCovers ? rec.home.ab : rec.away.ab) });
+  }
+  return units;
+}
+async function pushDkSnapFB(snap){ if (snap && snap.date) { try { await fbWrite(FB_DK, snap.date, snap); } catch (e) {} } }
+async function seedDkFromFB(){
+  try { state.dkByDate = await fbListCol(FB_DK); } catch (e) { state.dkByDate = state.dkByDate || {}; }
+  return Object.keys(state.dkByDate || {}).length;
+}
+
 function loadDkSnap(date){
   try {
     const raw = localStorage.getItem(DK_PREFIX + date);
@@ -1447,12 +1547,13 @@ async function regradeAll(){
     const byDate = loadRecsByDate();
     const dates = Object.keys(byDate).sort();
     state.seasonUnits = {}; state.dkGrades = {};
+    await seedDkFromFB();
     let graded = 0, unitCount = 0, early = 0;
     for (const d of dates){
       if (state.scan.stop){ say('Stopped at ' + d); break; }
       say('Grading ' + d + '\u2026');
       await sleep(0); // let the UI breathe
-      const snap = loadDkSnap(d);
+      const snap = state.dkByDate[d] || loadDkSnap(d);
       const units = [];
       const dkTally = { n: 0, usHit: 0, dkHit: 0 };
       for (const rec of byDate[d]){
@@ -1460,6 +1561,7 @@ async function regradeAll(){
         if (!proj){ early++; continue; }
         const u = unitsFromRecord(rec, proj);
         units.push.apply(units, u);
+        units.push.apply(units, dkUnitsFromRecord(rec, proj, snap));
         if (snap && snap.games){
           const e = snap.games[rec.away.ab + '@' + rec.home.ab];
           if (e && e.favAb && rec.home.pts != null && rec.away.pts != null){
@@ -1647,6 +1749,7 @@ async function pullDkToday(){
     }
     state.dkOdds = { date: state.slate.date, fetched: new Date().toISOString(), games: games };
     saveDkSnap(state.dkOdds); // snapshot -> vs-DK grading when the date completes
+    pushDkSnapFB(state.dkOdds);
     if (el) el.textContent = n + ' DK lines for ' + state.slate.date +
       (used != null || remaining != null ? ' \u00b7 quota ' + (used || '?') + ' used / ' + (remaining || '?') + ' left' : '');
     logEvent('info', 'dk', n + ' lines pulled for ' + state.slate.date);
@@ -2524,6 +2627,12 @@ function boot(){
   if (new URLSearchParams(location.search).get('cron') === '1'){
     state.settings = loadSettings();
     runCronGrade();
+    return;
+  }
+  /* CRON MODE (?cron=dk): scheduled DK line pull, gated by the Board. */
+  if (new URLSearchParams(location.search).get('cron') === 'dk'){
+    state.settings = loadSettings();
+    runCronDkPull();
     return;
   }
   document.getElementById('verBadge').textContent = 'v' + APP.version;

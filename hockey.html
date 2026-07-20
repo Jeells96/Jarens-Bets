@@ -97,10 +97,12 @@ const CAT_META = {
   total:  { label: 'Game Total ±T',       th: 'lines',  short: 'Total' },
   p1:     { label: '1st Period Total ±T', th: 'lines',  short: '1st per.' },
   goal:   { label: 'Goal Scorers',        th: 'props',  short: 'Goal' },
-  point:  { label: 'Point Scorers',       th: 'props',  short: 'Point' }
+  point:  { label: 'Point Scorers',       th: 'props',  short: 'Point' },
+  dkML:   { label: 'vs DK · ML value',    th: 'dk',     short: 'DK ML' },
+  dkTotal:{ label: 'vs DK · Total O/U',   th: 'dk',     short: 'DK Tot' }
 };
 const TOL_KEY_BY_CAT = { total: 'goals', p1: 'p1' };
-const LOCK_DEFAULTS = { winner: 58, lines: 0, props: 40 };
+const LOCK_DEFAULTS = { winner: 58, lines: 0, props: 40, dk: 0 };
 const TOL_DEFAULTS = { goals: 1, p1: 1 };
 const HOME_BUMP = 0.12;   // home-ice goals bump
 const PYTH_EX = 2.2;      // hockey Pythagorean exponent
@@ -108,7 +110,7 @@ const REGRESS_GP = 12;    // player-rate regression games
 const state = {
   tab: 'games', slateDate: null, slate: null, projections: {},
   seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} },
-  scan: { running: false, stop: false }, factsCat: 'allLocks', factsOpen: null
+  scan: { running: false, stop: false }, factsCat: 'allLocks', factsOpen: null, dkByDate: {}
 };
 
 /* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
@@ -116,6 +118,10 @@ const FB = { projectId: 'nflbets-45561', apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZ
 const FB_NS = 'nhl';            // singleton docs: nhl/allTime, nhl/lockcfg
 const FB_RECS = 'nhl_recs';     // per-date compact game records
 const FB_ACC = 'nhl_accuracy';  // per-date raw graded units
+const FB_DK = 'nhl_dk';         // per-date DK line snapshots
+const ODDS_KEY_SHARED = '370bfb0e8958dcfc4e4880fedfb548b1'; // the-odds-api (shared)
+const MLBCFG = { p: 'mlb-bets-d196c', k: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' }; // Board settings project
+const DK_ODDS_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds/?regions=us&markets=h2h,totals&oddsFormat=american&bookmakers=draftkings&apiKey=';
 function fbReady(){ return FB.projectId.length > 0; }
 function fbDocUrl(col, doc){
   return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
@@ -400,6 +406,34 @@ function unitsFromRecord(rec, proj){
   }
   return units;
 }
+// Bet AGAINST DraftKings when a line snapshot exists: ML value (we take our pick
+// only when our win prob beats DK's implied price) + goal total O/U lean.
+function dkUnitsFromRecord(rec, proj, snap){
+  const units = [];
+  if (!snap || !snap.games) return units;
+  const e = snap.games[rec.away.ab + '@' + rec.home.ab];
+  if (!e || rec.home.g == null || rec.away.g == null) return units;
+  const gm = rec.away.ab + '@' + rec.home.ab;
+  const aTot = rec.home.g + rec.away.g;
+  const actW = rec.home.g > rec.away.g ? rec.home.ab : rec.away.ab;
+  const imp = function(p){ return p < 0 ? (-p) / ((-p) + 100) : 100 / (p + 100); };
+  if (e.mlHome != null && e.mlAway != null){
+    const pickHome = proj.winAb === rec.home.ab;
+    const dkP = imp(pickHome ? e.mlHome : e.mlAway);
+    if ((proj.winMetric / 100) > dkP + 0.03){
+      units.push({ cat: 'dkML', metric: proj.winMetric, hit: proj.winAb === actW, game: gm,
+        desc: 'ML value ' + proj.winAb + ' (' + proj.winMetric + '% vs DK ' + Math.round(dkP * 100) + '%) → ' + actW });
+    }
+  }
+  if (e.total != null && aTot !== e.total){
+    const lean = proj.total > e.total ? 'OVER' : 'UNDER';
+    const hit = lean === 'OVER' ? aTot > e.total : aTot < e.total;
+    units.push({ cat: 'dkTotal', metric: proj.winMetric, hit: hit, game: gm,
+      desc: lean + ' ' + e.total + ' (proj ' + proj.total + ') → ' + aTot });
+  }
+  return units;
+}
+async function seedDkFromFB(){ try { state.dkByDate = await fbListCol(FB_DK); } catch (e) { state.dkByDate = state.dkByDate || {}; } return Object.keys(state.dkByDate || {}).length; }
 function unitQualifies(u){ return u.metric >= lockTh(CAT_META[u.cat].th); }
 function unitHit(u){
   const tk = TOL_KEY_BY_CAT[u.cat];
@@ -420,6 +454,7 @@ function aggregateUnits(units){
 }
 async function regradeAll(onProg){
   state.seasonUnits = {};
+  await seedDkFromFB();
   const dates = allRecDates();
   let graded = 0, unitCount = 0, early = 0;
   for (let i = 0; i < dates.length; i++){
@@ -430,10 +465,12 @@ async function regradeAll(onProg){
     await new Promise(r => setTimeout(r, 0));
     const ctx = { rates: teamRates(priorRecords(d)), players: playerRates(priorRecords(d)) };
     const units = [];
+    const snap = state.dkByDate[d];
     for (const rec of recs){
       const proj = projectGame(rec, ctx);
       if (!proj){ early++; continue; }
       units.push.apply(units, unitsFromRecord(rec, proj));
+      units.push.apply(units, dkUnitsFromRecord(rec, proj, snap));
     }
     if (units.length){ state.seasonUnits[d] = units; graded++; unitCount += units.length; }
   }
@@ -711,6 +748,82 @@ function switchTab(name){
 }
 
 /* ═══ SECTION: CRON (?cron=1 — headless self-grading for GitHub Actions) ═══ */
+/* Scheduled DK pull (?cron=dk): gated by the Board's app_settings/dk_auto
+   (hockeyOn/hockeyDays/hockeyHours, Pacific). Fetches today's ESPN slate for
+   team full names, pulls DK h2h+totals, maps by name, stores nhl_dk/{date}. */
+async function runCronDkPull(){
+  window.__cronStatus = 'dk: starting';
+  try {
+    let c = {};
+    try {
+      const r = await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_auto?key=' + MLBCFG.k, { cache: 'no-store' });
+      if (r.ok){ const f = (await r.json()).fields || {};
+        c = { on: f.hockeyOn ? f.hockeyOn.booleanValue !== false : true, hours: f.hockeyHours ? f.hockeyHours.stringValue : null, days: f.hockeyDays ? f.hockeyDays.stringValue : null }; }
+    } catch (e) {}
+    const on = c.on !== false;
+    const hours = String(c.hours || '9,15').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
+    const days = String(c.days || '0,1,2,3,4,5,6').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
+    const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+    const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    if (!on){ window.__cronStatus = 'dk: skipped — NHL auto pull is OFF'; window.__cronDone = true; return; }
+    if (!days.includes(ptNow.getDay())){ window.__cronStatus = 'dk: skipped — ' + DAYN[ptNow.getDay()] + ' not scheduled'; window.__cronDone = true; return; }
+    if (!hours.includes(ptNow.getHours())){ window.__cronStatus = 'dk: skipped — ' + ptNow.getHours() + ':xx PT not scheduled [' + hours.join(',') + ']'; window.__cronDone = true; return; }
+    const date = todayPT();
+    // Build fullName -> abbr from ESPN so DK's full team names map to our abbreviations
+    window.__cronStatus = 'dk: building slate ' + date;
+    const nameToAb = {}; const pairs = [];
+    try {
+      const sb = await fetchJSON(ESPN.scoreboard(date));
+      for (const ev of (sb.events || [])){
+        const c2 = (ev.competitions || [])[0] || {};
+        const h = (c2.competitors || []).find(function(x){ return x.homeAway === 'home'; });
+        const a = (c2.competitors || []).find(function(x){ return x.homeAway === 'away'; });
+        if (!h || !a) continue;
+        const hAb = h.team.abbreviation, aAb = a.team.abbreviation;
+        nameToAb[h.team.displayName] = hAb; nameToAb[a.team.displayName] = aAb;
+        pairs.push({ hName: h.team.displayName, aName: a.team.displayName, hAb: hAb, aAb: aAb });
+      }
+    } catch (e) {}
+    if (!pairs.length){ window.__cronStatus = 'dk: no NHL games ' + date; window.__cronDone = true; return; }
+    const lastWord = function(x){ const p = String(x || '').trim().split(' '); return p[p.length - 1]; };
+    const toAb = function(name){
+      if (nameToAb[name]) return nameToAb[name];
+      const lw = lastWord(name);
+      const hit = Object.keys(nameToAb).find(function(k){ return lastWord(k) === lw; });
+      return hit ? nameToAb[hit] : null;
+    };
+    window.__cronStatus = 'dk: pulling DK lines';
+    const res = await fetch(DK_ODDS_URL + ODDS_KEY_SHARED);
+    if (!res.ok) throw new Error('odds API ' + res.status);
+    let remaining = null; try { remaining = res.headers.get('x-requests-remaining'); } catch (e) {}
+    const arr = await res.json();
+    const games = {}; let n = 0;
+    for (const ev of (arr || [])){
+      if (String(ev.commence_time).slice(0, 10) < date) continue;
+      const hAb = toAb(ev.home_team), aAb = toAb(ev.away_team);
+      if (!hAb || !aAb) continue;
+      const bk = (ev.bookmakers || []).find(function(b){ return b.key === 'draftkings'; });
+      if (!bk) continue;
+      const mk = function(k){ return (bk.markets || []).find(function(m){ return m.key === k; }); };
+      const h2h = mk('h2h'), tot = mk('totals');
+      const price = function(m, team){ const o = m && (m.outcomes || []).find(function(x){ return x.name === team; }); return o && o.price != null ? o.price : null; };
+      const tO = tot && (tot.outcomes || []).find(function(x){ return x.name === 'Over'; });
+      games[aAb + '@' + hAb] = { gm: aAb + '@' + hAb, mlHome: price(h2h, ev.home_team), mlAway: price(h2h, ev.away_team), total: tO && tO.point != null ? tO.point : null };
+      n++;
+    }
+    await fbWrite(FB_DK, date, { date: date, fetched: new Date().toISOString(), games: games });
+    if (remaining != null){
+      try {
+        await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_status?key=' + MLBCFG.k + '&updateMask.fieldPaths=hockeyCalls&updateMask.fieldPaths=hockeyAt', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: { hockeyCalls: { integerValue: String(parseInt(remaining, 10)) }, hockeyAt: { integerValue: String(Date.now()) } } }) });
+      } catch (e) {}
+    }
+    window.__cronStatus = 'dk: done — ' + n + ' DK lines stored for ' + date + ' (' + (remaining != null ? remaining : '?') + ' calls left)';
+  } catch (e){ window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
+  window.__cronDone = true;
+}
+
 async function runCronGrade(){
   const clog = m => { window.__cronStatus = 'cron: ' + m; try { console.log('[ice] ' + m); } catch (e) {} };
   window.__cronStatus = 'cron: starting';
@@ -782,6 +895,7 @@ async function runCronGrade(){
   $id('verBadge').textContent = 'v' + APP.version + ' · walk-forward';
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => switchTab(b.getAttribute('data-tab')));
   if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
+  if (new URLSearchParams(location.search).get('cron') === 'dk'){ runCronDkPull(); return; }
   pullSharedLockCfg().then(got => { if (got && state.tab === 'facts') renderFacts(); }).catch(() => {});
   renderGames();
   // auto-load today's slate if we already have history; otherwise Facts builds it
