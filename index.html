@@ -984,6 +984,35 @@ function nflRates(units, th, tol){
   });
   return agg;
 }
+/* Target-rate solver: given picks [{m: metric, h: hit}], find the loosest
+   threshold whose lock tier still clears the target rate (biggest sample that
+   qualifies). Falls back to the best achievable rate at >=20 picks. */
+function solveTarget(pool, targetPct, floor){
+  floor = floor || 20;
+  var arr = pool.slice().sort(function(a, b){ return b.m - a.m; });
+  var hits = 0, best = null, peak = null;
+  for (var i = 0; i < arr.length; i++){
+    if (arr[i].h) hits++;
+    var n = i + 1;
+    if (n < floor) continue;
+    // only evaluate at metric boundaries (next pick has a lower metric)
+    if (i + 1 < arr.length && arr[i + 1].m === arr[i].m) continue;
+    var rate = 100 * hits / n;
+    var cand = { t: arr[i].m, rate: Math.round(rate), n: n };
+    if (rate >= targetPct) best = cand;             // loosest (largest n) wins
+    if (!peak || rate > peak.rate + 1e-9) peak = cand;
+  }
+  return { best: best, peak: peak, total: arr.length };
+}
+function suggRow(label, sol, fmt){
+  fmt = fmt || function(v){ return v; };
+  if (!sol.total) return '<div class="row" style="margin:4px 0"><span class="hint" style="flex:1">' + esc(label) + '</span><span class="hint">no graded picks</span></div>';
+  var body;
+  if (sol.best) body = 'set \u2265 <b>' + fmt(sol.best.t) + '</b> \u2192 ' + sol.best.rate + '% (' + sol.best.n + ' picks)';
+  else if (sol.peak) body = 'target unreachable \u00b7 best: \u2265 ' + fmt(sol.peak.t) + ' \u2192 ' + sol.peak.rate + '% (' + sol.peak.n + ' picks)';
+  else body = 'not enough picks (needs 20+)';
+  return '<div class="row" style="margin:4px 0"><span class="hint" style="flex:1">' + esc(label) + '</span><span style="font-size:12.5px;font-weight:700">' + body + '</span></div>';
+}
 function rateRow(label, cur, prop){
   var f = function(o){
     var h = o.h != null ? o.h : o.w, n = o.n != null ? o.n : (o.w + o.l);
@@ -1057,6 +1086,9 @@ async function openSettingsPanel(){
     return '<div class="sect"><div class="row"><span class="lbl">' + title + '</span></div>' +
       '<p class="sub" style="margin:6px 0 8px">' + sub + '</p>' +
       knobs.map(function(k){ return knobHtml(prefix + k[0], k[1], vals[k[0]]); }).join('') +
+      '<div class="row" style="margin:8px 0 4px"><span class="hint" style="flex:1">I want a success rate of</span>' +
+        '<input type="text" id="' + prefix + 'target" inputmode="numeric" value="70" style="margin:0;width:52px;text-align:right"><span class="hint">%</span>' +
+        '<button class="close" id="' + prefix + 'solve" style="width:auto;border:1px solid var(--hair);border-radius:9px;padding:6px 10px;margin:0">Suggest</button></div>' +
       '<button class="close" id="' + btnId + '" style="border:1px solid var(--hair);border-radius:9px;padding:8px">Preview success rates</button>' +
       '<div id="' + outId + '"></div></div>';
   };
@@ -1133,6 +1165,72 @@ async function openSettingsPanel(){
     return { th: th, tol: tol };
   };
 
+  var ensurePrem = async function(){
+    if (!PREVIEW_CACHE.prem) PREVIEW_CACHE.prem = await listAllDocs(ADMIN, 'fable_hits');
+    return PREVIEW_CACHE.prem;
+  };
+  var ensureFree = async function(){
+    if (!PREVIEW_CACHE.free) PREVIEW_CACHE.free = await listAllDocs(ADMIN, 'shared_history');
+    return PREVIEW_CACHE.free;
+  };
+  var ensureNBA = async function(){
+    if (!PREVIEW_CACHE.nba){
+      var docs = await listAllDocs(NFLP, 'nba_accuracy');
+      var units = [];
+      docs.forEach(function(d){
+        if (typeof d.data.data === 'string'){ try { units = units.concat(JSON.parse(d.data.data) || []); } catch (e) {} }
+      });
+      PREVIEW_CACHE.nba = { units: units, days: docs.length };
+    }
+    return PREVIEW_CACHE.nba;
+  };
+  var ensureNFLC = async function(){
+    if (!PREVIEW_CACHE.nfl){
+      var docs = await listAllDocs(NFLP, 'accuracy');
+      var units = [], weeks = 0;
+      docs.forEach(function(d){
+        if (/_units$/.test(d.id) && typeof d.data.units === 'string'){
+          try { units = units.concat(JSON.parse(d.data.units) || []); weeks++; } catch (e) {}
+        }
+      });
+      PREVIEW_CACHE.nfl = { units: units, weeks: weeks };
+    }
+    return PREVIEW_CACHE.nfl;
+  };
+  var ensureICE = async function(){
+    if (!PREVIEW_CACHE.ice){
+      var docs = await listAllDocs(NFLP, 'nhl_accuracy');
+      var units = [];
+      docs.forEach(function(d){
+        if (typeof d.data.data === 'string'){ try { units = units.concat(JSON.parse(d.data.data) || []); } catch (e) {} }
+      });
+      PREVIEW_CACHE.ice = { units: units, days: docs.length };
+    }
+    return PREVIEW_CACHE.ice;
+  };
+  // Per-knob pick pools [{m, h}] for the solver. Unit-based apps take the
+  // section's CURRENT tolerance inputs so tolerance edits feed the answer.
+  var unitPools = function(units, thMap, tolMap, tolVals, mKey, catKey, aKey, hKey){
+    var pools = {};
+    units.forEach(function(u){
+      var cat = u[catKey], knob = thMap[cat];
+      if (!knob || u[mKey] == null) return;
+      var tk = tolMap[cat];
+      var hit = (tk && u[aKey] != null) ? (u[aKey] <= tolVals[tk]) : !!u[hKey];
+      (pools[knob] = pools[knob] || []).push({ m: u[mKey], h: hit });
+    });
+    return pools;
+  };
+  var hookSolve = function(prefix, knobs, tolKeys, build){
+    box.querySelector('#' + prefix + 'solve').addEventListener('click', async function(){
+      var outEl = box.querySelector('#' + prefix.charAt(0) + '-prevout');
+      var target = parseFloat(box.querySelector('#' + prefix + 'target').value);
+      if (isNaN(target) || target <= 0 || target > 100){ outEl.innerHTML = '<div class="err">Target must be 1\u2013100.</div>'; return; }
+      outEl.innerHTML = '<div class="hint" style="padding:8px 0">Solving from graded history\u2026</div>';
+      try { outEl.innerHTML = await build(target); }
+      catch (e){ outEl.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    });
+  };
   var hookPreview = function(btnId, outId, run){
     box.querySelector('#' + btnId).addEventListener('click', async function(){
       var outEl = box.querySelector('#' + outId);
@@ -1144,7 +1242,7 @@ async function openSettingsPanel(){
   hookPreview('p-preview', 'p-prevout', async function(){
     var prop = readNums(PREM_KNOBS, 'pk-');
     if (!prop) throw new Error('Every field needs a number \u2265 0.');
-    if (!PREVIEW_CACHE.prem) PREVIEW_CACHE.prem = await listAllDocs(ADMIN, 'fable_hits');
+    await ensurePrem();
     var cur = premiumRates(PREVIEW_CACHE.prem, premCfg), nxt = premiumRates(PREVIEW_CACHE.prem, prop);
     var L = { hits:'Batter hits', hr:'Home runs', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmK:'Game K', hrL:'Game HRs' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
@@ -1153,7 +1251,7 @@ async function openSettingsPanel(){
   hookPreview('f-preview', 'f-prevout', async function(){
     var prop = readNums(FREE_KNOBS, 'fk-', 100);
     if (!prop) throw new Error('Every field needs a number 0\u2013100.');
-    if (!PREVIEW_CACHE.free) PREVIEW_CACHE.free = await listAllDocs(ADMIN, 'shared_history');
+    await ensureFree();
     var cur = freeRates(PREVIEW_CACHE.free, freeCfg), nxt = freeRates(PREVIEW_CACHE.free, prop);
     var L = { hits:'Batter hits', tb:'Total bases', hr:'Home runs', bb:'Batter walks', bbat:'Batter strikeouts' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.free.length + ' stored days)</div>' +
@@ -1163,14 +1261,7 @@ async function openSettingsPanel(){
     var all = readNums(NBA_KNOBS, 'bk-');
     if (!all) throw new Error('Every field needs a number \u2265 0.');
     var sp = split2(all, ['pts','stat']);
-    if (!PREVIEW_CACHE.nba){
-      var docs = await listAllDocs(NFLP, 'nba_accuracy');
-      var units = [];
-      docs.forEach(function(d){
-        if (typeof d.data.data === 'string'){ try { units = units.concat(JSON.parse(d.data.data) || []); } catch (e) {} }
-      });
-      PREVIEW_CACHE.nba = { units: units, days: docs.length };
-    }
+    await ensureNBA();
     if (!PREVIEW_CACHE.nba.units.length) throw new Error('No stored picks yet — the next NBA grading run uploads them (every 2h). Try again after it runs.');
     var cur = nbaRates(PREVIEW_CACHE.nba.units, nbaTh, nbaTol), nxt = nbaRates(PREVIEW_CACHE.nba.units, sp.th, sp.tol);
     var L = { allLocks:'All locks', winner:'Winner', total:'Game total', teamPts:'Team points', playerPts:'Player points', playerReb:'Player rebounds', playerAst:'Player assists' };
@@ -1203,19 +1294,102 @@ async function openSettingsPanel(){
     var all = readNums(ICE_KNOBS, 'ik-');
     if (!all) throw new Error('Every field needs a number \u2265 0.');
     var sp = split2(all, ['goals','p1']);
-    if (!PREVIEW_CACHE.ice){
-      var docs = await listAllDocs(NFLP, 'nhl_accuracy');
-      var units = [];
-      docs.forEach(function(d){
-        if (typeof d.data.data === 'string'){ try { units = units.concat(JSON.parse(d.data.data) || []); } catch (e) {} }
-      });
-      PREVIEW_CACHE.ice = { units: units, days: docs.length };
-    }
+    await ensureICE();
     if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next IceLine grading run uploads them (every 2h). Try again after it runs.');
     var cur = iceRates(PREVIEW_CACHE.ice.units, iceTh, iceTol), nxt = iceRates(PREVIEW_CACHE.ice.units, sp.th, sp.tol);
     var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
+  });
+
+  hookSolve('pk-', PREM_KNOBS, [], async function(target){
+    var days = await ensurePrem();
+    var pools = { lock: [], hrLock: [], kEdge: [], bbEdge: [], tbEdge: [], gkEdge: [], hrlEdge: [] };
+    var edgeOf = { kB:'kEdge', kP:'kEdge', bbB:'bbEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
+    var actual = { kB:'so', bbB:'bb', kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
+    var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
+    days.forEach(function(day){
+      var res = day.data.results; if (!res) return;
+      (day.data.rows || []).forEach(function(r){
+        if (!r.verified || r.gradeFlag || r.prob == null) return;
+        var o = res[r.id]; if (!played(o)) return;
+        pools.lock.push({ m: r.prob, h: (o.h || 0) >= 1 });
+      });
+      var mk = day.data.mk || {};
+      (mk.hr || []).forEach(function(r){
+        if (!r.verified || r.gradeFlag || r.prob == null) return;
+        var o = res[r.id]; if (!played(o)) return;
+        pools.hrLock.push({ m: r.prob, h: (o.hr || 0) >= 1 });
+      });
+      Object.keys(edgeOf).forEach(function(m){
+        (mk[m] || []).forEach(function(r){
+          if (!r.verified || r.gradeFlag || r.line == null || r.exp == null) return;
+          var o = res[r.id]; var act = o ? o[actual[m]] : null;
+          if (act == null || act === r.line) return; // pushes carry no signal
+          var d = r.exp - r.line;
+          pools[edgeOf[m]].push({ m: Math.abs(d), h: d > 0 ? act > r.line : act < r.line });
+        });
+      });
+    });
+    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', kEdge:'K props edge', bbEdge:'BB props edge', tbEdge:'Total bases edge', gkEdge:'Game K edge', hrlEdge:'Game HRs edge' };
+    var f3 = function(v){ return (Math.round(v * 1000) / 1000); };
+    return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '%, set each knob to \u2265 the value shown</div>' +
+      Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k], target), f3); }).join('');
+  });
+  hookSolve('fk-', FREE_KNOBS, [], async function(target){
+    var days = await ensureFree();
+    var rc = function(v){ if (v == null || isNaN(v)) return null; var f = Math.floor(v); return (v - f) >= 0.7 ? f + 1 : f; };
+    var pools = { hits: [], tb: [], hr: [], bb: [], bbat: [] };
+    days.forEach(function(day){
+      var pred = day.data.predictions, resB = day.data.results && day.data.results.batters;
+      if (!pred || !pred.batters || !resB) return;
+      pred.batters.forEach(function(b){
+        var o = resB[b.id]; if (!o) return;
+        if (!((o.ab || 0) >= 1 || (o.pa || 0) >= 1 || (o.actualHits || 0) >= 1)) return;
+        if (b.score != null) pools.hits.push({ m: b.score, h: (o.actualHits || 0) > 0 });
+        if (b.tbScore != null && b.expectedTB != null) pools.tb.push({ m: b.tbScore, h: (o.actualTB || 0) >= rc(b.expectedTB) });
+        if (b.hrScore != null) pools.hr.push({ m: b.hrScore, h: (o.actualHR || 0) > 0 });
+        if (b.bbScore != null && b.expectedBB != null) pools.bb.push({ m: b.bbScore, h: (o.actualBB || 0) >= rc(b.expectedBB) });
+        if (b.batterKScore != null && b.batterExpectedK != null) pools.bbat.push({ m: b.batterKScore, h: (o.actualK || 0) >= rc(b.batterExpectedK) });
+      });
+    });
+    var L = { hits:'Batter hits', tb:'Total bases', hr:'Home runs', bb:'Batter walks', bbat:'Batter strikeouts' };
+    return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '%, set each score threshold to \u2265 the value shown (batter categories only)</div>' +
+      Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k], target)); }).join('');
+  });
+  hookSolve('bk-', NBA_KNOBS, ['pts','stat'], async function(target){
+    await ensureNBA();
+    var tolVals = { pts: parseFloat(box.querySelector('#bk-pts').value) || 4, stat: parseFloat(box.querySelector('#bk-stat').value) || 3 };
+    var pools = unitPools(PREVIEW_CACHE.nba.units,
+      { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props' },
+      { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' },
+      tolVals, 'metric', 'cat', 'adelta', 'hit');
+    var L = { winner:'Winner lock %', lines:'Totals/team pts lock %', props:'Player props lock %' };
+    return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
+      Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
+  });
+  hookSolve('gk-', NFL_KNOBS, ['pts','yds'], async function(target){
+    await ensureNFLC();
+    var tolVals = { pts: parseFloat(box.querySelector('#gk-pts').value) || 3, yds: parseFloat(box.querySelector('#gk-yds').value) || 10 };
+    var pools = unitPools(PREVIEW_CACHE.nfl.units,
+      { winner:'winner', total:'lines', awayPts:'lines', homePts:'lines', teamPass:'lines', teamRush:'lines',
+        playerPass:'yards', playerRush:'yards', playerRec:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd' },
+      { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds' },
+      tolVals, 'm', 'c', 'a', 'h');
+    var L = { winner:'Winner lock %', lines:'Totals/scores/team yds lock %', yards:'Player yards lock %', anytimeTd:'Anytime TD lock %', firstTd:'First TD lock %' };
+    return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
+      Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
+  });
+  hookSolve('ik-', ICE_KNOBS, ['goals','p1'], async function(target){
+    await ensureICE();
+    var tolVals = { goals: parseFloat(box.querySelector('#ik-goals').value) || 1, p1: parseFloat(box.querySelector('#ik-p1').value) || 1 };
+    var pools = unitPools(PREVIEW_CACHE.ice.units,
+      { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props' },
+      { total:'goals', p1:'p1' },
+      tolVals, 'metric', 'cat', 'adelta', 'hit');
+    var L = { winner:'Winner lock %', lines:'Totals lock %', props:'Goal/point scorers lock %' };
+    return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
+      Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
   });
 
   box.querySelector('#s-save').addEventListener('click', async function(){

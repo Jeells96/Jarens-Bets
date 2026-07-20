@@ -2240,7 +2240,19 @@ async function bootLeagueLoad(){
         }catch(e){}
         console.log('[premium] verify: '+yd+' in summary: '+(ydInSummary?('YES'+ydLine):'NO')+' \u00b7 '+ydGames+' games were scheduled');
         if(!ydInSummary&&ydGames>0)throw new Error('yesterday ('+yd+') missing from summary after grading \u2014 '+report.join(' | '));
-        window.__cronStatus='cron: done — '+gradedN+' day(s) graded this run; '+yd+' verified in summary'+(ydGames?'':' (no games that day)');
+        /* RETENTION: keep one rolling season — prune fable_hits day docs older
+           than 370 days (early-morning runs only, so it costs one sweep a day). */
+        let pruned=0;
+        if(new Date().getUTCHours()<2){
+          try{
+            const cutoff=addDays(todayStr(),-370);
+            const snap=await withTO(FBH.db.collection('fable_hits').get(),25000);
+            const old=[];snap.forEach(doc=>{if(/^\d{4}-\d{2}-\d{2}$/.test(doc.id)&&doc.id<cutoff)old.push(doc.id);});
+            for(const id of old){try{await FBH.db.collection('fable_hits').doc(id).delete();pruned++;}catch(e){}await new Promise(r=>setTimeout(r,50));}
+            if(pruned)console.log('[premium] retention: pruned '+pruned+' day docs older than '+cutoff);
+          }catch(e){console.log('[premium] retention sweep skipped: '+e.message);}
+        }
+        window.__cronStatus='cron: done — '+gradedN+' day(s) graded this run; '+yd+' verified in summary'+(ydGames?'':' (no games that day)')+(pruned?' · '+pruned+' old day(s) pruned':'');
       }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;
     })();

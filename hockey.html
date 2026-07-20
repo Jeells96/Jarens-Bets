@@ -744,6 +744,21 @@ async function runCronGrade(){
     const pushed = await pushUnitsFB(clog);
     clog('mirroring records to nhl_recs');
     const mirrored = await pushRecsFB(clog);
+    /* RETENTION: one rolling season — prune cloud docs dated before this
+       season's start (nothing to prune until the SEASON const rolls over). */
+    try {
+      let pruned = 0;
+      for (const col of [FB_RECS, FB_ACC]){
+        const ids = await fbListColIds(col);
+        for (const id of ids){
+          if (/^\d{4}-\d{2}-\d{2}$/.test(id) && id < SEASON.start){
+            try { await fetch(fbDocUrl(col, id), { method: 'DELETE' }); pruned++; } catch (e) {}
+            await new Promise(r => setTimeout(r, 50));
+          }
+        }
+      }
+      if (pruned) clog('retention: pruned ' + pruned + ' pre-season docs');
+    } catch (e) {}
     const agg = aggregateUnits(flatUnits());
     const entries = Object.keys(agg).filter(k => k !== 'allLocks' && agg[k].n >= 20)
       .map(k => ({ label: agg[k].label, pct: Math.round(100 * agg[k].hit / Math.max(1, agg[k].n)), n: agg[k].n }))

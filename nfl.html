@@ -5398,6 +5398,23 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
         graded = 0; try { (scan.weeks || []).forEach(function (w) { graded += (w && w.n) || (w && w.graded) || 0; }); } catch (e) {}
       }
       clearInterval(prog);
+      /* RETENTION: keep current + previous season (the prior-season blend
+         needs last year) — prune older accuracy docs. */
+      try {
+        let pruned = 0;
+        const keepFrom = state.season - 1;
+        const docs = await fsListDocs('accuracy', 300);
+        for (const d of docs){
+          const m = d.id.match(/^(\d{4})_(W\d+(_units)?|summary)$/);
+          if (!m || +m[1] >= keepFrom) continue;
+          try {
+            const res = await fetch(FS_BASE + '/accuracy/' + d.id + '?key=' + FIREBASE.apiKey, { method: 'DELETE' });
+            if (res.ok) pruned++;
+          } catch (e) {}
+          await new Promise(r => setTimeout(r, 50));
+        }
+        if (pruned) console.log('[nfl] retention: pruned ' + pruned + ' docs from seasons before ' + keepFrom);
+      } catch (e) {}
       console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
       window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks, ~' + graded + ' results), accuracy synced';
     } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }

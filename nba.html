@@ -1358,6 +1358,26 @@ async function runCronGrade(){
     try { await pushSeasonFB(); } catch (e){ clog('units push warn: ' + e.message); }
     clog('mirroring new records to nba_recs');
     const pushed = await pushRecsFB();
+    /* RETENTION: one rolling season — prune cloud docs dated before this
+       season's start (nothing to prune until the SEASON const rolls over). */
+    try {
+      let pruned = 0;
+      for (const col of [FB_RECS, FB_ACC]){
+        const url = 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
+          '/databases/(default)/documents/' + col + '?pageSize=300&key=' + FB.apiKey + '&mask.fieldPaths=t';
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const j = await res.json();
+        for (const d of (j.documents || [])){
+          const id = d.name.split('/').pop();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(id) && id < SEASON.start){
+            try { await fetch('https://firestore.googleapis.com/v1/projects/' + FB.projectId + '/databases/(default)/documents/' + col + '/' + id + '?key=' + FB.apiKey, { method: 'DELETE' }); pruned++; } catch (e) {}
+            await sleep(50);
+          }
+        }
+      }
+      if (pruned) clog('retention: pruned ' + pruned + ' pre-season docs');
+    } catch (e) {}
     const dates = Object.keys(state.seasonUnits || {}).length;
     const note = espnOK ? '' : ' (ESPN unreachable this run \u2014 graded from cloud records)';
     clog('done \u2014 ' + after + ' records, ' + dates + ' dates graded, ' + pushed + ' day(s) mirrored, nba/allTime updated' + note);

@@ -3193,7 +3193,27 @@ if(__cronMode==='1'){
         if(HISTORY.byDate[d])graded++;   // count only days that actually produced results
       }
       console.log('[DIQ] grading finished: '+graded+' day(s) with results of '+dates.length+' tracked');
-      window.__cronStatus='cron: done — '+graded+' day(s) graded/refreshed of '+dates.length+' tracked';
+      /* RETENTION: one rolling season. shared_history + gradelogs keep 370
+         days; dated odds/props docs only matter near their date — 60 days. */
+      let pruned=0;
+      if(new Date().getUTCHours()<2){
+        try{
+          const cutHist=(d=>{const t=new Date(d+'T12:00:00Z');t.setUTCDate(t.getUTCDate()-370);return t.toISOString().slice(0,10);})(today);
+          const cutOdds=(d=>{const t=new Date(d+'T12:00:00Z');t.setUTCDate(t.getUTCDate()-60);return t.toISOString().slice(0,10);})(today);
+          const sh=await FB.db.collection('shared_history').get();
+          const del=[];sh.forEach(doc=>{if(/^\d{4}-\d{2}-\d{2}$/.test(doc.id)&&doc.id<cutHist)del.push(['shared_history',doc.id]);});
+          const as=await FB.db.collection('app_settings').get();
+          as.forEach(doc=>{
+            const m=doc.id.match(/^(odds_|props_|gradelog_)(\d{4}-\d{2}-\d{2})$/);
+            if(!m)return;
+            const cut=m[1]==='gradelog_'?cutHist:cutOdds;
+            if(m[2]<cut)del.push(['app_settings',doc.id]);
+          });
+          for(const [col,id] of del){try{await FB.db.collection(col).doc(id).delete();pruned++;}catch(e){}await new Promise(r=>setTimeout(r,50));}
+          if(pruned)console.log('[DIQ] retention: pruned '+pruned+' old docs');
+        }catch(e){console.log('[DIQ] retention sweep skipped: '+e.message);}
+      }
+      window.__cronStatus='cron: done — '+graded+' day(s) graded/refreshed of '+dates.length+' tracked'+(pruned?' · '+pruned+' old doc(s) pruned':'');
     }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
     window.__cronDone=true;
   })();
