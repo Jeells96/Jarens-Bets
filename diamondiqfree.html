@@ -10794,23 +10794,32 @@ function openHRLineMo(gamePk,opts={}){
   }
   function pass(){ if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
   function inp(id, ph, cap){ return '<input id="' + id + '" placeholder="' + ph + '" autocomplete="off" autocapitalize="' + cap + '" style="width:100%;box-sizing:border-box;background:#182231;border:1px solid #243146;border-radius:9px;color:#e8edf4;padding:12px;font-size:16px;margin-bottom:10px">'; }
-  function logFree(name){
-    try {
-      fetch(DOC + 'app_settings/free_log?key=' + MK).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
-        var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
-        if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now() });
-        arr = arr.slice(0, 200);
-        fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
-      }).catch(function(){});
-    } catch (e) {}
+  // Claim a free name with a self-chosen code. A name is owned by the first
+  // code that claims it; anyone else using that name must match that code.
+  // ok(true) => allowed (name is theirs); ok(false) => taken by someone else.
+  function claimFree(name, code, cb){
+    fetch(DOC + 'app_settings/free_log?key=' + MK, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+      var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
+      var hit = null; for (var i = 0; i < arr.length; i++){ if (norm(arr[i].n) === norm(name)){ hit = arr[i]; break; } }
+      if (hit){
+        if (hit.c == null || hit.c === ''){ hit.c = code; hit.t = Date.now(); } // legacy/unclaimed name — claim it now
+        else if (norm(hit.c) !== norm(code)){ cb(false); return; }             // taken — code mismatch
+        else { hit.t = Date.now(); }                                            // returning owner
+      } else {
+        arr.unshift({ n: name, c: code, t: Date.now() });
+      }
+      arr = arr.slice(0, 200);
+      fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) }).catch(function(){});
+      cb(true);
+    }).catch(function(){ cb(true); }); // network blip: don't lock a free user out
   }
   function showGate(list){
     var fields = FREE
-      ? inp('bg-name', 'Your name', 'words')
+      ? inp('bg-name', 'Your name', 'words') + inp('bg-code', 'Pick a code (protects your name)', 'none')
       : inp('bg-name', 'Your name', 'words') + inp('bg-code', 'Access code', 'none');
     cover('<div style="width:100%;max-width:340px;text-align:center">' +
       '<div style="font-size:26px;font-weight:800;margin-bottom:6px">Members only</div>' +
-      '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your first and last name to use the free app.' : 'Enter your first and last name, and your access code.') + '</div>' +
+      '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your first and last name and pick a code. Your code locks your name so no one else can sign in as you.' : 'Enter your first and last name, and your access code.') + '</div>' +
       fields +
       '<div id="bg-err" style="color:#ff7a7a;font-size:12.5px;min-height:16px;margin:6px 0"></div>' +
       '<button id="bg-go" style="width:100%;border:0;border-radius:9px;padding:13px;font-weight:800;background:#e8edf4;color:#0b0d12;font-size:15px">Enter</button></div>');
@@ -10825,8 +10834,14 @@ function openHRLineMo(gamePk,opts={}){
       }
       if (!twoNames(name)){ err('Enter your first and last name.'); return; }
       if (FREE){
-        try { localStorage.setItem(LS, JSON.stringify({ free: true, name: name })); } catch (e) {}
-        logFree(name); pass(); return;
+        if (norm(code).length < 3){ err('Pick a code (at least 3 characters) to protect your name.'); return; }
+        err('Checking name…');
+        claimFree(name, String(code).trim(), function(ok){
+          if (!ok){ err('That name is already taken. Enter the code set for it, or use a different name.'); return; }
+          try { localStorage.setItem(LS, JSON.stringify({ free: true, name: name, code: String(code).trim() })); } catch (e) {}
+          pass();
+        });
+        return;
       }
       var g = grantOf({ name: name, code: code }, list);
       if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkVisG && (g.dk !== false)); pass(); }
