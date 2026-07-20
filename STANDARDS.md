@@ -69,3 +69,4 @@ app the same way:
 | premium.html | partial | ✅ (per market) | ✅ | ✅ | ✅ |
 | diamondiqfree.html | ❌ (largest file — next up) | partial (locks sorted; ✓/✗ live in Fact Check) | ✅ (14-day) | ✅ | ✅ |
 | nfl.html | partial | ✅ | ✅ | ✅ | ✅ |
+| hockey.html | ✅ (built to standard) | ✅ | ✅ | ✅ | ✅ |

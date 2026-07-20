@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>IceLine — NHL Projections</title>
+<style>
+:root{
+  --bg:#0a0e14; --panel:#111823; --face:#182231; --hair:#243146; --hair2:#1c2637;
+  --tx:#e8edf4; --mt:#8fa0b5; --mt2:#5c6b80; --ice:#4cc9f0; --good:#3ddc84; --bad:#ff5d73;
+  --amber:#ffb454; --lock:#4cc9f0;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:20;background:rgba(10,14,20,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--hair2);padding:calc(10px + env(safe-area-inset-top)) 14px 10px;display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;letter-spacing:-.01em}
+header h1 span{color:var(--ice)}
+.pill{font-size:10.5px;color:var(--mt2);border:1px solid var(--hair);border-radius:99px;padding:2px 8px;margin-left:auto;white-space:nowrap}
+main{padding:12px;max-width:640px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--hair2);border-radius:13px;padding:13px;margin-bottom:11px}
+.card h2{font-size:13px;margin:0 0 8px;color:var(--mt);text-transform:uppercase;letter-spacing:.09em}
+.row{display:flex;align-items:center;gap:8px}
+.grow{flex:1;min-width:0}
+.small{font-size:12.8px}
+.muted{color:var(--mt)}
+.dim{color:var(--mt2)}
+.btn{background:var(--ice);color:#04121c;border:0;border-radius:9px;padding:10px 15px;font-weight:800;font-size:13.5px}
+.btn.ghost{background:none;border:1px solid var(--hair);color:var(--tx);font-weight:600}
+.btn:disabled{opacity:.5}
+input[type=text]{background:var(--face);border:1px solid var(--hair);border-radius:9px;color:var(--tx);padding:9px 11px;font-size:15px}
+nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:rgba(13,18,26,.97);backdrop-filter:blur(10px);border-top:1px solid var(--hair2);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:0;color:var(--mt2);font-size:11px;padding:9px 0 7px;display:flex;flex-direction:column;gap:3px;align-items:center;font-weight:600}
+nav button.on{color:var(--ice)}
+nav .ico{font-size:19px;line-height:1}
+.hidden{display:none}
+.rate-good{color:var(--good);font-weight:700}
+.rate-bad{color:var(--bad);font-weight:700}
+.lock{color:var(--lock);font-weight:800;font-size:12.5px;white-space:nowrap}
+.chip{display:inline-block;border:1px solid var(--hair);border-radius:99px;padding:4px 11px;font-size:12px;color:var(--mt);margin:0 6px 6px 0}
+.chip.on{border-color:var(--ice);color:var(--ice);font-weight:700}
+.drow{display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid var(--hair2);font-size:13px}
+.gline{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--hair2)}
+.gline:first-of-type{border-top:0}
+.score{font-variant-numeric:tabular-nums;font-weight:800}
+.tag{font-size:10px;border:1px solid var(--hair);border-radius:5px;padding:1px 5px;color:var(--mt2);text-transform:uppercase;letter-spacing:.06em}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:76px;background:#1d2a3d;border:1px solid var(--hair);color:var(--tx);border-radius:10px;padding:9px 14px;font-size:12.8px;z-index:50;max-width:88vw;transition:opacity .3s}
+#toast.hidden{opacity:0;pointer-events:none}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--hair);border-top-color:var(--ice);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ice<span>Line</span></h1>
+  <span class="pill" id="verBadge"></span>
+</header>
+<main>
+  <section id="tab-games"></section>
+  <section id="tab-bets" class="hidden"></section>
+  <section id="tab-facts" class="hidden"></section>
+  <section id="tab-settings" class="hidden"></section>
+</main>
+<nav>
+  <button data-tab="games" class="on"><span class="ico">&#127954;</span>Games</button>
+  <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
+  <button data-tab="facts"><span class="ico">&#128202;</span>Facts</button>
+  <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
+</nav>
+<div id="toast" class="hidden"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   IceLine v0.2 — NHL projections, built to the repo STANDARDS.md.
+   Walk-forward like The Key: every projection uses ONLY games completed
+   before the projected date, records are stored locally + mirrored to
+   Firestore, raw graded units power the Facts explorer and the Board's
+   lock-grade preview, and ?cron=1 self-grades headlessly.
+   Markets: winner · game total O/U (±tol) · 1st-period total O/U (±tol) ·
+   anytime goal scorer · point scorer.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══ SECTION: CONFIG ═══ */
+const APP = { version: '0.2' };
+const SEASON = { start: '2025-10-07', end: '2026-06-30' }; // 2025-26 incl. playoffs
+const ESPN = {
+  scoreboard: d => 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=' + d.replace(/-/g, ''),
+  summary: id => 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event=' + id
+};
+const CAT_META = {
+  winner: { label: 'Winner',              th: 'winner', short: 'Winner' },
+  total:  { label: 'Game Total ±T',       th: 'lines',  short: 'Total' },
+  p1:     { label: '1st Period Total ±T', th: 'lines',  short: '1st per.' },
+  goal:   { label: 'Goal Scorers',        th: 'props',  short: 'Goal' },
+  point:  { label: 'Point Scorers',       th: 'props',  short: 'Point' }
+};
+const TOL_KEY_BY_CAT = { total: 'goals', p1: 'p1' };
+const LOCK_DEFAULTS = { winner: 58, lines: 0, props: 40 };
+const TOL_DEFAULTS = { goals: 1, p1: 1 };
+const HOME_BUMP = 0.12;   // home-ice goals bump
+const PYTH_EX = 2.2;      // hockey Pythagorean exponent
+const REGRESS_GP = 12;    // player-rate regression games
+const state = {
+  tab: 'games', slateDate: null, slate: null, projections: {},
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} },
+  scan: { running: false, stop: false }, factsCat: 'allLocks', factsOpen: null
+};
+
+/* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
+const FB = { projectId: 'nflbets-45561', apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g' };
+const FB_NS = 'nhl';            // singleton docs: nhl/allTime, nhl/lockcfg
+const FB_RECS = 'nhl_recs';     // per-date compact game records
+const FB_ACC = 'nhl_accuracy';  // per-date raw graded units
+function fbReady(){ return FB.projectId.length > 0; }
+function fbDocUrl(col, doc){
+  return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
+    '/databases/(default)/documents/' + col + '/' + doc + '?key=' + FB.apiKey;
+}
+async function fbRead(col, doc){
+  if (!fbReady()) return null;
+  const res = await fetch(fbDocUrl(col, doc));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('FB read ' + res.status);
+  const j = await res.json();
+  const s = j.fields && j.fields.data && j.fields.data.stringValue;
+  return s ? JSON.parse(s) : null;
+}
+async function fbWrite(col, doc, obj){
+  if (!fbReady()) return false;
+  const body = { fields: { data: { stringValue: JSON.stringify(obj) }, t: { stringValue: new Date().toISOString() } } };
+  const res = await fetch(fbDocUrl(col, doc) + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error('FB write ' + res.status);
+  return true;
+}
+async function fbListCol(col){
+  if (!fbReady()) return {};
+  const out = {};
+  let tok = '';
+  for (let page = 0; page < 4; page++){
+    const url = 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
+      '/databases/(default)/documents/' + col + '?pageSize=300&key=' + FB.apiKey + (tok ? '&pageToken=' + tok : '');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('FB list ' + res.status);
+    const j = await res.json();
+    for (const d of (j.documents || [])){
+      const id = d.name.split('/').pop();
+      const s = d.fields && d.fields.data && d.fields.data.stringValue;
+      if (s){ try { out[id] = JSON.parse(s); } catch (e) {} }
+    }
+    tok = j.nextPageToken || '';
+    if (!tok) break;
+  }
+  return out;
+}
+const REC_PREFIX = 'ice_recs_';   // one localStorage key per date
+function loadRecs(date){
+  try { return JSON.parse(localStorage.getItem(REC_PREFIX + date) || 'null'); } catch (e){ return null; }
+}
+function saveRecs(date, recs){
+  try { localStorage.setItem(REC_PREFIX + date, JSON.stringify(recs)); return true; } catch (e){ return false; }
+}
+function allRecDates(){
+  const out = [];
+  for (let i = 0; i < localStorage.length; i++){
+    const k = localStorage.key(i);
+    if (k && k.indexOf(REC_PREFIX) === 0) out.push(k.slice(REC_PREFIX.length));
+  }
+  return out.sort();
+}
+/* Shared lock config — the Board writes nhl/lockcfg; devices + cron merge it
+   over local settings so lock grades are league-wide. */
+async function pullSharedLockCfg(){
+  try {
+    const cfg = await fbRead(FB_NS, 'lockcfg');
+    if (!cfg) return false;
+    state.settings.lockThresholds = Object.assign({}, state.settings.lockThresholds, cfg.lockThresholds || {});
+    state.settings.hitTol = Object.assign({}, state.settings.hitTol, cfg.hitTol || {});
+    return true;
+  } catch (e){ return false; }
+}
+
+/* ═══ SECTION: DATA (ESPN — CORS-safe, every fetch non-fatal) ═══ */
+async function fetchJSON(url){
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function parseScoreboard(j){
+  return (j.events || []).map(ev => {
+    const c = (ev.competitions || [])[0] || {};
+    const side = ha => (c.competitors || []).find(t => t.homeAway === ha) || {};
+    const mk = t => ({
+      id: t.team && t.team.id, ab: (t.team && t.team.abbreviation) || '?',
+      g: t.score != null ? +t.score : null,
+      p1: (t.linescores && t.linescores[0] && t.linescores[0].value != null) ? +t.linescores[0].value : null
+    });
+    return {
+      id: ev.id, state: ev.status && ev.status.type && ev.status.type.state,
+      completed: !!(ev.status && ev.status.type && ev.status.type.completed),
+      home: mk(side('home')), away: mk(side('away'))
+    };
+  });
+}
+function toiMin(s){
+  if (!s || s.indexOf(':') < 0) return 0;
+  const p = s.split(':');
+  return (+p[0] || 0) + (+p[1] || 0) / 60;
+}
+async function fetchGameRecord(game, date){
+  // Compact record: skaters as [pid, name, teamAb, goals, assists, toiMin]
+  const j = await fetchJSON(ESPN.summary(game.id));
+  const players = [];
+  for (const blk of ((j.boxscore || {}).players || [])){
+    const ab = blk.team && blk.team.abbreviation;
+    for (const grp of (blk.statistics || [])){
+      if (grp.name !== 'forwards' && grp.name !== 'defenses') continue;
+      const keys = grp.keys || [];
+      const gi = keys.indexOf('goals'), ai = keys.indexOf('assists'), ti = keys.indexOf('timeOnIce');
+      for (const a of (grp.athletes || [])){
+        const st = a.stats || [];
+        if (!st.length) continue;
+        players.push([a.athlete.id, a.athlete.displayName, ab, +(st[gi] || 0), +(st[ai] || 0), Math.round(toiMin(st[ti]) * 10) / 10]);
+      }
+    }
+  }
+  return { id: game.id, date: date, home: game.home, away: game.away, players: players };
+}
+async function buildData(from, to, onProg){
+  // Fetch + store every completed date in [from, to] that isn't stored yet.
+  let d = from, built = 0, failed = 0;
+  while (d <= to){
+    if (state.scan.stop) break;
+    if (!loadRecs(d)){
+      if (onProg) onProg('Fetching ' + d + '…');
+      try {
+        const sb = parseScoreboard(await fetchJSON(ESPN.scoreboard(d)));
+        const done = sb.filter(g => g.completed && g.home.g != null);
+        const recs = [];
+        for (const g of done){
+          try { recs.push(await fetchGameRecord(g, d)); }
+          catch (e){ failed++; }
+        }
+        // store even empty days (off days) so we never refetch them
+        if (recs.length === done.length) { saveRecs(d, recs); built += recs.length; }
+      } catch (e){ failed++; }
+    }
+    d = addDays(d, 1);
+  }
+  return { built, failed };
+}
+
+/* ═══ SECTION: MODEL (walk-forward — strictly before-date records) ═══ */
+function priorRecords(beforeDate){
+  const out = [];
+  for (const d of allRecDates()){
+    if (d >= beforeDate) break;
+    const recs = loadRecs(d);
+    if (recs) for (const r of recs) out.push(r);
+  }
+  return out;
+}
+function teamRates(prior){
+  // Per team: goals for/against per game (recent 20 games weighted 60/40),
+  // 1st-period for/against per game.
+  const T = {};
+  const touch = ab => T[ab] || (T[ab] = { games: [], p1f: 0, p1a: 0, p1n: 0 });
+  for (const r of prior){
+    const h = touch(r.home.ab), a = touch(r.away.ab);
+    h.games.push([r.home.g, r.away.g]); a.games.push([r.away.g, r.home.g]);
+    if (r.home.p1 != null && r.away.p1 != null){
+      h.p1f += r.home.p1; h.p1a += r.away.p1; h.p1n++;
+      a.p1f += r.away.p1; a.p1a += r.home.p1; a.p1n++;
+    }
+  }
+  let lgG = 0, lgN = 0, lgP1 = 0, lgP1n = 0;
+  Object.values(T).forEach(t => {
+    t.games.forEach(g => { lgG += g[0]; lgN++; });
+    lgP1 += t.p1f; lgP1n += t.p1n;
+  });
+  const lgGpg = lgN ? lgG / lgN : 3.0;          // league goals per team-game
+  const lgP1pg = lgP1n ? lgP1 / lgP1n : 0.9;    // league 1st-period goals per team-game
+  Object.keys(T).forEach(ab => {
+    const t = T[ab], n = t.games.length;
+    if (!n){ T[ab] = null; return; }
+    const rec = t.games.slice(-20);
+    const avg = arr => {
+      let f = 0, a2 = 0;
+      arr.forEach(g => { f += g[0]; a2 += g[1]; });
+      return [f / arr.length, a2 / arr.length];
+    };
+    const [fAll, aAll] = avg(t.games), [fRec, aRec] = avg(rec);
+    const w = Math.min(0.6, rec.length / 33);   // recent weight grows with sample
+    T[ab] = {
+      n: n,
+      gf: fRec * w + fAll * (1 - w), ga: aRec * w + aAll * (1 - w),
+      p1f: t.p1n ? t.p1f / t.p1n : lgP1pg, p1a: t.p1n ? t.p1a / t.p1n : lgP1pg
+    };
+  });
+  return { T, lgGpg, lgP1pg };
+}
+function playerRates(prior){
+  // Per skater: games, goals, points, avg TOI, team, name — plus the id set
+  // from each team's LAST game (tonight's lineup proxy, same as The Key).
+  const P = {}, lastLineup = {};
+  for (const r of prior){
+    for (const pl of (r.players || [])){
+      const [pid, name, ab, g, a, toi] = pl;
+      const p = P[pid] || (P[pid] = { name, ab, gp: 0, g: 0, pts: 0, toi: 0 });
+      p.name = name; p.ab = ab; p.gp++; p.g += g; p.pts += g + a; p.toi += toi;
+    }
+  }
+  for (const d of allRecDates().slice().reverse()){
+    const recs = loadRecs(d); if (!recs) continue;
+    for (const r of recs){
+      for (const side of ['home', 'away']){
+        const ab = r[side].ab;
+        if (!lastLineup[ab]) lastLineup[ab] = r.players.filter(pl => pl[2] === ab).map(pl => pl[0]);
+      }
+    }
+    if (Object.keys(lastLineup).length >= 32) break;
+  }
+  return { P, lastLineup };
+}
+function projectGame(game, ctx){
+  // ctx = { rates, players } computed once per slate (walk-forward for its date)
+  const { T, lgGpg, lgP1pg } = ctx.rates;
+  const h = T[game.home.ab], a = T[game.away.ab];
+  if (!h || !a || h.n < 8 || a.n < 8) return null; // insufficient history — skip honestly
+  const eH = lgGpg * (h.gf / lgGpg) * (a.ga / lgGpg) + HOME_BUMP / 2;
+  const eA = lgGpg * (a.gf / lgGpg) * (h.ga / lgGpg) - HOME_BUMP / 2;
+  const pH = Math.pow(eH, PYTH_EX) / (Math.pow(eH, PYTH_EX) + Math.pow(eA, PYTH_EX));
+  const winAb = pH >= 0.5 ? game.home.ab : game.away.ab;
+  const winMetric = Math.round(Math.max(pH, 1 - pH) * 100);
+  const total = Math.round((eH + eA) * 10) / 10;
+  const p1 = Math.round((h.p1f * (a.p1a / lgP1pg) + a.p1f * (h.p1a / lgP1pg)) * 10) / 10;
+  // players: everyone in each team's last-game lineup with enough history
+  const props = [];
+  for (const side of ['home', 'away']){
+    const ab = game[side].ab, oppAb = side === 'home' ? game.away.ab : game.home.ab;
+    const opp = T[oppAb];
+    const oppF = opp ? Math.max(0.7, Math.min(1.3, opp.ga / lgGpg)) : 1;
+    for (const pid of (ctx.players.lastLineup[ab] || [])){
+      const p = ctx.players.P[pid];
+      if (!p || p.gp < 8) continue;
+      const gRate = (p.g + 0.10 * REGRESS_GP) / (p.gp + REGRESS_GP);   // regressed goals/game
+      const ptRate = (p.pts + 0.28 * REGRESS_GP) / (p.gp + REGRESS_GP); // regressed points/game
+      const pGoal = 1 - Math.exp(-gRate * oppF);
+      const pPoint = 1 - Math.exp(-ptRate * oppF);
+      props.push({ pid, name: p.name, ab,
+        goalConf: Math.round(pGoal * 100), pointConf: Math.round(pPoint * 100),
+        why: p.g + 'G ' + p.pts + 'P in ' + p.gp + ' GP · ' + (p.toi / p.gp).toFixed(1) + ' min · opp defense ×' + oppF.toFixed(2) });
+    }
+  }
+  props.sort((x, y) => y.goalConf - x.goalConf);
+  return { winAb, winMetric, pHome: pH, eH: Math.round(eH * 10) / 10, eA: Math.round(eA * 10) / 10, total, p1, props };
+}
+
+/* ═══ SECTION: GRADE (stored picks vs real results — read-time thresholds) ═══ */
+function lockTh(key){
+  const lt = state.settings.lockThresholds || {};
+  const v = +lt[key];
+  return isFinite(v) && lt[key] !== '' && lt[key] != null ? Math.max(0, Math.min(99, v)) : LOCK_DEFAULTS[key];
+}
+function hitTol(key){
+  const ht = state.settings.hitTol || {};
+  const v = +ht[key];
+  return isFinite(v) && ht[key] !== '' && ht[key] != null && v > 0 ? Math.min(10, v) : TOL_DEFAULTS[key];
+}
+function unitsFromRecord(rec, proj){
+  const units = [];
+  const gm = rec.away.ab + '@' + rec.home.ab;
+  if (rec.home.g == null || rec.away.g == null) return units;
+  const actW = rec.home.g > rec.away.g ? rec.home.ab : rec.away.ab;
+  units.push({ cat: 'winner', metric: proj.winMetric, hit: actW === proj.winAb, game: gm,
+    desc: 'Winner ' + proj.winAb + ' ' + proj.winMetric + '% → ' + actW });
+  const aTot = rec.home.g + rec.away.g;
+  units.push({ cat: 'total', metric: proj.winMetric, adelta: Math.abs(aTot - proj.total), game: gm,
+    desc: 'Total ' + proj.total + ' → ' + aTot });
+  if (rec.home.p1 != null && rec.away.p1 != null){
+    const aP1 = rec.home.p1 + rec.away.p1;
+    units.push({ cat: 'p1', metric: proj.winMetric, adelta: Math.abs(aP1 - proj.p1), game: gm,
+      desc: '1st period ' + proj.p1 + ' → ' + aP1 });
+  }
+  const byPid = {};
+  for (const pl of (rec.players || [])) byPid[pl[0]] = pl;
+  for (const pr of proj.props){
+    const pl = byPid[pr.pid];
+    if (!pl) continue; // scratched — nothing to grade
+    units.push({ cat: 'goal', metric: pr.goalConf, hit: pl[3] >= 1, game: gm,
+      desc: pr.name + ' anytime goal ' + pr.goalConf + '% → ' + pl[3] + 'G' });
+    units.push({ cat: 'point', metric: pr.pointConf, hit: (pl[3] + pl[4]) >= 1, game: gm,
+      desc: pr.name + ' 1+ point ' + pr.pointConf + '% → ' + (pl[3] + pl[4]) + 'P' });
+  }
+  return units;
+}
+function unitQualifies(u){ return u.metric >= lockTh(CAT_META[u.cat].th); }
+function unitHit(u){
+  const tk = TOL_KEY_BY_CAT[u.cat];
+  if (tk && u.adelta != null) return u.adelta <= hitTol(tk);
+  return !!u.hit;
+}
+function aggregateUnits(units){
+  const cats = {};
+  for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: CAT_META[k].label.replace('±T', '±' + hitTol(TOL_KEY_BY_CAT[k] || 'goals')) };
+  const all = { hit: 0, n: 0, label: 'All Locks' };
+  for (const u of units){
+    if (!cats[u.cat] || !unitQualifies(u)) continue;
+    const h = unitHit(u);
+    cats[u.cat].n++; if (h) cats[u.cat].hit++;
+    all.n++; if (h) all.hit++;
+  }
+  return Object.assign({ allLocks: all }, cats);
+}
+async function regradeAll(onProg){
+  state.seasonUnits = {};
+  const dates = allRecDates();
+  let graded = 0, unitCount = 0, early = 0;
+  for (let i = 0; i < dates.length; i++){
+    const d = dates[i];
+    const recs = loadRecs(d);
+    if (!recs || !recs.length) continue;
+    if (onProg && i % 10 === 0) onProg('Grading ' + d + '…');
+    await new Promise(r => setTimeout(r, 0));
+    const ctx = { rates: teamRates(priorRecords(d)), players: playerRates(priorRecords(d)) };
+    const units = [];
+    for (const rec of recs){
+      const proj = projectGame(rec, ctx);
+      if (!proj){ early++; continue; }
+      units.push.apply(units, unitsFromRecord(rec, proj));
+    }
+    if (units.length){ state.seasonUnits[d] = units; graded++; unitCount += units.length; }
+  }
+  return { graded, unitCount, early };
+}
+function flatUnits(){
+  let out = [];
+  for (const d of Object.keys(state.seasonUnits).sort()) out = out.concat(state.seasonUnits[d]);
+  return out;
+}
+function saveGateSummary(){
+  const agg = aggregateUnits(flatUnits());
+  const entries = Object.keys(agg).filter(k => k !== 'allLocks' && agg[k].n >= 20)
+    .map(k => ({ label: agg[k].label, pct: Math.round(100 * agg[k].hit / Math.max(1, agg[k].n)), n: agg[k].n }))
+    .sort((a, b) => b.pct - a.pct).slice(0, 3);
+  const summary = { t: new Date().toISOString(), all: { hit: agg.allLocks.hit, n: agg.allLocks.n }, top: entries };
+  if (fbReady()) fbWrite(FB_NS, 'allTime', summary).catch(() => {});
+  return summary;
+}
+async function pushUnitsFB(onProg){
+  // Serialized (await each + small delay) — Firestore queued-write cap.
+  const dates = Object.keys(state.seasonUnits).sort();
+  let ok = 0;
+  for (let i = 0; i < dates.length; i++){
+    if (onProg && i % 10 === 0) onProg('Pushing units ' + (i + 1) + '/' + dates.length + '…');
+    try { await fbWrite(FB_ACC, dates[i], state.seasonUnits[dates[i]]); ok++; } catch (e) {}
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return ok;
+}
+async function pushRecsFB(onProg){
+  const dates = allRecDates();
+  let ok = 0;
+  const have = await fbListColIds(FB_RECS);
+  for (let i = 0; i < dates.length; i++){
+    if (have.has(dates[i])) continue;
+    const recs = loadRecs(dates[i]);
+    if (!recs || !recs.length) continue;
+    if (onProg) onProg('Mirroring ' + dates[i] + '…');
+    try { await fbWrite(FB_RECS, dates[i], recs); ok++; } catch (e) {}
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return ok;
+}
+async function fbListColIds(col){
+  const ids = new Set();
+  try {
+    let tok = '';
+    for (let page = 0; page < 4; page++){
+      const url = 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
+        '/databases/(default)/documents/' + col + '?pageSize=300&key=' + FB.apiKey +
+        '&mask.fieldPaths=t' + (tok ? '&pageToken=' + tok : '');
+      const res = await fetch(url);
+      if (!res.ok) break;
+      const j = await res.json();
+      (j.documents || []).forEach(d => ids.add(d.name.split('/').pop()));
+      tok = j.nextPageToken || '';
+      if (!tok) break;
+    }
+  } catch (e) {}
+  return ids;
+}
+async function seedFromFB(onProg){
+  if (onProg) onProg('Seeding records from the cloud…');
+  let seeded = 0;
+  try {
+    const docs = await fbListCol(FB_RECS);
+    for (const d in docs){
+      if (!loadRecs(d)){ if (saveRecs(d, docs[d])) seeded++; }
+    }
+  } catch (e) {}
+  return seeded;
+}
+
+/* ═══ SECTION: RENDER ═══ */
+const $id = x => document.getElementById(x);
+function toast(msg, ms){
+  const t = $id('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => t.classList.add('hidden'), ms || 2800);
+}
+function todayPT(){
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })).toISOString().slice(0, 10);
+}
+function addDays(d, n){
+  const dt = new Date(d + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function loadSlate(date){
+  state.slateDate = date; state.slate = null; state.projections = {};
+  renderGames('<div class="muted small">Loading ' + esc(date) + '… <span class="spin"></span></div>');
+  let games = [];
+  try { games = parseScoreboard(await fetchJSON(ESPN.scoreboard(date))); }
+  catch (e){ renderGames('<div class="muted small">ESPN unreachable — try again.</div>'); return; }
+  state.slate = { date, games };
+  const prior = priorRecords(date);
+  if (prior.length < 100){
+    renderGames('<div class="muted small">Not enough stored history to project (needs the season built). Cloud sync runs automatically — if this persists, run the grading autopilot once from the Actions tab.</div>');
+    return;
+  }
+  const ctx = { rates: teamRates(prior), players: playerRates(prior) };
+  for (const g of games){
+    const proj = projectGame(g, ctx);
+    if (proj) state.projections[g.id] = proj;
+  }
+  renderGames();
+  renderBets();
+}
+function renderGames(msg){
+  const el = $id('tab-games');
+  let h = '<div class="card"><h2>Slate</h2><div class="row">' +
+    '<input type="text" id="dp" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + esc(state.slateDate || todayPT()) + '" style="width:0;flex:1">' +
+    '<button class="btn" id="loadBtn">Load</button></div>' +
+    '<div class="small dim" style="margin-top:6px">Projections use only games finished before this date — walk-forward, no leaks. Season ' + SEASON.start.slice(0, 4) + '–' + SEASON.end.slice(2, 4) + '.</div></div>';
+  if (msg) h += '<div class="card">' + msg + '</div>';
+  else if (state.slate){
+    if (!state.slate.games.length) h += '<div class="card muted small">No NHL games on ' + esc(state.slate.date) + '.</div>';
+    for (const g of state.slate.games){
+      const proj = state.projections[g.id];
+      const fin = g.completed && g.home.g != null;
+      h += '<div class="card"><div class="gline">' +
+        '<div class="grow"><b>' + esc(g.away.ab) + '</b> @ <b>' + esc(g.home.ab) + '</b>' +
+        (fin ? ' <span class="score">' + g.away.g + '–' + g.home.g + '</span> <span class="tag">final</span>' : ' <span class="tag">' + esc(g.state || '') + '</span>') +
+        '</div>' + (proj ? '<div class="lock">' + esc(proj.winAb) + ' ' + proj.winMetric + '%</div>' : '<div class="dim small">no proj</div>') + '</div>' +
+        (proj ? '<div class="small muted">proj ' + esc(g.away.ab) + ' ' + proj.eA + ' @ ' + esc(g.home.ab) + ' ' + proj.eH +
+          ' · total ' + proj.total + ' ±' + hitTol('goals') + ' · 1st period ' + proj.p1 + ' ±' + hitTol('p1') + '</div>' : '') +
+        '</div>';
+    }
+  }
+  el.innerHTML = h;
+  const b = $id('loadBtn');
+  if (b) b.onclick = () => loadSlate($id('dp').value || todayPT());
+}
+function renderBets(){
+  const el = $id('tab-bets');
+  const th = '<div class="small dim" style="margin-top:4px">Thresholds: winner ≥' + lockTh('winner') + '% · lines ≥' + lockTh('lines') + '% · players ≥' + lockTh('props') + '% · tol ±' + hitTol('goals') + ' goals / ±' + hitTol('p1') + ' 1st-period</div>';
+  if (!state.slate){
+    el.innerHTML = '<div class="card"><h2>Locks</h2><div class="muted small">Load a slate on Games first.</div>' + th + '</div>';
+    return;
+  }
+  let hitN = 0, gradedN = 0;
+  const bets = [];
+  for (const g of state.slate.games){
+    const proj = state.projections[g.id];
+    if (!proj) continue;
+    const gTag = '<span class="dim">' + esc(g.away.ab) + '@' + esc(g.home.ab) + '</span> ';
+    const fin = g.completed && g.home.g != null;
+    let rec = null;
+    if (fin){
+      const recs = loadRecs(state.slate.date) || [];
+      rec = recs.find(r => String(r.id) === String(g.id)) || { id: g.id, home: g.home, away: g.away, players: [] };
+    }
+    const mark = ok => { gradedN++; if (ok) hitN++; return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (ok ? '✓' : '✗') + '</span>'; };
+    if (proj.winMetric >= lockTh('winner')){
+      let m = '';
+      if (rec && rec.home.g != null) m = mark((rec.home.g > rec.away.g ? rec.home.ab : rec.away.ab) === proj.winAb);
+      bets.push({ conf: proj.winMetric, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Winner: <b>' + esc(proj.winAb) + '</b>' + m + '</div><div class="lock">' + proj.winMetric + '% 🔒</div></div>' });
+    }
+    if (proj.winMetric >= lockTh('lines')){
+      let m = '', m1 = '';
+      if (rec && rec.home.g != null){
+        m = mark(Math.abs((rec.home.g + rec.away.g) - proj.total) <= hitTol('goals'));
+        if (rec.home.p1 != null && rec.away.p1 != null) m1 = mark(Math.abs((rec.home.p1 + rec.away.p1) - proj.p1) <= hitTol('p1'));
+      }
+      bets.push({ conf: proj.winMetric, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Total ' + proj.total + ' ±' + hitTol('goals') + m + '</div><div class="lock">' + proj.winMetric + '% 🔒</div></div>' });
+      bets.push({ conf: proj.winMetric - 1, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + '1st period ' + proj.p1 + ' ±' + hitTol('p1') + m1 + '</div><div class="lock">' + proj.winMetric + '% 🔒</div></div>' });
+    }
+    const byPid = {};
+    if (rec) for (const pl of (rec.players || [])) byPid[pl[0]] = pl;
+    for (const pr of proj.props){
+      if (pr.goalConf >= lockTh('props')){
+        let m = '';
+        const pl = byPid[pr.pid];
+        if (pl) m = mark(pl[3] >= 1);
+        bets.push({ conf: pr.goalConf, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(pr.name) + ' anytime goal' + m + '</div><div class="lock">' + pr.goalConf + '% 🔒</div></div>' });
+      }
+      if (pr.pointConf >= lockTh('props')){
+        let m = '';
+        const pl = byPid[pr.pid];
+        if (pl) m = mark((pl[3] + pl[4]) >= 1);
+        bets.push({ conf: pr.pointConf, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(pr.name) + ' 1+ point' + m + '</div><div class="lock">' + pr.pointConf + '% 🔒</div></div>' });
+      }
+    }
+  }
+  bets.sort((a, b) => b.conf - a.conf);
+  const head = '<div class="card"><h2>Locks · ' + esc(state.slate.date) + '</h2><div class="small">' + bets.length + ' qualifying bets' +
+    (gradedN ? ' · completed so far: <b>' + hitN + '/' + gradedN + '</b>' : '') + '</div>' + th + '</div>';
+  el.innerHTML = bets.length
+    ? head + '<div class="card"><h2>All bets · highest confidence first</h2>' + bets.map(b => b.html).join('') + '</div>'
+    : head + '<div class="card muted small">Nothing clears the current thresholds — that is the system working. Lower thresholds from the Board settings for more (weaker) bets.</div>';
+}
+function renderFacts(){
+  const el = $id('tab-facts');
+  const dates = Object.keys(state.seasonUnits).sort().reverse();
+  if (!dates.length){
+    el.innerHTML = '<div class="card"><h2>Success explorer</h2><div class="muted small" id="factsMsg">Building the season record on this device… <span class="spin"></span></div></div>';
+    buildFactsBackground();
+    return;
+  }
+  const agg = aggregateUnits(flatUnits());
+  const cats = [['allLocks', 'All locks']].concat(Object.keys(CAT_META).map(k => [k, CAT_META[k].short]));
+  const cur = state.factsCat;
+  const o = agg[cur] || { hit: 0, n: 0 };
+  let h = '<div class="card"><h2>Success explorer · ' + dates.length + ' graded dates</h2>' +
+    '<div>' + cats.map(c => '<span class="chip' + (cur === c[0] ? ' on' : '') + '" data-cat="' + c[0] + '">' + esc(c[1]) + '</span>').join('') + '</div>' +
+    '<div style="font-size:22px;font-weight:800;margin:6px 0 2px">' + (o.n ? Math.round(100 * o.hit / o.n) + '%' : '—') +
+    ' <span class="small muted" style="font-weight:600">' + o.hit + '/' + o.n + ' · ' + esc((agg[cur] || {}).label || 'All locks') + '</span></div>' +
+    '<div class="small dim">Lock-tier only · graded walk-forward vs real box scores. Thresholds come from the Board.</div></div>';
+  h += '<div class="card"><h2>By date</h2>';
+  for (const d of dates){
+    const dayAgg = aggregateUnits(state.seasonUnits[d]);
+    const oo = dayAgg[cur] || { hit: 0, n: 0 };
+    if (!oo.n) continue;
+    const open = state.factsOpen === d;
+    h += '<div class="drow" data-day="' + d + '" style="cursor:pointer"><span style="min-width:78px;font-weight:700">' + esc(d.slice(5)) + '</span>' +
+      '<span class="grow muted">' + oo.hit + '/' + oo.n + ' · ' + Math.round(100 * oo.hit / oo.n) + '%</span><span class="dim">' + (open ? '▾' : '▸') + '</span></div>';
+    if (open){
+      const rows = state.seasonUnits[d].filter(u => (cur === 'allLocks' || u.cat === cur) && unitQualifies(u))
+        .sort((a, b) => b.metric - a.metric).slice(0, 60);
+      h += rows.map(u => '<div class="row small" style="padding:3px 0 3px 10px"><span class="' + (unitHit(u) ? 'rate-good' : 'rate-bad') + '">' + (unitHit(u) ? '✓' : '✗') + '</span>' +
+        '<span style="min-width:44px" class="muted">' + u.metric + '%</span><span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(u.desc) + '</span></div>').join('');
+    }
+  }
+  h += '</div>';
+  el.innerHTML = h;
+  el.querySelectorAll('.chip[data-cat]').forEach(c => c.onclick = () => { state.factsCat = c.getAttribute('data-cat'); renderFacts(); });
+  el.querySelectorAll('[data-day]').forEach(r => r.onclick = () => { state.factsOpen = state.factsOpen === r.getAttribute('data-day') ? null : r.getAttribute('data-day'); renderFacts(); });
+}
+async function buildFactsBackground(){
+  if (buildFactsBackground._busy) return;
+  buildFactsBackground._busy = true;
+  try {
+    const msg = t => { const m = $id('factsMsg'); if (m) m.innerHTML = esc(t) + ' <span class="spin"></span>'; };
+    await seedFromFB(msg);
+    if (!allRecDates().length){
+      const m = $id('factsMsg');
+      if (m) m.textContent = 'No season history in the cloud yet — the grading autopilot builds it (runs every 2h), or leave this open to build from ESPN here.';
+      msg('Building from ESPN (long on first run)…');
+      await buildData(SEASON.start, minDate(todayPT(), SEASON.end), msg);
+    }
+    await regradeAll(msg);
+    renderFacts();
+  } finally { buildFactsBackground._busy = false; }
+}
+function minDate(a, b){ return a < b ? a : b; }
+function renderSettings(){
+  const el = $id('tab-settings');
+  el.innerHTML = '<div class="card"><h2>Lock grades</h2>' +
+    '<div class="small">Winner ≥ <b>' + lockTh('winner') + '%</b> · Lines ≥ <b>' + lockTh('lines') + '%</b> · Players ≥ <b>' + lockTh('props') + '%</b><br>' +
+    'Total tolerance ±<b>' + hitTol('goals') + '</b> · 1st-period tolerance ±<b>' + hitTol('p1') + '</b></div>' +
+    '<div class="small dim" style="margin-top:8px">These are league-wide, managed from The Board’s settings (with a success-rate preview). Changes reach every device automatically.</div></div>' +
+    '<div class="card"><h2>Data</h2><div class="small">' + allRecDates().length + ' stored dates on this device · cloud sync is automatic on open.</div>' +
+    '<div class="row" style="margin-top:8px"><button class="btn ghost" id="rebuildBtn">Rebuild grades</button></div>' +
+    '<div class="small dim" id="setMsg" style="margin-top:6px;min-height:14px"></div></div>' +
+    '<div class="card"><h2>About</h2><div class="small dim">IceLine v' + APP.version + ' · walk-forward NHL model · winner, game total, 1st-period total, goal scorers, point scorers. Every grade comes from real final box scores and freezes once graded.</div></div>';
+  $id('rebuildBtn').onclick = async () => {
+    $id('setMsg').textContent = 'Regrading…';
+    await regradeAll(t => { $id('setMsg').textContent = t; });
+    $id('setMsg').textContent = 'Done.';
+    renderFacts();
+  };
+}
+function switchTab(name){
+  state.tab = name;
+  ['games', 'bets', 'facts', 'settings'].forEach(t => {
+    $id('tab-' + t).classList.toggle('hidden', t !== name);
+    document.querySelector('nav button[data-tab=' + t + ']').classList.toggle('on', t === name);
+  });
+  if (name === 'facts') renderFacts();
+  if (name === 'bets') renderBets();
+  if (name === 'settings') renderSettings();
+}
+
+/* ═══ SECTION: CRON (?cron=1 — headless self-grading for GitHub Actions) ═══ */
+async function runCronGrade(){
+  const clog = m => { window.__cronStatus = 'cron: ' + m; try { console.log('[ice] ' + m); } catch (e) {} };
+  window.__cronStatus = 'cron: starting';
+  try {
+    clog('applying shared lock config');
+    try { await pullSharedLockCfg(); } catch (e) {}
+    const seeded = await seedFromFB(clog);
+    clog('seeded ' + seeded + ' dates from nhl_recs');
+    let espnOK = false;
+    try {
+      const probe = await fetch(ESPN.scoreboard('2026-01-10'), { cache: 'no-store' });
+      espnOK = probe.ok;
+      clog('ESPN probe: HTTP ' + probe.status);
+    } catch (e){ clog('ESPN probe FAILED — runner IP likely blocked (retries next run)'); }
+    const before = allRecDates().length;
+    if (espnOK){
+      clog('building season ' + SEASON.start + ' → ' + minDate(todayPT(), SEASON.end));
+      const b = await buildData(SEASON.start, minDate(todayPT(), SEASON.end), clog);
+      clog('build: +' + b.built + ' games (' + b.failed + ' fetch failures)');
+    }
+    const after = allRecDates().length;
+    if (!after){
+      if (!espnOK){
+        clog('SKIPPED — ESPN refused this runner and the cloud has no records yet. Next run gets a fresh IP.');
+        window.__cronDone = true;
+        return;
+      }
+      throw new Error('0 stored dates after build despite ESPN probe OK');
+    }
+    clog('regrading season (walk-forward)');
+    const g = await regradeAll(clog);
+    clog('graded ' + g.graded + ' dates · ' + g.unitCount + ' units · ' + g.early + ' early games skipped');
+    if (!g.unitCount) throw new Error('0 graded units after regrade — see log');
+    clog('pushing units to nhl_accuracy');
+    const pushed = await pushUnitsFB(clog);
+    clog('mirroring records to nhl_recs');
+    const mirrored = await pushRecsFB(clog);
+    const summary = saveGateSummary();
+    // verify-don't-trust: read the summary back before claiming success
+    const check = await fbRead(FB_NS, 'allTime');
+    if (!check || !check.all || check.all.n !== summary.all.n) throw new Error('summary verify failed — wrote n=' + summary.all.n + ' but read back ' + JSON.stringify(check && check.all));
+    clog('done — ' + after + ' dates stored, ' + g.unitCount + ' units, ' + pushed + ' unit docs pushed, ' + mirrored + ' rec docs mirrored, nhl/allTime verified (' + summary.all.hit + '/' + summary.all.n + ' locks)');
+  } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
+  window.__cronDone = true;
+}
+
+/* ═══ SECTION: BOOT ═══ */
+(function boot(){
+  $id('verBadge').textContent = 'v' + APP.version + ' · walk-forward';
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => switchTab(b.getAttribute('data-tab')));
+  if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
+  pullSharedLockCfg().then(got => { if (got && state.tab === 'facts') renderFacts(); }).catch(() => {});
+  renderGames();
+  // auto-load today's slate if we already have history; otherwise Facts builds it
+  if (allRecDates().length > 50) loadSlate(todayPT());
+  // background: keep the record fresh + graded on open (seed → build → grade)
+  setTimeout(() => { buildFactsBackground(); }, 1200);
+})();
+</script>
+</body>
+</html>

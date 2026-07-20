@@ -31,7 +31,7 @@
   --bulb:#f5b642;       /* amber chrome accent / LIVE */
   --mlb:#e2574c;        /* Diamond IQ lane */
   --nfl:#4f9cf0;        /* Gridline lane */
-  --nba:#f6863a;        /* Hardwood IQ lane */
+  --nba:#f6863a; --nhl:#4cc9f0;        /* Hardwood IQ lane */
 }
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html,body{ margin:0; padding:0; background:var(--board); color:var(--bone);
@@ -347,6 +347,21 @@ var SITES = [
       projectId: 'nflbets-45561',
       apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g',
       path: 'nba/allTime',
+      format: 'hardwood'
+    }
+  }
+  ,{
+    key: 'hockey',
+    name: 'IceLine',
+    sport: 'NHL',
+    lane: 'var(--nhl)',
+    tagline: 'Winners, totals, and scorers — graded walk-forward.',
+    url: './hockey.html',
+    accuracy: {
+      mode: 'doc',
+      projectId: 'nflbets-45561',
+      apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g',
+      path: 'nhl/allTime',
       format: 'hardwood'
     }
   }
@@ -760,7 +775,7 @@ async function fsPatch(cfg, path, obj){
 async function adminSetDoc(collection, doc, obj){ return fsPatch(ADMIN, collection + '/' + doc, obj); }
 
 /* ---- members: [{name, code, apps:['mlb',...]|null, active}] ---- */
-var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key']];
+var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','IceLine']];
 var GATE_LS = 'board_member_v3';
 var GRANTS = null; // null = everything (admin), Set = specific apps
 function appGranted(key){ return !GRANTS || GRANTS.has(key); }
@@ -848,6 +863,7 @@ var PREM_KNOBS = [
 ];
 var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs'],['bb','Batter walks'],['bbat','Batter strikeouts'],['k','Pitcher strikeouts'],['pbb','Pitcher walks'],['hrLine','HR line'],['gnoHR','No-HR game'],['gmultiHR','Multi-HR game']];
 var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1']];
+var ICE_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals \u00b7 lock \u2265 %'],['props','Goal/point scorers \u00b7 lock \u2265 %'],['goals','Total tolerance \u00b1'],['p1','1st-period tolerance \u00b1']];
 var NFL_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['anytimeTd','Anytime TD \u00b7 lock \u2265 %'],['firstTd','First TD \u00b7 lock \u2265 %'],['lines','Totals/scores/team yds \u00b7 lock \u2265 %'],['yards','Player yards \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['yds','Yards tolerance \u00b1']];
 var PREVIEW_CACHE = {};
 async function listAllDocs(cfg, coll){
@@ -935,6 +951,22 @@ function nbaRates(units, th, tol){
   });
   return agg;
 }
+// IceLine: units [{cat, metric, adelta, hit}] per date doc (nhl_accuracy/{date},
+// stored as {data:<json>}). Mirrors hockey.html unitQualifies/unitHit exactly.
+function iceRates(units, th, tol){
+  var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props' };
+  var TOLK = { total:'goals', p1:'p1' };
+  var agg = { allLocks:{h:0,n:0} };
+  Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
+  units.forEach(function(u){
+    if (!TH[u.cat] || u.metric == null || u.metric < th[TH[u.cat]]) return;
+    var tk = TOLK[u.cat];
+    var hit = (tk && u.adelta != null) ? (u.adelta <= tol[tk]) : !!u.hit;
+    agg[u.cat].n++; agg.allLocks.n++;
+    if (hit){ agg[u.cat].h++; agg.allLocks.h++; }
+  });
+  return agg;
+}
 // Gridline: compact units [{c,m,a,h}] per week doc (accuracy/{season}_W##_units).
 // Mirrors nfl.html unitQualifies/unitHit exactly.
 function nflRates(units, th, tol){
@@ -982,18 +1014,26 @@ async function openSettingsPanel(){
     try { nbaCfg = JSON.parse(nbaRaw.fields.data.stringValue); } catch (e) {}
   }
   var nflRaw = await fsGetRaw(NFLP, 'accuracy/config_locks');
+  var iceRaw = await fsGetRaw(NFLP, 'nhl/lockcfg');
+  var iceCfg = null;
+  if (iceRaw && iceRaw.fields && iceRaw.fields.data && iceRaw.fields.data.stringValue){
+    try { iceCfg = JSON.parse(iceRaw.fields.data.stringValue); } catch (e) {}
+  }
   var nflCfg = nflRaw ? fsFields(nflRaw.fields || {}) : null;
 
   var PREM_DEF = { lock: 0.78, hrLock: 0.10, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
   var NBA_TH_DEF = { winner: 60, lines: 0, props: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
   var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
+  var ICE_TH_DEF = { winner: 58, lines: 0, props: 40 }, ICE_TOL_DEF = { goals: 1, p1: 1 };
   var premCfg = {}; Object.keys(PREM_DEF).forEach(function(k){ premCfg[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
   var freeCfg = {}; Object.keys(FREE_DEF).forEach(function(k){ freeCfg[k] = (typeof freeLocks[k] === 'number') ? freeLocks[k] : FREE_DEF[k]; });
   var nbaTh = Object.assign({}, NBA_TH_DEF, (nbaCfg && nbaCfg.lockThresholds) || {});
   var nbaTol = Object.assign({}, NBA_TOL_DEF, (nbaCfg && nbaCfg.hitTol) || {});
   var nflTh = Object.assign({}, NFL_TH_DEF, (nflCfg && nflCfg.lockThresholds) || {});
   var nflTol = Object.assign({}, NFL_TOL_DEF, (nflCfg && nflCfg.hitTol) || {});
+  var iceTh = Object.assign({}, ICE_TH_DEF, (iceCfg && iceCfg.lockThresholds) || {});
+  var iceTol = Object.assign({}, ICE_TOL_DEF, (iceCfg && iceCfg.hitTol) || {});
   var members = parseMembers(access);
   if (!members.length) members = [{ name: 'Jaren', code: 'greenlight', apps: null, active: true }];
 
@@ -1045,6 +1085,9 @@ async function openSettingsPanel(){
     lockSect('Lock grades \u00b7 Gridline (NFL)',
       'Lock percentages per group + hit tolerances. Preview re-grades every stored pick at your proposed numbers.',
       NFL_KNOBS, 'gk-', Object.assign({}, nflTh, nflTol), 'g-preview', 'g-prevout') +
+    lockSect('Lock grades \u00b7 IceLine (NHL)',
+      'Lock percentages per group + hit tolerances. Preview re-grades every stored pick at your proposed numbers.',
+      ICE_KNOBS, 'ik-', Object.assign({}, iceTh, iceTol), 'i-preview', 'i-prevout') +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
     '<button class="close" id="s-close">Close</button>';
@@ -1156,6 +1199,25 @@ async function openSettingsPanel(){
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
 
+  hookPreview('i-preview', 'i-prevout', async function(){
+    var all = readNums(ICE_KNOBS, 'ik-');
+    if (!all) throw new Error('Every field needs a number \u2265 0.');
+    var sp = split2(all, ['goals','p1']);
+    if (!PREVIEW_CACHE.ice){
+      var docs = await listAllDocs(NFLP, 'nhl_accuracy');
+      var units = [];
+      docs.forEach(function(d){
+        if (typeof d.data.data === 'string'){ try { units = units.concat(JSON.parse(d.data.data) || []); } catch (e) {} }
+      });
+      PREVIEW_CACHE.ice = { units: units, days: docs.length };
+    }
+    if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next IceLine grading run uploads them (every 2h). Try again after it runs.');
+    var cur = iceRates(PREVIEW_CACHE.ice.units, iceTh, iceTol), nxt = iceRates(PREVIEW_CACHE.ice.units, sp.th, sp.tol);
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers' };
+    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
+      Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
+  });
+
   box.querySelector('#s-save').addEventListener('click', async function(){
     var msg = box.querySelector('#s-msg');
     msg.style.color = ''; msg.textContent = 'Saving\u2026';
@@ -1163,10 +1225,10 @@ async function openSettingsPanel(){
     var ph = box.querySelector('#s-phrs').value, nh = box.querySelector('#s-nhrs').value;
     var mems = readMembers();
     var premOut = readNums(PREM_KNOBS, 'pk-'), freeOut = readNums(FREE_KNOBS, 'fk-', 100);
-    var nbaOut = readNums(NBA_KNOBS, 'bk-'), nflOut = readNums(NFL_KNOBS, 'gk-');
+    var nbaOut = readNums(NBA_KNOBS, 'bk-'), nflOut = readNums(NFL_KNOBS, 'gk-'), iceOut = readNums(ICE_KNOBS, 'ik-');
     if (!hrsOk(ph) || !hrsOk(nh)){ msg.style.color = '#ff7a7a'; msg.textContent = 'DK hours must be numbers 0\u201323, separated by commas.'; return; }
     if (!mems.length){ msg.style.color = '#ff7a7a'; msg.textContent = 'Keep at least one member (name + 4-character code).'; return; }
-    if (!premOut || !freeOut || !nbaOut || !nflOut){ msg.style.color = '#ff7a7a'; msg.textContent = 'Check the lock-grade numbers.'; return; }
+    if (!premOut || !freeOut || !nbaOut || !nflOut || !iceOut){ msg.style.color = '#ff7a7a'; msg.textContent = 'Check the lock-grade numbers.'; return; }
     try {
       await adminSetDoc('app_settings', 'dk_auto', {
         premiumOn: box.querySelector('#s-pon').checked, premiumHours: ph.replace(/\s/g, ''),
@@ -1183,6 +1245,11 @@ async function openSettingsPanel(){
       }).then(function(r){ if (!r.ok) throw new Error('NBA config save failed (HTTP ' + r.status + ')'); });
       var nflSp = split2(nflOut, ['pts','yds']);
       await fsPatch(NFLP, 'accuracy/config_locks', { lockThresholds: nflSp.th, hitTol: nflSp.tol, updatedAt: Date.now() });
+      var iceSp = split2(iceOut, ['goals','p1']);
+      await fetch(FS + NFLP.p + '/databases/(default)/documents/nhl/lockcfg?key=' + NFLP.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify({ lockThresholds: iceSp.th, hitTol: iceSp.tol }) }, t: { stringValue: new Date().toISOString() } } })
+      }).then(function(r){ if (!r.ok) throw new Error('NHL config save failed (HTTP ' + r.status + ')'); });
       msg.textContent = '\u2713 Saved. DK schedule + members apply now; lock grades reach every app on its next open/grade.';
     } catch (e){ msg.style.color = '#ff7a7a'; msg.textContent = e.message; }
   });
