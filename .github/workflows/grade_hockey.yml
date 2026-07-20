@@ -1,4 +1,4 @@
-name: Grade - IceLine
+name: Grade - Icing
 
 on:
   workflow_dispatch:
@@ -23,5 +23,5 @@ jobs:
           npm init -y
           npm install playwright
           npx playwright install --with-deps chromium
-      - name: Grade IceLine
+      - name: Grade Icing
         run: node grade_cron.js hockey

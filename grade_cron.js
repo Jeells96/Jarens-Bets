@@ -17,7 +17,7 @@ const ALL = {
   premium: { name: 'Diamond IQ Premium',  file: 'premium.html',       timeoutMin: 12 },
   free:    { name: 'Diamond IQ Free',      file: 'diamondiqfree.html', timeoutMin: 15 },
   nfl:     { name: 'Gridline (NFL)',       file: 'nfl.html',           timeoutMin: 20 },
-  hockey:  { name: 'IceLine (NHL)',        file: 'hockey.html',        timeoutMin: 45 },
+  hockey:  { name: 'Icing (NHL)',        file: 'hockey.html',        timeoutMin: 45 },
 };
 const key = (process.argv[2] || process.env.APP || '').toLowerCase();
 if (key && !ALL[key]) { console.log('Unknown app "' + key + '" — use one of: ' + Object.keys(ALL).join(', ')); process.exit(1); }

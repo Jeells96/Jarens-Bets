@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>IceLine — NHL Projections</title>
+<title>Icing — NHL Projections</title>
 <style>
 :root{
   --bg:#0a0e14; --panel:#111823; --face:#182231; --hair:#243146; --hair2:#1c2637;
@@ -29,7 +29,7 @@ main{padding:12px;max-width:640px;margin:0 auto}
 .btn{background:var(--ice);color:#04121c;border:0;border-radius:9px;padding:10px 15px;font-weight:800;font-size:13.5px}
 .btn.ghost{background:none;border:1px solid var(--hair);color:var(--tx);font-weight:600}
 .btn:disabled{opacity:.5}
-input[type=text]{background:var(--face);border:1px solid var(--hair);border-radius:9px;color:var(--tx);padding:9px 11px;font-size:15px}
+input[type=text],input[type=date]{background:var(--face);border:1px solid var(--hair);border-radius:9px;color:var(--tx);padding:9px 11px;font-size:15px;color-scheme:dark;-webkit-appearance:none;appearance:none}
 nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:rgba(13,18,26,.97);backdrop-filter:blur(10px);border-top:1px solid var(--hair2);padding-bottom:env(safe-area-inset-bottom)}
 nav button{flex:1;background:none;border:0;color:var(--mt2);font-size:11px;padding:9px 0 7px;display:flex;flex-direction:column;gap:3px;align-items:center;font-weight:600}
 nav button.on{color:var(--ice)}
@@ -57,7 +57,7 @@ nav .ico{font-size:21px}
 </head>
 <body>
 <header>
-  <h1>Ice<span>Line</span></h1>
+  <h1>Ic<span>ing</span></h1>
   <span class="pill" id="verBadge"></span>
 </header>
 <main>
@@ -76,7 +76,7 @@ nav .ico{font-size:21px}
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
-   IceLine v0.2 — NHL projections, built to the repo STANDARDS.md.
+   Icing v0.3 — NHL projections, built to the repo STANDARDS.md.
    Walk-forward like The Key: every projection uses ONLY games completed
    before the projected date, records are stored locally + mirrored to
    Firestore, raw graded units power the Facts explorer and the Board's
@@ -86,7 +86,7 @@ nav .ico{font-size:21px}
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ═══ SECTION: CONFIG ═══ */
-const APP = { version: '0.2' };
+const APP = { version: '0.3' };
 const SEASON = { start: '2025-10-07', end: '2026-06-30' }; // 2025-26 incl. playoffs
 const ESPN = {
   scoreboard: d => 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=' + d.replace(/-/g, ''),
@@ -548,7 +548,7 @@ async function loadSlate(date){
 function renderGames(msg){
   const el = $id('tab-games');
   let h = '<div class="card"><h2>Slate</h2><div class="row">' +
-    '<input type="text" id="dp" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + esc(state.slateDate || todayPT()) + '" style="width:0;flex:1">' +
+    '<input type="date" id="dp" min="' + SEASON.start + '" value="' + esc(state.slateDate || todayPT()) + '" style="width:0;flex:1">' +
     '<button class="btn" id="loadBtn">Load</button></div>' +
     '<div class="small dim" style="margin-top:6px">Projections use only games finished before this date — walk-forward, no leaks. Season ' + SEASON.start.slice(0, 4) + '–' + SEASON.end.slice(2, 4) + '.</div></div>';
   if (msg) h += '<div class="card">' + msg + '</div>';
@@ -691,7 +691,7 @@ function renderSettings(){
     '<div class="card"><h2>Data</h2><div class="small">' + allRecDates().length + ' stored dates on this device · cloud sync is automatic on open.</div>' +
     '<div class="row" style="margin-top:8px"><button class="btn ghost" id="rebuildBtn">Rebuild grades</button></div>' +
     '<div class="small dim" id="setMsg" style="margin-top:6px;min-height:14px"></div></div>' +
-    '<div class="card"><h2>About</h2><div class="small dim">IceLine v' + APP.version + ' · walk-forward NHL model · winner, game total, 1st-period total, goal scorers, point scorers. Every grade comes from real final box scores and freezes once graded.</div></div>';
+    '<div class="card"><h2>About</h2><div class="small dim">Icing v' + APP.version + ' · walk-forward NHL model · winner, game total, 1st-period total, goal scorers, point scorers. Every grade comes from real final box scores and freezes once graded.</div></div>';
   $id('rebuildBtn').onclick = async () => {
     $id('setMsg').textContent = 'Regrading…';
     await regradeAll(t => { $id('setMsg').textContent = t; });

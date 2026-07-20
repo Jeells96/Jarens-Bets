@@ -3398,6 +3398,9 @@ async function fbDebugPushAll(){
 // Use case: lineups confirm later in the day and you want fresh ratings.
 // ─── ODDS PANEL HELPERS ───
 function renderOddsPanel(){
+  return `<div style="font-size:.62rem;color:var(--mt2);line-height:1.6;padding:6px 2px">💎 DK lines, edges, and O/U picks are a <b style="color:var(--gd)">Diamond IQ Premium</b> feature. The free app grades on model scores only.</div>`;
+}
+function renderOddsPanel_disabled(){
   const date=STATE.date||todayStr();
   const entry=ODDS.data[date];
   const propsEntry=ODDS.props[date];
@@ -8121,8 +8124,9 @@ function buildLocksSection(){
   const batterMatchups=STATE.matchups.filter(m=>m.kind==='batter');
   const pitcherMatchups=STATE.matchups.filter(m=>m.kind==='pitcher');
   const totals=STATE.totals||[];
-  const dkPropsLoaded=Object.keys(ODDS.props[STATE.date]?.events||{}).length>0;
-  const dkOddsLoaded=Object.keys(ODDS.data[STATE.date]?.games||[]).length>0;
+  // DK odds/lines are a PREMIUM-ONLY feature — the free app never surfaces them.
+  const dkPropsLoaded=false;
+  const dkOddsLoaded=false;
   
   // ── BATTER ──
   const batterSubsections=[];
@@ -8509,7 +8513,7 @@ function renderFCBatters(type){
   // DK-driven view applies to tb/bb/bbat when DK data was loaded for this date
   const dkMarketKey=type==='tb'?'batter_total_bases':type==='bb'?'batter_walks':type==='bbat'?'batter_strikeouts':null;
   const dkLockMargin=type==='tb'?DK_LOCKS.tb:type==='bb'?DK_LOCKS.bb:type==='bbat'?DK_LOCKS.bbat:null;
-  const _dkRaw=dkMarketKey&&ODDS.props[RESULTS.date]?.events&&Object.keys(ODDS.props[RESULTS.date].events).length>0;
+  const _dkRaw=false; // DK grading is Premium-only
   const dkAvailable=HISTORY.drillMode==='score'?false:(HISTORY.drillMode==='dk'?true:_dkRaw);
   
   const allSorted=[...RESULTS.batters]
@@ -8673,7 +8677,7 @@ function renderFCBatters(type){
 
 function renderFCPitchers(){
   const allSorted=[...RESULTS.pitchers].sort((a,b)=>b.xK-a.xK);
-  const _dkRaw=ODDS.props[RESULTS.date]?.events&&Object.keys(ODDS.props[RESULTS.date].events).length>0;
+  const _dkRaw=false; // DK grading is Premium-only
   const dkAvailable=HISTORY.drillMode==='score'?false:(HISTORY.drillMode==='dk'?true:_dkRaw);
   
   // Lock test: DK mode uses edge vs DK line; score mode uses K Grade.
@@ -8789,7 +8793,7 @@ function renderFCPitchers(){
 
 function renderFCPitcherBB(){
   const allSorted=[...RESULTS.pitchers].filter(p=>p.bbGrade!=null).sort((a,b)=>b.bbGrade-a.bbGrade);
-  const _dkRaw=ODDS.props[RESULTS.date]?.events&&Object.keys(ODDS.props[RESULTS.date].events).length>0;
+  const _dkRaw=false; // DK grading is Premium-only
   const dkAvailable=HISTORY.drillMode==='score'?false:(HISTORY.drillMode==='dk'?true:_dkRaw);
   
   function isLock(p){
@@ -8905,7 +8909,7 @@ function renderFCPitcherBB(){
 
 function renderFCTotals(){
   const allSorted=[...RESULTS.totals].filter(t=>t.total!=null&&isFinite(t.total)).sort((a,b)=>b.total-a.total);
-  const _dkRaw=Object.keys(ODDS.data[RESULTS.date]?.games||[]).length>0;
+  const _dkRaw=false; // DK grading is Premium-only
   const dkAvailable=HISTORY.drillMode==='score'?false:(HISTORY.drillMode==='dk'?true:_dkRaw);
   
   // For totals there's no inherent "score lock" — it's a continuous match-rate stat. So

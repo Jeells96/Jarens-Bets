@@ -353,7 +353,7 @@ var SITES = [
   }
   ,{
     key: 'hockey',
-    name: 'IceLine',
+    name: 'Icing',
     sport: 'NHL',
     lane: 'var(--nhl)',
     tagline: 'Winners, totals, and scorers — graded walk-forward.',
@@ -786,7 +786,7 @@ async function fsPatch(cfg, path, obj){
 async function adminSetDoc(collection, doc, obj){ return fsPatch(ADMIN, collection + '/' + doc, obj); }
 
 /* ---- members: [{name, code, apps:['mlb',...]|null, active}] ---- */
-var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','IceLine']];
+var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','Icing']];
 var GATE_LS = 'board_member_v3';
 var GRANTS = null; // null = everything (admin), Set = specific apps
 function appGranted(key){ return !GRANTS || GRANTS.has(key); }
@@ -1167,7 +1167,7 @@ async function openSettingsPanel(){
     lockSect('Lock grades \u00b7 Gridline (NFL)',
       'Lock percentages per group + hit tolerances. Preview re-grades every stored pick at your proposed numbers.',
       NFL_KNOBS, 'gk-', Object.assign({}, nflTh, nflTol), 'g-preview', 'g-prevout') +
-    lockSect('Lock grades \u00b7 IceLine (NHL)',
+    lockSect('Lock grades \u00b7 Icing (NHL)',
       'Lock percentages per group + hit tolerances. Preview re-grades every stored pick at your proposed numbers.',
       ICE_KNOBS, 'ik-', Object.assign({}, iceTh, iceTol), 'i-preview', 'i-prevout') +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
@@ -1355,7 +1355,7 @@ async function openSettingsPanel(){
     if (!all) throw new Error('Every field needs a number \u2265 0.');
     var sp = split2(all, ['goals','p1']);
     await ensureICE();
-    if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next IceLine grading run uploads them (every 2h). Try again after it runs.');
+    if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next Icing grading run uploads them (every 2h). Try again after it runs.');
     var cur = iceRates(PREVIEW_CACHE.ice.units, iceTh, iceTol), nxt = iceRates(PREVIEW_CACHE.ice.units, sp.th, sp.tol);
     var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers' };
     return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
