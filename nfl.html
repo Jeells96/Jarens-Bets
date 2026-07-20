@@ -4564,7 +4564,18 @@ function renderFacts(main) {
   if (state.loaded && state.games.some(g => g.completed)) {
     const graded = gradeWeek();
     const cats = graded.cats;
-    syncWeekAccuracy(cats, null, graded.units);
+    // vs-DK: when this week's DK lines are loaded, persist Gridline-vs-the-book
+    // as its own categories so the record tracks how betting AGAINST DK does.
+    const catsPlus = Object.assign({}, cats);
+    try {
+      const dk = gradeVsDK();
+      if (dk){
+        if (dk.winner.n) catsPlus.dkWinner = { hit: dk.winner.gridWin, n: dk.winner.n, label: 'vs DK · Winner' };
+        if (dk.spread.n) catsPlus.dkSpread = { hit: dk.spread.gridWin, n: dk.spread.n, label: 'vs DK · Spread' };
+        if (dk.total.n)  catsPlus.dkTotal  = { hit: dk.total.gridWin,  n: dk.total.n,  label: 'vs DK · Total O/U' };
+      }
+    } catch (e) {}
+    syncWeekAccuracy(catsPlus, null, graded.units);
 
     const eligible = Object.entries(cats).filter(e => e[1].n > 0 && e[0] !== 'allLocks');
     const best = eligible.length ? eligible.reduce((a, b) => (a[1].hit / a[1].n) >= (b[1].hit / b[1].n) ? a : b) : null;
@@ -5437,17 +5448,30 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
         const r = await fetch('https://firestore.googleapis.com/v1/projects/mlb-bets-d196c/databases/(default)/documents/app_settings/dk_auto?key=AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0', { cache: 'no-store' });
         if (r.ok) {
           const f = (await r.json()).fields || {};
-          c = { nflOn: f.nflOn ? f.nflOn.booleanValue !== false : true, nflHours: f.nflHours ? f.nflHours.stringValue : null };
+          c = { nflOn: f.nflOn ? f.nflOn.booleanValue !== false : true, nflHours: f.nflHours ? f.nflHours.stringValue : null, nflDays: f.nflDays ? f.nflDays.stringValue : null };
         }
       } catch (e) {}
       const on = c.nflOn !== false;
       const hours = String(c.nflHours || '8,14').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-      const etHour = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }), 10);
+      const days = String(c.nflDays || '0,1,2,3,4,5,6').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+      const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+      const etHour = ptNow.getHours(), ptDay = ptNow.getDay();
+      const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       if (!on) { window.__cronStatus = 'dk: skipped — auto pull is OFF in Board settings'; }
+      else if (!days.includes(ptDay)) { window.__cronStatus = 'dk: skipped — ' + DAYN[ptDay] + ' is not a scheduled pull day'; }
       else if (!hours.includes(etHour)) { window.__cronStatus = 'dk: skipped — ' + etHour + ':xx PT not in scheduled hours [' + hours.join(',') + ']'; }
       else {
         await pullDKOdds('auto');
-        window.__cronStatus = 'dk: done — DK odds pulled and pushed for the league';
+        // publish remaining API quota so the Board can show it next to the toggle
+        if (state.dkQuotaRemaining != null) {
+          try {
+            await fetch('https://firestore.googleapis.com/v1/projects/mlb-bets-d196c/databases/(default)/documents/app_settings/dk_status?key=AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0&updateMask.fieldPaths=nflCalls&updateMask.fieldPaths=nflAt', {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fields: { nflCalls: { integerValue: String(state.dkQuotaRemaining) }, nflAt: { integerValue: String(Date.now()) } } })
+            });
+          } catch (e) {}
+        }
+        window.__cronStatus = 'dk: done — DK odds pulled and pushed for the league (' + (state.dkQuotaRemaining ?? '?') + ' API calls left)';
       }
     } catch (e) { window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
     window.__cronDone = true;

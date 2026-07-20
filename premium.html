@@ -843,6 +843,10 @@ async function fetchDKPropsAndPush(date,onProg){
       try{await withTO(FBH.db.collection('app_settings').doc('props_'+date).set(payload),10000);}catch(e){}
     }
     ODDSP={date,events:results};
+    // publish remaining API quota so the Board can show it next to the toggle
+    if(FBH.ready&&DK_CALLS!=null){
+      try{await withTO(FBH.db.collection('app_settings').doc('dk_status').set({premiumCalls:DK_CALLS,premiumAt:Date.now()},{merge:true}),6000);}catch(e){}
+    }
     say('');
     return{ok:true,count:Object.keys(results).length,calls:DK_CALLS};
   }catch(e){
@@ -2282,8 +2286,12 @@ async function bootLeagueLoad(){
         try{const doc=await withTO(FBH.db.collection('app_settings').doc('dk_auto').get(),8000);if(doc.exists)c=doc.data();}catch(e){}
         const on=c.premiumOn!==false; // default ON until the Board says otherwise
         const hours=String(c.premiumHours||'8,12,15').split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
-        const etHour=parseInt(new Date().toLocaleString('en-US',{timeZone:'America/Los_Angeles',hour:'numeric',hour12:false}),10);
+        const days=String(c.premiumDays||'0,1,2,3,4,5,6').split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
+        const ptNowD=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Los_Angeles'}));
+        const etHour=ptNowD.getHours(),ptDay=ptNowD.getDay();
+        const DAYN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
         if(!on){window.__cronStatus='dk: skipped — auto pull is OFF in Board settings';}
+        else if(!days.includes(ptDay)){window.__cronStatus='dk: skipped — '+DAYN[ptDay]+' is not a scheduled pull day';}
         else if(!hours.includes(etHour)){window.__cronStatus='dk: skipped — '+etHour+':xx PT not in scheduled hours ['+hours.join(',')+']';}
         else{
           const r=await fetchDKPropsAndPush(todayStr(),m=>{window.__cronStatus='dk: '+String(m||'working…');});
