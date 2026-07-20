@@ -967,22 +967,26 @@ async function runCronGrade(){
       : inp('bg-name', 'Your name', 'words') + inp('bg-code', 'Access code', 'none');
     cover('<div style="width:100%;max-width:340px;text-align:center">' +
       '<div style="font-size:26px;font-weight:800;margin-bottom:6px">Members only</div>' +
-      '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your name to use the free app.' : 'Enter your name and access code.') + '</div>' +
+      '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your first and last name to use the free app.' : 'Enter your first and last name, and your access code.') + '</div>' +
       fields +
       '<div id="bg-err" style="color:#ff7a7a;font-size:12.5px;min-height:16px;margin:6px 0"></div>' +
       '<button id="bg-go" style="width:100%;border:0;border-radius:9px;padding:13px;font-weight:800;background:#e8edf4;color:#0b0d12;font-size:15px">Enter</button></div>');
     var err = function(t){ document.getElementById('bg-err').textContent = t; };
+    var twoNames = function(n){ return String(n||'').trim().split(/\s+/).filter(Boolean).length >= 2; };
     var go = function(){
       var name = ((document.getElementById('bg-name') || {}).value || '').trim();
+      var code = (document.getElementById('bg-code') || {}).value || '';
+      if (pinOk(code) || pinOk(name)){ // admin PIN accepted from EITHER field
+        try { localStorage.setItem(LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
+        pass(); return;
+      }
+      if (!twoNames(name)){ err('Enter your first and last name.'); return; }
       if (FREE){
-        if (!name){ err('Enter your name.'); return; }
         try { localStorage.setItem(LS, JSON.stringify({ free: true, name: name })); } catch (e) {}
         logFree(name); pass(); return;
       }
-      var code = (document.getElementById('bg-code') || {}).value || '';
-      if (!name && !pinOk(code)){ err('Enter your name too.'); return; }
       var g = grantOf({ name: name, code: code }, list);
-      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name || 'admin', code: String(code).trim() })); } catch (e) {} pass(); }
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} pass(); }
       else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
       else { err('No match — check your name and code, or your access was turned off.'); }
     };

@@ -848,8 +848,8 @@ async function runGate(){
   ovl.innerHTML = '<div class="box"><h3>Members only</h3>' +
     (fixedName
       ? '<p class="sub">Welcome back, <b>' + esc(fixedName) + '</b>. Your access code changed or was reset — enter the current one to get back in.</p>'
-      : '<p class="sub">Enter your name and the access code you were given. This device will remember you.</p>' +
-        '<input type="text" id="gatename" placeholder="Your name" autocomplete="off" autocapitalize="words">') +
+      : '<p class="sub">Enter your first and last name and the access code you were given. This device will remember you.</p>' +
+        '<input type="text" id="gatename" placeholder="First and last name" autocomplete="off" autocapitalize="words">') +
     '<input type="text" id="gatein" placeholder="Access code" autocomplete="off" autocapitalize="none">' +
     '<div class="err" id="gateerr"></div>' +
     '<button class="go" id="gatego">Enter The Board</button>' +
@@ -858,7 +858,7 @@ async function runGate(){
   document.body.style.overflow = 'hidden';
   var enterFree = function(){
     var nm = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
-    if (!nm){ document.getElementById('gateerr').textContent = 'Enter your name first — even for the free app.'; var gn = document.getElementById('gatename'); if (gn) gn.focus(); return; }
+    if (String(nm).split(/\s+/).filter(Boolean).length < 2){ document.getElementById('gateerr').textContent = 'Enter your first and last name — even for the free app.'; var gn = document.getElementById('gatename'); if (gn) gn.focus(); return; }
     GRANTS = new Set(['mlbfree']);
     try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: nm })); } catch (e) {}
     logFreeSignin(nm);
@@ -869,11 +869,16 @@ async function runGate(){
   var tryIt = function(){
     var name = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
     var code = document.getElementById('gatein').value;
-    if (!name && !adminPinOk(code)){ document.getElementById('gateerr').textContent = 'Enter your name too.'; return; }
+    if (adminPinOk(code) || adminPinOk(name)){ // admin PIN from EITHER field
+      GRANTS = null;
+      try { localStorage.setItem(GATE_LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
+      ovl.remove(); document.body.style.overflow = ''; markLockedCards(); return;
+    }
+    if (String(name).split(/\s+/).filter(Boolean).length < 2){ document.getElementById('gateerr').textContent = 'Enter your first and last name.'; return; }
     var g = memberMatch(name, code, list);
     if (g.ok){
       GRANTS = g.apps ? new Set(g.apps) : null;
-      try { localStorage.setItem(GATE_LS, JSON.stringify({ name: name || 'admin', code: String(code).trim() })); } catch (e) {}
+      try { localStorage.setItem(GATE_LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {}
       ovl.remove(); document.body.style.overflow = '';
       markLockedCards();
     } else {
@@ -885,12 +890,12 @@ async function runGate(){
   setTimeout(function(){ var i = document.getElementById(fixedName ? 'gatein' : 'gatename'); if (i) i.focus(); }, 250);
 }
 function markLockedCards(){
-  if (!GRANTS) return;
   var els = document.querySelectorAll('.cta[data-app]');
   if (!els.length){ setTimeout(markLockedCards, 800); return; }
   els.forEach(function(a){
     var k = a.getAttribute('data-app');
-    if (!appGranted(k)){ a.style.opacity = '.4'; a.title = 'Not included in your access'; }
+    if (appGranted(k)){ a.style.opacity = ''; a.title = ''; }        // reset (un-dim) when access is granted
+    else { a.style.opacity = '.4'; a.title = 'Not included in your access'; }
   });
 }
 
@@ -1079,6 +1084,10 @@ async function openSettingsPanel(){
   var pin = prompt('Admin PIN');
   if (pin == null) return;
   if (!adminPinOk(pin)){ alert('Wrong PIN.'); return; }
+  // Proving admin unlocks this device everywhere — the owner can never be
+  // locked out, and self-added access takes effect immediately.
+  try { localStorage.setItem(GATE_LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
+  GRANTS = null; try { markLockedCards(); } catch (e) {}
   var old = document.getElementById('adminovl'); if (old) old.remove();
   var ovl = document.createElement('div');
   ovl.className = 'ovl'; ovl.id = 'adminovl';
@@ -1215,10 +1224,12 @@ async function openSettingsPanel(){
       ICE_KNOBS, 'ik-', Object.assign({}, iceTh, iceTol), 'i-preview', 'i-prevout') +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
+    '<button class="close" id="s-signout" style="margin-top:6px">Sign out this device (switch account)</button>' +
     '<button class="close" id="s-close">Close</button>';
 
   var box = ovl.querySelector('.box');
   box.querySelector('#s-close').addEventListener('click', function(){ ovl.remove(); });
+  box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
     var div = document.createElement('div');
     div.innerHTML = memberRowHtml({ name: '', code: '', apps: null, active: true }, Date.now());
