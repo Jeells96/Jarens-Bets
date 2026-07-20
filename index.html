@@ -818,13 +818,12 @@ function parseMembers(cfg){
 }
 function memberMatch(name, code, list){
   var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-  if (adminPinOk(code)) return { ok: true, apps: null };
+  if (adminPinOk(code)) return { ok: true, apps: null, dk: true };
   for (var i = 0; i < list.length; i++){
     var m = list[i];
-    if (m.active === false) continue;
-    if (norm(m.code) !== norm(code)) continue;
-    if (m.name != null && norm(m.name) !== norm(name)) continue;
-    return { ok: true, apps: m.apps && m.apps.length ? m.apps : null };
+    if (norm(m.code) !== norm(code)) continue;              // must match THEIR personal code
+    if (m.name != null && norm(m.name) !== norm(name)) continue; // AND their name
+    return { ok: true, apps: m.apps && m.apps.length ? m.apps : null, dk: m.dk !== false };
   }
   return { ok: false };
 }
@@ -1130,11 +1129,13 @@ async function openSettingsPanel(){
   var memberRowHtml = function(m, i){
     return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px" data-memrow="' + i + '">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">' +
-        '<label class="tog" title="active"><input type="checkbox" class="m-active"' + (m.active !== false ? ' checked' : '') + '><span></span></label>' +
-        '<input type="text" class="m-name" value="' + esc(m.name || '') + '" placeholder="name" autocapitalize="words" style="margin:0;flex:1;min-width:60px">' +
-        '<input type="text" class="m-code" value="' + esc(m.code || '') + '" placeholder="code" autocapitalize="none" style="margin:0;flex:1;min-width:60px">' +
+        '<input type="text" class="m-name" value="' + esc(m.name || '') + '" placeholder="first & last name" autocapitalize="words" style="margin:0;flex:1;min-width:60px">' +
+        '<input type="text" class="m-code" value="' + esc(m.code || '') + '" placeholder="their code" autocapitalize="none" style="margin:0;flex:1;min-width:60px">' +
         '<button class="close m-del" style="width:auto;margin:0;padding:4px 6px;color:#ff7a7a">\u2715</button></div>' +
-      '<div style="display:flex;flex-wrap:wrap;gap:8px">' + APP_KEYS.map(function(a){
+      '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">' +
+        '<label class="hint" style="display:flex;gap:5px;align-items:center;font-weight:700"><label class="tog" title="DK odds for this member" style="transform:scale(.82)"><input type="checkbox" class="m-dk"' + (m.dk !== false ? ' checked' : '') + '><span></span></label>DK odds</label>' +
+        '<span style="color:var(--hair);margin:0 2px">|</span>' +
+        APP_KEYS.map(function(a){
         var on = !m.apps || m.apps.indexOf(a[0]) >= 0;
         return '<label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="m-app" data-app="' + a[0] + '"' + (on ? ' checked' : '') + '>' + esc(a[1]) + '</label>';
       }).join('') + '</div></div>';
@@ -1197,7 +1198,7 @@ async function openSettingsPanel(){
     dayChips('s-hdays', dk.hockeyDays) +
     '<input type="text" id="s-hhrs" value="' + esc(dk.hockeyHours || '9,15') + '" placeholder="Hours PT, e.g. 9,15"></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member enters their name + their code once; their device then remembers them. Flip the switch off (or change their code) to revoke — their device re-checks every open.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Check the apps they may enter — uncheck an app to block it, uncheck all (or delete) to remove them. The green <b>DK odds</b> toggle controls whether that person sees DraftKings lines.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
@@ -1255,7 +1256,7 @@ async function openSettingsPanel(){
       if (!name || code.length < 4) return;
       var apps = [];
       row.querySelectorAll('.m-app').forEach(function(cb){ if (cb.checked) apps.push(cb.getAttribute('data-app')); });
-      out.push({ name: name, code: code, apps: apps.length === APP_KEYS.length ? null : apps, active: row.querySelector('.m-active').checked });
+      out.push({ name: name, code: code, apps: apps.length === APP_KEYS.length ? null : apps, dk: row.querySelector('.m-dk').checked });
     });
     return out;
   };

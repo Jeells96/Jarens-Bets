@@ -10772,18 +10772,18 @@ function openHRLineMo(gamePk,opts={}){
   function parseMembers(f){ if (f && f.members && f.members.stringValue){ try { return JSON.parse(f.members.stringValue) || []; } catch (e){ return []; } } return []; }
   function grantOf(s, list){
     if (!s) return { ok: false };
-    if (s.free) return { ok: true, apps: ['mlbfree'] };
-    if (s.code && pinOk(s.code)) return { ok: true, apps: null };
+    if (s.free) return { ok: true, apps: ['mlbfree'], dk: false };
+    if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true };
     for (var i = 0; i < list.length; i++){ var m = list[i];
-      if (m.active === false) continue;
-      if (norm(m.code) !== norm(s.code)) continue;
-      if (m.name != null && norm(m.name) !== norm(s.name)) continue;
-      return { ok: true, apps: (m.apps && m.apps.length) ? m.apps : null };
+      if (norm(m.code) !== norm(s.code)) continue;              // must match THEIR personal code
+      if (m.name != null && norm(m.name) !== norm(s.name)) continue; // AND their name
+      return { ok: true, apps: (m.apps && m.apps.length) ? m.apps : null, dk: m.dk !== false };
     }
     return { ok: false };
   }
   function okApp(g){ return g.ok && (!g.apps || g.apps.indexOf(APPKEY) >= 0); }
-  var ov;
+  var ov, dkVisG = true;
+  function setDk(v){ window.__DK_OK = v; if (!v) document.documentElement.classList.add('dk-off'); else document.documentElement.classList.remove('dk-off'); try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(v); } catch (e) {} }
   function cover(html){
     if (ov) ov.remove();
     ov = document.createElement('div');
@@ -10829,7 +10829,7 @@ function openHRLineMo(gamePk,opts={}){
         logFree(name); pass(); return;
       }
       var g = grantOf({ name: name, code: code }, list);
-      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} pass(); }
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkVisG && (g.dk !== false)); pass(); }
       else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
       else { err('No match — check your name and code, or your access was turned off.'); }
     };
@@ -10842,15 +10842,15 @@ function openHRLineMo(gamePk,opts={}){
     var list = null, dkVis = true;
     try { var r = await fetch(DOC + 'app_settings/board_access?key=' + MK, { cache: 'no-store' }); if (r.ok) list = parseMembers((await r.json()).fields || {}); } catch (e) {}
     try { var r2 = await fetch(DOC + 'app_settings/dk_auto?key=' + MK, { cache: 'no-store' }); if (r2.ok){ var f = (await r2.json()).fields || {}; if (f.dkVisible && f.dkVisible.booleanValue === false) dkVis = false; } } catch (e) {}
-    window.__DK_OK = dkVis;
-    if (!dkVis) document.documentElement.classList.add('dk-off');
-    try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(dkVis); } catch (e) {}
+    dkVisG = dkVis;
     var s = saved();
     if (list === null){ // offline: trust a known device rather than lock it out on a network blip
-      if (s && (s.free || s.name || (s.code && pinOk(s.code)))){ pass(); return; }
+      if (s && (s.free || s.name || (s.code && pinOk(s.code)))){ setDk(dkVis); pass(); return; }
       list = [];
     }
-    if (okApp(grantOf(s, list))){ pass(); return; }
+    var g = grantOf(s, list);
+    setDk(dkVis && (g.ok ? (g.dk !== false) : true)); // effective DK = global switch AND this member's DK toggle
+    if (okApp(g)){ pass(); return; }
     showGate(list);
   })();
 })();
