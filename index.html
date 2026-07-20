@@ -1084,10 +1084,6 @@ async function openSettingsPanel(){
   var pin = prompt('Admin PIN');
   if (pin == null) return;
   if (!adminPinOk(pin)){ alert('Wrong PIN.'); return; }
-  // Proving admin unlocks this device everywhere — the owner can never be
-  // locked out, and self-added access takes effect immediately.
-  try { localStorage.setItem(GATE_LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
-  GRANTS = null; try { markLockedCards(); } catch (e) {}
   var old = document.getElementById('adminovl'); if (old) old.remove();
   var ovl = document.createElement('div');
   ovl.className = 'ovl'; ovl.id = 'adminovl';
@@ -1553,7 +1549,18 @@ async function openSettingsPanel(){
       var nb2 = split2(nbaOut, ['pts','stat']); nbaTh = nb2.th; nbaTol = nb2.tol;
       var nf2 = split2(nflOut, ['pts','yds']); nflTh = nf2.th; nflTol = nf2.tol;
       var ic2 = split2(iceOut, ['goals','p1']); iceTh = ic2.th; iceTol = ic2.tol;
-      msg.textContent = '\u2713 Saved. Preview\u2019s \u201ccurrent\u201d now reflects these numbers; apps pick them up on next open/grade.';
+      // Re-evaluate this device against the list just saved, so member/access
+      // changes take effect on the hub immediately (including denying yourself).
+      var sid = savedMember(), gg;
+      if (sid && sid.free) gg = { ok: true, apps: ['mlbfree'] };
+      else if (sid) gg = memberMatch(sid.name, sid.code, mems);
+      else gg = { ok: false };
+      GRANTS = gg.ok ? (gg.apps ? new Set(gg.apps) : null) : new Set();
+      try { markLockedCards(); } catch (e) {}
+      var selfDenied = !gg.ok && sid && !(sid.code && adminPinOk(sid.code));
+      msg.textContent = selfDenied
+        ? '\u2713 Saved. Heads up: this device\u2019s sign-in is no longer on the list — it\u2019ll be blocked on next open (use your Owner PIN to get back in).'
+        : '\u2713 Saved. Access + lock grades apply now; apps pick up lock grades on next open/grade.';
     } catch (e){ msg.style.color = '#ff7a7a'; msg.textContent = e.message; }
   });
 }
