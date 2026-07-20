@@ -759,14 +759,11 @@ async function runCronDkPull(){
     try {
       const r = await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_auto?key=' + MLBCFG.k, { cache: 'no-store' });
       if (r.ok){ const f = (await r.json()).fields || {};
-        c = { on: f.hockeyOn ? f.hockeyOn.booleanValue !== false : true, hours: f.hockeyHours ? f.hockeyHours.stringValue : null, days: f.hockeyDays ? f.hockeyDays.stringValue : null }; }
+        c = { on: f.hockeyOn ? f.hockeyOn.booleanValue !== false : true }; }
     } catch (e) {}
     const on = c.on !== false;
-    const days = String(c.days || '0,1,2,3,4,5,6').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
-    const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-    const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    // No day/hour schedule: only games within 2h of puck drop are pulled, once each.
     if (!on){ window.__cronStatus = 'dk: skipped — NHL auto pull is OFF'; window.__cronDone = true; return; }
-    if (!days.includes(ptNow.getDay())){ window.__cronStatus = 'dk: skipped — ' + DAYN[ptNow.getDay()] + ' not scheduled'; window.__cronDone = true; return; }
     const date = todayPT();
     // Build fullName -> abbr from ESPN so DK's full team names map to our abbreviations
     window.__cronStatus = 'dk: building slate ' + date;

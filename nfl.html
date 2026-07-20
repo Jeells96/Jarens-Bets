@@ -1724,13 +1724,18 @@ async function refreshQuotaOnly() {
   }
 }
 
-async function pullDKOdds(reason) {
-  logEvent('net', 'DK', 'pull starting (' + reason + ')');
+async function pullDKOdds(reason, opts) {
+  opts = opts || {};
+  const allToday = !!opts.allToday; // Sunday-morning mode: grab every game today at once
+  logEvent('net', 'DK', 'pull starting (' + reason + (allToday ? ', all-today' : '') + ')');
   const sel = selectedMarkets();
   if (!sel.length) { logEvent('warn', 'DK', 'no markets enabled; nothing to pull'); return null; }
   const gameLines = sel.filter(m => ['h2h','spreads','totals'].includes(m));
   const playerMarkets = sel.filter(m => m.startsWith('player_'));
   const results = { fetchedAt: Date.now(), reason, byEvent: {} };
+  // Seed with everything we've already stored so a pull can only ADD games,
+  // never drop lines for games that have since dropped off the /odds feed.
+  try { const pd = await fsGetDoc('gridline/dkOdds'); if (pd && pd.byEvent) results.byEvent = JSON.parse(JSON.stringify(pd.byEvent)); } catch (e) {}
 
   try {
     // 1) Pull game-line markets in a single /odds call
@@ -1749,16 +1754,16 @@ async function pullDKOdds(reason) {
       const data = await res.json();
       logEvent('info', 'DK', 'parsed ' + data.length + ' events from /odds');
       for (const ev of data) {
-        results.byEvent[ev.id] = {
-          home: ev.home_team, away: ev.away_team,
-          commenceTime: ev.commence_time, markets: {},
-        };
+        const cur = results.byEvent[ev.id] || { markets: {} };
+        cur.home = ev.home_team; cur.away = ev.away_team; cur.commenceTime = ev.commence_time;
+        cur.markets = cur.markets || {};
         const bm = (ev.bookmakers || []).find(b => b.key === 'draftkings');
         if (bm) {
           for (const m of bm.markets) {
-            results.byEvent[ev.id].markets[m.key] = m.outcomes;
+            cur.markets[m.key] = m.outcomes;
           }
         }
+        results.byEvent[ev.id] = cur;
       }
     }
 
@@ -1785,7 +1790,11 @@ async function pullDKOdds(reason) {
           playerMarkets.forEach(function(k){ if (prior.markets[k]) results.byEvent[ev.id].markets[k] = prior.markets[k]; });
           continue; // already have this game's props — no API call
         }
-        if (!(st > nowMs && st <= nowMs + PROP_WIN)) continue; // not within 2h of kickoff yet
+        const ptDay = d => d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+        const inWindow = allToday
+          ? ptDay(new Date(ev.commence_time)) === ptDay(new Date()) // Sunday-morning: any game today
+          : (st > nowMs && st <= nowMs + PROP_WIN);                 // else within 2h of kickoff
+        if (!inWindow) continue;
         const pUrl = ODDS_API.base + '/sports/' + ODDS_API.sport + '/events/' + ev.id + '/odds' +
           '?regions=' + ODDS_API.region +
           '&markets=' + playerMarkets.join(',') +
@@ -5466,20 +5475,32 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
         const r = await fetch('https://firestore.googleapis.com/v1/projects/mlb-bets-d196c/databases/(default)/documents/app_settings/dk_auto?key=AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0', { cache: 'no-store' });
         if (r.ok) {
           const f = (await r.json()).fields || {};
-          c = { nflOn: f.nflOn ? f.nflOn.booleanValue !== false : true, nflHours: f.nflHours ? f.nflHours.stringValue : null, nflDays: f.nflDays ? f.nflDays.stringValue : null };
+          c = { nflOn: f.nflOn ? f.nflOn.booleanValue !== false : true };
         }
       } catch (e) {}
       const on = c.nflOn !== false;
-      const hours = String(c.nflHours || '8,14').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-      const days = String(c.nflDays || '0,1,2,3,4,5,6').split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
       const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
       const etHour = ptNow.getHours(), ptDay = ptNow.getDay();
-      const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      // NFL rule: Sunday morning (9am PT) pulls ALL of Sunday's games at once;
+      // any other game (Thu/Sat/Mon) pulls ~2h before its kickoff, once each.
+      const sundayMorning = (ptDay === 0 && etHour === 9);
+      let go = sundayMorning, within = 0;
+      if (on && !go) {
+        // Free events list (0 API cost) — is any game within 2h of kickoff?
+        try {
+          const evRes = await fetch(ODDS_API.base + '/sports/' + ODDS_API.sport + '/events?apiKey=' + ODDS_API.key);
+          if (evRes.ok) {
+            const evs = await evRes.json();
+            const now = Date.now(), WIN = 2 * 3600 * 1000;
+            within = (evs || []).filter(e => { const st = new Date(e.commence_time).getTime(); return st > now && st <= now + WIN; }).length;
+            go = within > 0;
+          }
+        } catch (e) {}
+      }
       if (!on) { window.__cronStatus = 'dk: skipped — auto pull is OFF in Board settings'; }
-      else if (!days.includes(ptDay)) { window.__cronStatus = 'dk: skipped — ' + DAYN[ptDay] + ' is not a scheduled pull day'; }
-      else if (!hours.includes(etHour)) { window.__cronStatus = 'dk: skipped — ' + etHour + ':xx PT not in scheduled hours [' + hours.join(',') + ']'; }
+      else if (!go) { window.__cronStatus = 'dk: skipped — not Sunday 9am PT and no NFL game within 2h of kickoff'; }
       else {
-        await pullDKOdds('auto');
+        await pullDKOdds('auto', { allToday: sundayMorning });
         // publish remaining API quota so the Board can show it next to the toggle
         if (state.dkQuotaRemaining != null) {
           try {

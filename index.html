@@ -1177,26 +1177,22 @@ async function openSettingsPanel(){
 
   ovl.querySelector('.box').innerHTML =
     '<h3>Board Settings</h3>' +
-    '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">Pacific time \u00b7 fully custom</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Pick the DAYS each app pulls, then the hours (like <b>8,12,15</b> = 8am, noon, 3pm PT). Off-days and off-hours cost zero API quota.</p>' +
+    '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">Pulls run themselves at the smart times below \u2014 each game is pulled once, close to start, so no API quota is wasted. Just flip a league on or off.</p>' +
     '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
     '<p class="sub" style="margin:0 0 12px">Master switch. Off = no DraftKings info (lines, edges, vs-DK records) is viewable in any app, for anyone.</p>' +
     '<div class="row"><span class="lbl">Diamond IQ \u00b7 props</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.premiumCalls, dkStat.premiumAt) +
-    dayChips('s-pdays', dk.premiumDays) +
-    '<input type="text" id="s-phrs" value="' + esc(dk.premiumHours || '8,12,15') + '" placeholder="Hours PT, e.g. 8,12,15">' +
+    '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s first pitch</b>, once per game that day.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nflCalls, dkStat.nflAt) +
-    dayChips('s-ndays', dk.nflDays) +
-    '<input type="text" id="s-nhrs" value="' + esc(dk.nflHours || '8,14') + '" placeholder="Hours PT, e.g. 8,14">' +
+    '<div class="hint" style="margin:2px 0 4px">Fires <b>Sunday morning (9am PT)</b> and pulls <b>all of Sunday\u2019s games</b> at once. Non-Sunday games pull ~2 hours before kickoff.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">The Key \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-bon"' + (dk.nbaOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nbaCalls, dkStat.nbaAt) +
-    dayChips('s-bdays', dk.nbaDays) +
-    '<input type="text" id="s-bhrs" value="' + esc(dk.nbaHours || '9,15') + '" placeholder="Hours PT, e.g. 9,15">' +
+    '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s tip-off</b>, once per game that day.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Icing \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-hon"' + (dk.hockeyOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
-    dayChips('s-hdays', dk.hockeyDays) +
-    '<input type="text" id="s-hhrs" value="' + esc(dk.hockeyHours || '9,15') + '" placeholder="Hours PT, e.g. 9,15"></div>' +
+    '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s puck drop</b>, once per game that day.</div></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Check the apps they may enter — uncheck an app to block it, uncheck all (or delete) to remove them. The green <b>DK odds</b> toggle controls whether that person sees DraftKings lines.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
@@ -1512,22 +1508,17 @@ async function openSettingsPanel(){
   box.querySelector('#s-save').addEventListener('click', async function(){
     var msg = box.querySelector('#s-msg');
     msg.style.color = ''; msg.textContent = 'Saving\u2026';
-    var hrsOk = function(v){ return String(v).split(',').every(function(x){ var n = parseInt(x.trim(), 10); return !isNaN(n) && n >= 0 && n <= 23; }); };
-    var ph = box.querySelector('#s-phrs').value, nh = box.querySelector('#s-nhrs').value;
     var mems = readMembers();
     var premOut = normPremProbs(readNums(PREM_KNOBS, 'pk-')), freeOut = readNums(FREE_KNOBS, 'fk-', 100);
     var nbaOut = readNums(NBA_KNOBS, 'bk-'), nflOut = readNums(NFL_KNOBS, 'gk-'), iceOut = readNums(ICE_KNOBS, 'ik-');
-    if (!hrsOk(ph) || !hrsOk(nh) || !hrsOk(box.querySelector('#s-bhrs').value) || !hrsOk(box.querySelector('#s-hhrs').value)){ msg.style.color = '#ff7a7a'; msg.textContent = 'DK hours must be numbers 0\u201323, separated by commas.'; return; }
     if (!mems.length){ msg.style.color = '#ff7a7a'; msg.textContent = 'Keep at least one member (name + 4-character code).'; return; }
     if (!premOut || !freeOut || !nbaOut || !nflOut || !iceOut){ msg.style.color = '#ff7a7a'; msg.textContent = 'Check the lock-grade numbers.'; return; }
     try {
-      var pd = readDays('s-pdays'), nd = readDays('s-ndays'), bd = readDays('s-bdays'), hd = readDays('s-hdays');
-      if (!pd || !nd || !bd || !hd){ msg.style.color = '#ff7a7a'; msg.textContent = 'Each app needs at least one pull day selected.'; return; }
       await adminSetDoc('app_settings', 'dk_auto', {
-        premiumOn: box.querySelector('#s-pon').checked, premiumHours: ph.replace(/\s/g, ''), premiumDays: pd,
-        nflOn: box.querySelector('#s-non').checked, nflHours: nh.replace(/\s/g, ''), nflDays: nd,
-        nbaOn: box.querySelector('#s-bon').checked, nbaHours: (box.querySelector('#s-bhrs').value || '').replace(/\s/g, ''), nbaDays: bd,
-        hockeyOn: box.querySelector('#s-hon').checked, hockeyHours: (box.querySelector('#s-hhrs').value || '').replace(/\s/g, ''), hockeyDays: hd,
+        premiumOn: box.querySelector('#s-pon').checked,
+        nflOn: box.querySelector('#s-non').checked,
+        nbaOn: box.querySelector('#s-bon').checked,
+        hockeyOn: box.querySelector('#s-hon').checked,
         dkVisible: box.querySelector('#s-dkvis').checked
       });
       await adminSetDoc('app_settings', 'board_access', { members: JSON.stringify(mems) });

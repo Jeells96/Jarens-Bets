@@ -1328,14 +1328,11 @@ async function runCronDkPull(){
     try {
       const r = await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_auto?key=' + MLBCFG.k, { cache: 'no-store' });
       if (r.ok){ const f = (await r.json()).fields || {};
-        c = { on: f.nbaOn ? f.nbaOn.booleanValue !== false : true, hours: f.nbaHours ? f.nbaHours.stringValue : null, days: f.nbaDays ? f.nbaDays.stringValue : null }; }
+        c = { on: f.nbaOn ? f.nbaOn.booleanValue !== false : true }; }
     } catch (e) {}
     const on = c.on !== false;
-    const days = String(c.days || '0,1,2,3,4,5,6').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
-    const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-    const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    // No day/hour schedule: only games within 2h of tip are pulled, once each.
     if (!on){ window.__cronStatus = 'dk: skipped — NBA auto pull is OFF'; window.__cronDone = true; return; }
-    if (!days.includes(ptNow.getDay())){ window.__cronStatus = 'dk: skipped — ' + DAYN[ptNow.getDay()] + ' not a scheduled day'; window.__cronDone = true; return; }
     const date = todayPT();
     window.__cronStatus = 'dk: building slate ' + date;
     let games = [];
