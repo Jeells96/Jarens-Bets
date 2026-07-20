@@ -924,6 +924,13 @@ function premiumRates(days, cfg){
   });
   return agg;
 }
+// Free's cloud docs store results compactly ({h,tb,hr,bb,k,ab,pa}); older or
+// merged docs may carry the long names. Read both so no era of data grades 0.
+function freeActual(o, key){
+  var map = { hits: ['actualHits','h'], tb: ['actualTB','tb'], hr: ['actualHR','hr'], bb: ['actualBB','bb'], k: ['actualK','k'] };
+  var pair = map[key];
+  return o[pair[0]] != null ? o[pair[0]] : (o[pair[1]] != null ? o[pair[1]] : null);
+}
 function freeRates(days, locks){
   var rc = function(v){ if (v == null || isNaN(v)) return null; var f = Math.floor(v); return (v - f) >= 0.7 ? f + 1 : f; };
   var agg = { hits:{h:0,n:0}, tb:{h:0,n:0}, hr:{h:0,n:0}, bb:{h:0,n:0}, bbat:{h:0,n:0} };
@@ -932,12 +939,12 @@ function freeRates(days, locks){
     if (!pred || !pred.batters || !resB) return;
     pred.batters.forEach(function(b){
       var o = resB[b.id]; if (!o) return;
-      if (!((o.ab || 0) >= 1 || (o.pa || 0) >= 1 || (o.actualHits || 0) >= 1)) return;
-      [['hits', b.score, (o.actualHits || 0) > 0],
-       ['tb', b.tbScore, b.expectedTB != null && (o.actualTB || 0) >= rc(b.expectedTB)],
-       ['hr', b.hrScore, (o.actualHR || 0) > 0],
-       ['bb', b.bbScore, b.expectedBB != null && (o.actualBB || 0) >= rc(b.expectedBB)],
-       ['bbat', b.batterKScore, b.batterExpectedK != null && (o.actualK || 0) >= rc(b.batterExpectedK)]
+      if (!((o.ab || 0) >= 1 || (o.pa || 0) >= 1 || (freeActual(o, 'hits') || 0) >= 1)) return;
+      [['hits', b.score, (freeActual(o, 'hits') || 0) > 0],
+       ['tb', b.tbScore, b.expectedTB != null && (freeActual(o, 'tb') || 0) >= rc(b.expectedTB)],
+       ['hr', b.hrScore, (freeActual(o, 'hr') || 0) > 0],
+       ['bb', b.bbScore, b.expectedBB != null && (freeActual(o, 'bb') || 0) >= rc(b.expectedBB)],
+       ['bbat', b.batterKScore, b.batterExpectedK != null && (freeActual(o, 'k') || 0) >= rc(b.batterExpectedK)]
       ].forEach(function(c){
         if (c[1] == null || c[1] < locks[c[0]]) return;
         agg[c[0]].n++; if (c[2]) agg[c[0]].h++;
@@ -1391,11 +1398,11 @@ async function openSettingsPanel(){
       pred.batters.forEach(function(b){
         var o = resB[b.id]; if (!o) return;
         if (!((o.ab || 0) >= 1 || (o.pa || 0) >= 1 || (o.actualHits || 0) >= 1)) return;
-        if (b.score != null) pools.hits.push({ m: b.score, h: (o.actualHits || 0) > 0 });
-        if (b.tbScore != null && b.expectedTB != null) pools.tb.push({ m: b.tbScore, h: (o.actualTB || 0) >= rc(b.expectedTB) });
-        if (b.hrScore != null) pools.hr.push({ m: b.hrScore, h: (o.actualHR || 0) > 0 });
-        if (b.bbScore != null && b.expectedBB != null) pools.bb.push({ m: b.bbScore, h: (o.actualBB || 0) >= rc(b.expectedBB) });
-        if (b.batterKScore != null && b.batterExpectedK != null) pools.bbat.push({ m: b.batterKScore, h: (o.actualK || 0) >= rc(b.batterExpectedK) });
+        if (b.score != null) pools.hits.push({ m: b.score, h: (freeActual(o, 'hits') || 0) > 0 });
+        if (b.tbScore != null && b.expectedTB != null) pools.tb.push({ m: b.tbScore, h: (freeActual(o, 'tb') || 0) >= rc(b.expectedTB) });
+        if (b.hrScore != null) pools.hr.push({ m: b.hrScore, h: (freeActual(o, 'hr') || 0) > 0 });
+        if (b.bbScore != null && b.expectedBB != null) pools.bb.push({ m: b.bbScore, h: (freeActual(o, 'bb') || 0) >= rc(b.expectedBB) });
+        if (b.batterKScore != null && b.batterExpectedK != null) pools.bbat.push({ m: b.batterKScore, h: (freeActual(o, 'k') || 0) >= rc(b.batterExpectedK) });
       });
     });
     var L = { hits:'Batter hits', tb:'Total bases', hr:'Home runs', bb:'Batter walks', bbat:'Batter strikeouts' };
@@ -1471,7 +1478,11 @@ async function openSettingsPanel(){
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify({ lockThresholds: iceSp.th, hitTol: iceSp.tol }) }, t: { stringValue: new Date().toISOString() } } })
       }).then(function(r){ if (!r.ok) throw new Error('NHL config save failed (HTTP ' + r.status + ')'); });
-      msg.textContent = '\u2713 Saved. DK schedule + members apply now; lock grades reach every app on its next open/grade.';
+      premCfg = premOut; freeCfg = freeOut;
+      var nb2 = split2(nbaOut, ['pts','stat']); nbaTh = nb2.th; nbaTol = nb2.tol;
+      var nf2 = split2(nflOut, ['pts','yds']); nflTh = nf2.th; nflTol = nf2.tol;
+      var ic2 = split2(iceOut, ['goals','p1']); iceTh = ic2.th; iceTol = ic2.tol;
+      msg.textContent = '\u2713 Saved. Preview\u2019s \u201ccurrent\u201d now reflects these numbers; apps pick them up on next open/grade.';
     } catch (e){ msg.style.color = '#ff7a7a'; msg.textContent = e.message; }
   });
 }

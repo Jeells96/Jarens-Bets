@@ -2223,6 +2223,26 @@ async function bootLeagueLoad(){
         const t0=Date.now();
         while(!FBH.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
         if(!FBH.ready)throw new Error('Firebase not ready after 15s');
+        /* Board-changed thresholds: stored day tallies were computed at the OLD
+           config, so when the config hash changes, rebuild the whole summary
+           from the day docs at the NEW thresholds — same rebuildSummary() the
+           in-app Save uses. The app + hub then show new-threshold rates. */
+        try{
+          await cfgPull();
+          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
+          const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
+          const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
+          if(oldHash!==cfgHash){
+            window.__cronStatus='cron: thresholds changed — re-scoring every stored day…';
+            const days=await rebuildSummary();
+            if(days&&Object.keys(days).length){
+              await withTO(FBH.db.collection('fable_settings').doc('summary').set({days:days,cfgHash:cfgHash,updatedAt:Date.now()},{merge:true}),15000);
+              console.log('[premium] summary rebuilt at new thresholds: '+Object.keys(days).length+' day(s)');
+            }else{
+              await withTO(FBH.db.collection('fable_settings').doc('summary').set({cfgHash:cfgHash,updatedAt:Date.now()},{merge:true}),8000);
+            }
+          }
+        }catch(e){console.log('[premium] threshold-change rescore skipped: '+e.message);}
         /* Count real grading work: storeResults runs once per day actually
            graded, so "done" can never again hide a zero-work sweep. */
         const _sr=storeResults; let gradedN=0;

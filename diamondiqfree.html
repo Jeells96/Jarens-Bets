@@ -3718,10 +3718,11 @@ function freeLockMark(kind,payload){
   const cell=v=>`<td style="padding:5px 8px;text-align:center"><strong style="color:${v==='P'?'var(--gd)':v?'var(--gn)':'var(--rd)'}">${v==='P'?'P':v?'\u2713':'\u2717'}</strong></td>`;
   const blank='<td style="padding:5px 8px"></td>';
   if(!R)return blank;
+  const act=(o,l,c)=>o[l]!=null?o[l]:(o[c]!=null?o[c]:null); // long or compact result shape
   if(kind==='hit'||kind==='hr'){
     const b=R.batters?.[payload];
-    if(!b||!((b.ab||0)>=1||(b.pa||0)>=1||(b.actualHits||0)>=1))return blank;
-    return cell(kind==='hit'?(b.actualHits||0)>0:(b.actualHR||0)>0);
+    if(!b||!((b.ab||0)>=1||(b.pa||0)>=1||(act(b,'actualHits','h')||0)>=1))return blank;
+    return cell(kind==='hit'?(act(b,'actualHits','h')||0)>0:(act(b,'actualHR','hr')||0)>0);
   }
   if(kind==='dk'){
     let actual=null;
@@ -3729,10 +3730,10 @@ function freeLockMark(kind,payload){
     else if(payload.marketKey==='pitcher_walks')actual=R.pitchers?.[payload.id]?.bb??null;
     else{
       const b=R.batters?.[payload.id];
-      if(b&&((b.ab||0)>=1||(b.pa||0)>=1||(b.actualHits||0)>=1)){
-        actual=payload.marketKey==='batter_total_bases'?b.actualTB??null
-          :payload.marketKey==='batter_walks'?b.actualBB??null
-          :payload.marketKey==='batter_strikeouts'?b.actualK??null:null;
+      if(b&&((b.ab||0)>=1||(b.pa||0)>=1||(act(b,'actualHits','h')||0)>=1)){
+        actual=payload.marketKey==='batter_total_bases'?act(b,'actualTB','tb')
+          :payload.marketKey==='batter_walks'?act(b,'actualBB','bb')
+          :payload.marketKey==='batter_strikeouts'?act(b,'actualK','k'):null;
       }
     }
     if(actual==null)return blank;
