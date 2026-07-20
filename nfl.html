@@ -1771,8 +1771,21 @@ async function pullDKOdds(reason) {
       if (!evRes.ok) throw new Error('events HTTP ' + evRes.status);
       const events = await evRes.json();
       logEvent('info', 'DK', events.length + ' events for player-prop scan');
-
+      // Dedup: carry over player props we already have, and only fetch games
+      // within 2h of kickoff that we don't have yet — once per game.
+      let priorByEvent = {};
+      try { const pd = await fsGetDoc('gridline/dkOdds'); if (pd && pd.byEvent) priorByEvent = pd.byEvent; } catch (e) {}
+      const PROP_WIN = 2 * 3600 * 1000;
       for (const ev of events) {
+        const st = new Date(ev.commence_time).getTime(), nowMs = Date.now();
+        const prior = priorByEvent[ev.id];
+        const hasProps = prior && prior.markets && playerMarkets.some(function(k){ return prior.markets[k]; });
+        if (hasProps){
+          if (!results.byEvent[ev.id]) results.byEvent[ev.id] = { home: prior.home, away: prior.away, commenceTime: prior.commenceTime, markets: {} };
+          playerMarkets.forEach(function(k){ if (prior.markets[k]) results.byEvent[ev.id].markets[k] = prior.markets[k]; });
+          continue; // already have this game's props — no API call
+        }
+        if (!(st > nowMs && st <= nowMs + PROP_WIN)) continue; // not within 2h of kickoff yet
         const pUrl = ODDS_API.base + '/sports/' + ODDS_API.sport + '/events/' + ev.id + '/odds' +
           '?regions=' + ODDS_API.region +
           '&markets=' + playerMarkets.join(',') +
@@ -1798,6 +1811,7 @@ async function pullDKOdds(reason) {
     state.dkLastPullAt = Date.now();
     localStorage.setItem('gl_dk_last_pull', String(state.dkLastPullAt));
     try { localStorage.setItem('gl_dk_odds', JSON.stringify(results)); } catch {}
+    try { await fsSetDoc('gridline/dkOdds', results); } catch (e) { logEvent('warn', 'DK', 'firebase persist failed: ' + e.message); }
     logEvent('info', 'DK', 'pull complete, ' + Object.keys(results.byEvent).length + ' events stored');
     return results;
   } catch (e) {

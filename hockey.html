@@ -762,13 +762,11 @@ async function runCronDkPull(){
         c = { on: f.hockeyOn ? f.hockeyOn.booleanValue !== false : true, hours: f.hockeyHours ? f.hockeyHours.stringValue : null, days: f.hockeyDays ? f.hockeyDays.stringValue : null }; }
     } catch (e) {}
     const on = c.on !== false;
-    const hours = String(c.hours || '9,15').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
     const days = String(c.days || '0,1,2,3,4,5,6').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
     const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
     const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     if (!on){ window.__cronStatus = 'dk: skipped — NHL auto pull is OFF'; window.__cronDone = true; return; }
     if (!days.includes(ptNow.getDay())){ window.__cronStatus = 'dk: skipped — ' + DAYN[ptNow.getDay()] + ' not scheduled'; window.__cronDone = true; return; }
-    if (!hours.includes(ptNow.getHours())){ window.__cronStatus = 'dk: skipped — ' + ptNow.getHours() + ':xx PT not scheduled [' + hours.join(',') + ']'; window.__cronDone = true; return; }
     const date = todayPT();
     // Build fullName -> abbr from ESPN so DK's full team names map to our abbreviations
     window.__cronStatus = 'dk: building slate ' + date;
@@ -782,7 +780,7 @@ async function runCronDkPull(){
         if (!h || !a) continue;
         const hAb = h.team.abbreviation, aAb = a.team.abbreviation;
         nameToAb[h.team.displayName] = hAb; nameToAb[a.team.displayName] = aAb;
-        pairs.push({ hName: h.team.displayName, aName: a.team.displayName, hAb: hAb, aAb: aAb });
+        pairs.push({ hAb: hAb, aAb: aAb, start: ev.date ? new Date(ev.date).getTime() : 0 });
       }
     } catch (e) {}
     if (!pairs.length){ window.__cronStatus = 'dk: no NHL games ' + date; window.__cronDone = true; return; }
@@ -793,23 +791,32 @@ async function runCronDkPull(){
       const hit = Object.keys(nameToAb).find(function(k){ return lastWord(k) === lw; });
       return hit ? nameToAb[hit] : null;
     };
-    window.__cronStatus = 'dk: pulling DK lines';
+    // Pull only games within 2h of puck drop we don't already have — once each.
+    let existing = {};
+    try { const cur = await fbRead(FB_DK, date); if (cur && cur.games) existing = cur.games; } catch (e) {}
+    const now = Date.now(), WIN = 2 * 3600 * 1000;
+    const eligibleKeys = new Set();
+    for (const pr of pairs){ const gm = pr.aAb + '@' + pr.hAb; if (pr.start > now && pr.start <= now + WIN && !existing[gm]) eligibleKeys.add(gm); }
+    if (!eligibleKeys.size){ window.__cronStatus = 'dk: skipped — no NHL games within 2h of puck drop that still need lines'; window.__cronDone = true; return; }
+    window.__cronStatus = 'dk: pulling DK lines for ' + eligibleKeys.size + ' game(s)';
     const res = await fetch(DK_ODDS_URL + ODDS_KEY_SHARED);
     if (!res.ok) throw new Error('odds API ' + res.status);
     let remaining = null; try { remaining = res.headers.get('x-requests-remaining'); } catch (e) {}
     const arr = await res.json();
-    const games = {}; let n = 0;
+    const games = Object.assign({}, existing); let n = 0;
     for (const ev of (arr || [])){
       if (String(ev.commence_time).slice(0, 10) < date) continue;
       const hAb = toAb(ev.home_team), aAb = toAb(ev.away_team);
       if (!hAb || !aAb) continue;
+      const gm = aAb + '@' + hAb;
+      if (!eligibleKeys.has(gm) || games[gm]) continue;
       const bk = (ev.bookmakers || []).find(function(b){ return b.key === 'draftkings'; });
       if (!bk) continue;
       const mk = function(k){ return (bk.markets || []).find(function(m){ return m.key === k; }); };
       const h2h = mk('h2h'), tot = mk('totals');
       const price = function(m, team){ const o = m && (m.outcomes || []).find(function(x){ return x.name === team; }); return o && o.price != null ? o.price : null; };
       const tO = tot && (tot.outcomes || []).find(function(x){ return x.name === 'Over'; });
-      games[aAb + '@' + hAb] = { gm: aAb + '@' + hAb, mlHome: price(h2h, ev.home_team), mlAway: price(h2h, ev.away_team), total: tO && tO.point != null ? tO.point : null };
+      games[gm] = { gm: gm, mlHome: price(h2h, ev.home_team), mlAway: price(h2h, ev.away_team), total: tO && tO.point != null ? tO.point : null };
       n++;
     }
     await fbWrite(FB_DK, date, { date: date, fetched: new Date().toISOString(), games: games });

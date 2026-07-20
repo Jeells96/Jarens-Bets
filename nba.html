@@ -1331,32 +1331,40 @@ async function runCronDkPull(){
         c = { on: f.nbaOn ? f.nbaOn.booleanValue !== false : true, hours: f.nbaHours ? f.nbaHours.stringValue : null, days: f.nbaDays ? f.nbaDays.stringValue : null }; }
     } catch (e) {}
     const on = c.on !== false;
-    const hours = String(c.hours || '9,15').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
     const days = String(c.days || '0,1,2,3,4,5,6').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(n){ return !isNaN(n); });
     const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
     const DAYN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     if (!on){ window.__cronStatus = 'dk: skipped — NBA auto pull is OFF'; window.__cronDone = true; return; }
     if (!days.includes(ptNow.getDay())){ window.__cronStatus = 'dk: skipped — ' + DAYN[ptNow.getDay()] + ' not a scheduled day'; window.__cronDone = true; return; }
-    if (!hours.includes(ptNow.getHours())){ window.__cronStatus = 'dk: skipped — ' + ptNow.getHours() + ':xx PT not scheduled [' + hours.join(',') + ']'; window.__cronDone = true; return; }
     const date = todayPT();
     window.__cronStatus = 'dk: building slate ' + date;
     let games = [];
     try { const sb = await fetch(ESPN.scoreboard(toESPN(date)), { cache: 'no-store' }); if (sb.ok) games = parseScoreboard(await sb.json()); } catch (e) {}
     if (!games.length){ window.__cronStatus = 'dk: no NBA games ' + date; window.__cronDone = true; return; }
-    window.__cronStatus = 'dk: pulling DK lines';
+    // Pull only games within 2h of tip that we don't already have — once per game.
+    let existing = {};
+    try { const cur = await fbRead(FB_DK, date); if (cur && cur.games) existing = cur.games; } catch (e) {}
+    const now = Date.now(), WIN = 2 * 3600 * 1000;
+    const eligibleKeys = new Set();
+    for (const g of games){
+      const gm = g.away.abbr + '@' + g.home.abbr;
+      const st = g.iso ? new Date(g.iso).getTime() : 0;
+      if (st > now && st <= now + WIN && !existing[gm]) eligibleKeys.add(gm);
+    }
+    if (!eligibleKeys.size){ window.__cronStatus = 'dk: skipped — no NBA games within 2h of tip that still need lines'; window.__cronDone = true; return; }
+    window.__cronStatus = 'dk: pulling DK lines for ' + eligibleKeys.size + ' game(s)';
     const res = await fetch(ODDS.gameLines(ODDS_KEY_SHARED));
     if (!res.ok) throw new Error('odds API ' + res.status);
     let remaining = null; try { remaining = res.headers.get('x-requests-remaining'); } catch (e) {}
     const arr = await res.json();
-    const snapGames = {};
+    const snapGames = Object.assign({}, existing);
     let n = 0;
     for (const ev of (arr || [])){
       if (ptDateStr(new Date(ev.commence_time)) !== date) continue;
       const m = mapOddsEvent(ev, games);
-      if (m){ snapGames[m.gm] = m; n++; }
+      if (m && eligibleKeys.has(m.gm) && !snapGames[m.gm]){ snapGames[m.gm] = m; n++; }
     }
-    const snap = { date: date, fetched: new Date().toISOString(), games: snapGames };
-    await fbWrite(FB_DK, date, snap);
+    await fbWrite(FB_DK, date, { date: date, fetched: new Date().toISOString(), games: snapGames });
     if (remaining != null){
       try {
         await fetch('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/app_settings/dk_status?key=' + MLBCFG.k + '&updateMask.fieldPaths=nbaCalls&updateMask.fieldPaths=nbaAt', {
@@ -1364,7 +1372,7 @@ async function runCronDkPull(){
           body: JSON.stringify({ fields: { nbaCalls: { integerValue: String(parseInt(remaining, 10)) }, nbaAt: { integerValue: String(Date.now()) } } }) });
       } catch (e) {}
     }
-    window.__cronStatus = 'dk: done — ' + n + ' DK lines stored for ' + date + ' (' + (remaining != null ? remaining : '?') + ' calls left)';
+    window.__cronStatus = 'dk: done — ' + n + ' new game(s) stored (2h window) · ' + Object.keys(snapGames).length + ' total today (' + (remaining != null ? remaining : '?') + ' calls left)';
   } catch (e){ window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
   window.__cronDone = true;
 }

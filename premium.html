@@ -821,27 +821,44 @@ async function fetchDKPropsAndPush(date,onProg){
       if(!ev.commence_time)return false;
       const d=new Date(ev.commence_time);
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`===date;
-    }).filter(ev=>new Date(ev.commence_time).getTime()>Date.now()); // pre-game lines only
+    }).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now&&st<=now+2*3600*1000;}); // only within 2h before first pitch
     if(!dateEvents.length)return{ok:false,reason:'No upcoming MLB events for '+date};
-    const results={};
+    // QUOTA SAVER: player props cost one API call PER GAME. Read what we've
+    // already pulled for this date and fetch ONLY games we don't have yet, so
+    // repeated scheduled runs never re-pull the same game. Each game's props
+    // cost exactly one call per day (the run that first sees its lineup).
+    let existing={};
+    if(FBH.ready){
+      try{const pdoc=await withTO(FBH.db.collection('app_settings').doc('props_'+date).get(),8000);if(pdoc.exists)existing=(pdoc.data().events)||{};}catch(e){}
+    }
+    const toFetch=dateEvents.filter(ev=>!existing[ev.id]);
+    const skipped=dateEvents.length-toFetch.length;
+    if(!toFetch.length){
+      ODDSP={date,events:existing};
+      say('');
+      return{ok:true,count:0,skipped:skipped,calls:DK_CALLS,reason:'all '+dateEvents.length+' games already pulled today'};
+    }
+    const results=Object.assign({},existing); // full set (existing + new) for this session
+    const newOnly={};                           // only newly-fetched games, for a merge write
     const marketsParam=PLAYER_PROP_MARKETS.join(',');
-    let i=0;
-    for(const ev of dateEvents){
-      i++;say(`DK: props ${i}/${dateEvents.length}…`);
+    let i=0,fetched=0;
+    for(const ev of toFetch){
+      i++;say(`DK: props ${i}/${toFetch.length} new game(s)…`);
       try{
         const res=await fetch(`https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${ODDS_API_KEY}&regions=us&bookmakers=draftkings&markets=${marketsParam}&oddsFormat=american`);
         const r2=res.headers.get('x-requests-remaining');
         if(r2!=null)DK_CALLS=parseInt(r2,10);
         if(!res.ok)continue;
         const data=await res.json();
-        results[ev.id]={home_team:ev.home_team,away_team:ev.away_team,commence_time:ev.commence_time,
+        const rec={home_team:ev.home_team,away_team:ev.away_team,commence_time:ev.commence_time,
           markets:data.bookmakers?.[0]?.markets||[],fetchedAt:Date.now()};
+        results[ev.id]=rec; newOnly[ev.id]=rec; fetched++;
       }catch(e){}
     }
-    if(!Object.keys(results).length)return{ok:false,reason:'Every event fetch failed'};
-    const payload={date,events:results,fetchedAt:Date.now(),updatedAt:Date.now()};
+    if(fetched===0)return{ok:true,count:0,skipped:skipped,total:Object.keys(existing).length,calls:DK_CALLS,reason:'no new games fetched'};
+    // MERGE write: adds the new games to the events map without touching the rest
     if(FBH.ready){
-      try{await withTO(FBH.db.collection('app_settings').doc('props_'+date).set(payload),10000);}catch(e){}
+      try{await withTO(FBH.db.collection('app_settings').doc('props_'+date).set({date,events:newOnly,fetchedAt:Date.now(),updatedAt:Date.now()},{merge:true}),10000);}catch(e){}
     }
     ODDSP={date,events:results};
     // publish remaining API quota so the Board can show it next to the toggle
@@ -849,7 +866,7 @@ async function fetchDKPropsAndPush(date,onProg){
       try{await withTO(FBH.db.collection('app_settings').doc('dk_status').set({premiumCalls:DK_CALLS,premiumAt:Date.now()},{merge:true}),6000);}catch(e){}
     }
     say('');
-    return{ok:true,count:Object.keys(results).length,calls:DK_CALLS};
+    return{ok:true,count:fetched,skipped:skipped,total:Object.keys(results).length,calls:DK_CALLS};
   }catch(e){
     say('');
     return{ok:false,reason:e.message};
