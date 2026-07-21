@@ -1748,18 +1748,30 @@ async function refreshSuperLocks(force){
         '<span style="font-weight:800">' + esc(a.name) + '</span>' +
         '<span class="statusline" style="margin:0">' + (a.locks.length ? a.locks.length + ' super lock' + (a.locks.length > 1 ? 's' : '') : '—') + '</span></div>';
       if (a.locks.length){
+        // Group picks under one category header so the category's all-time rate
+        // is shown ONCE, and each row shows only that pick's own model odds.
+        var groups = [], byCat = {};
         a.locks.forEach(function(l){
-          html += '<div style="display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hair)">' +
-            '<span style="flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.06em;color:#7fd99a">' + esc(l.cat) + ' ' + l.catPct + '%</span>' +
-            '<span style="flex:1;font-size:14px">' + esc(l.desc) + '</span>' +
-            '<span class="statusline" style="margin:0;flex:0 0 auto">' + esc(String(l.metric || '')) + '</span></div>';
+          if (!byCat[l.cat]){ byCat[l.cat] = { cat: l.cat, catPct: l.catPct, catN: l.catN, rows: [] }; groups.push(byCat[l.cat]); }
+          byCat[l.cat].rows.push(l);
+        });
+        groups.forEach(function(g){
+          html += '<div style="border-top:1px solid var(--hair);padding-top:8px;margin-top:8px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">' +
+            '<span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#7fd99a">' + esc(g.cat) + '</span>' +
+            '<span class="statusline" style="margin:0;font-size:11px">' + g.catPct + '% all-time' + (g.catN ? ' · ' + g.catN + ' graded' : '') + '</span></div>';
+          g.rows.forEach(function(l){
+            html += '<div style="display:flex;gap:10px;align-items:baseline;padding:5px 0">' +
+              '<span style="flex:1;font-size:14px">' + esc(l.desc) + '</span>' +
+              '<span style="flex:0 0 auto;font-size:13px;font-weight:700">' + esc(String(l.metric || '')) + '</span></div>';
+          });
         });
       } else {
         html += '<div class="statusline" style="margin:0">' + esc(a.note || 'Nothing today.') + '</div>';
       }
       html += '</div>';
     });
-    html += '<div class="statusline" style="margin-top:4px">Badge = that category’s all-time graded hit rate · right number = this pick’s model confidence.</div>';
+    html += '<div class="statusline" style="margin-top:4px">Each green heading = that bet type’s all-time graded hit rate (why it earned a spot). The number beside each pick = that specific pick’s model odds today.</div>';
     SL_CACHE = html;
     el.innerHTML = html;
   } catch (e){

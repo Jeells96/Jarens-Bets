@@ -2026,6 +2026,19 @@ function tier(p){
   if(p>=0.66)return['LEAN','t-lean'];
   return['PASS','t-pass'];
 }
+// Batter K / batter BB now grade like hits: P(1+) with a lock threshold.
+function tierK(p){
+  if(p>=CONFIG.kbLock)return['LOCK','t-lock'];
+  if(p>=0.65)return['STRONG','t-strong'];
+  if(p>=0.55)return['LEAN','t-lean'];
+  return['PASS','t-pass'];
+}
+function tierBB(p){
+  if(p>=CONFIG.bbbLock)return['LOCK','t-lock'];
+  if(p>=0.35)return['STRONG','t-strong'];
+  if(p>=0.28)return['LEAN','t-lean'];
+  return['PASS','t-pass'];
+}
 
 function todayMark(market,r){
   if(!DAY_RESULTS)return '';
@@ -2075,6 +2088,13 @@ function drawCurrent(rowsOverride){
   }else if(MARKET==='hr'){
     head.innerHTML=`<div class="chips"><span class="chip"><b>${rows.length}</b> batters · P(home run) · tiers: LOCK ≥${(CONFIG.hrLock*100).toFixed(0)}% · STRONG ≥7.5% · LEAN ≥5.5%</span></div>`;
     drawProbList(rows,tierHR,r=>(r.prob*100).toFixed(1)+'%');
+  }else if(MARKET==='kB'||MARKET==='bbB'){
+    const tf=MARKET==='kB'?tierK:tierBB;
+    const lk=MARKET==='kB'?CONFIG.kbLock:CONFIG.bbbLock;
+    const locks=rows.filter(r=>(r.prob??0)>=lk).length;
+    const stat=MARKET==='kB'?'1+ strikeout':'1+ walk';
+    head.innerHTML=`<div class="chips"><span class="chip"><b>${locks}</b> lock ≥${Math.round(lk*100)}%</span><span class="chip"><b>${rows.length}</b> batters · P(${stat}) · graded vs the box score</span></div>`;
+    drawProbList(rows,tf,r=>((r.prob??0)*100).toFixed(1)+'%',p=>p>=lk?'p-hi':p>=lk*0.85?'p-md':'p-lo');
   }else if(MARKET==='gm'){
     const withOdds=rows.filter(r=>r.mlEdge!=null||r.totLine!=null).length;
     head.innerHTML=`<div class="chips"><span class="chip"><b>${rows.length}</b> games · model win prob + projected total</span><span class="chip"><b>${withOdds}</b> with DK lines${withOdds?'':' — pull game odds on Diamond IQ main'}</span></div>`;
@@ -2116,7 +2136,7 @@ function drawList(rows){
     </div>`;
   }).join('');
 }
-function drawProbList(rows,tierFn,fmt){
+function drawProbList(rows,tierFn,fmt,colFn){
   const list=$('list');
   if(!list)return;
   list.innerHTML=rows.map(r=>{
@@ -2124,9 +2144,9 @@ function drawProbList(rows,tierFn,fmt){
     const chips=(r.reasons||[]).map(x=>`<span class="wc ${x.k}">${x.t}</span>`).join('');
     return `<div class="card" onclick="this.classList.toggle('open')">
       <div class="crow">
-        <div class="prob ${r.prob>=0.09?'p-hi':r.prob>=0.06?'p-md':'p-lo'}">${fmt(r)}</div>
+        <div class="prob ${colFn?colFn(r.prob):(r.prob>=0.09?'p-hi':r.prob>=0.06?'p-md':'p-lo')}">${fmt(r)}</div>
         <div class="who">
-          <div class="nm">${r.name} <span class="vbadge ${r.verified?'v':''}">${r.verified?'● Confirmed matchup':'○ Not confirmed'}</span>${todayMark('hr',r)}${r.locked?' <span title="Verified — locked" style="font-size:.6rem">🔒</span>':''}${r.gradeFlag?' <span title="Lineup shifted after auto-lock — not counted" style="color:var(--warm);font-size:.68rem">⚠</span>':''}</div>
+          <div class="nm">${r.name} <span class="vbadge ${r.verified?'v':''}">${r.verified?'● Confirmed matchup':'○ Not confirmed'}</span>${todayMark(MARKET,r)}${r.locked?' <span title="Verified — locked" style="font-size:.6rem">🔒</span>':''}${r.gradeFlag?' <span title="Lineup shifted after auto-lock — not counted" style="color:var(--warm);font-size:.68rem">⚠</span>':''}</div>
           <div class="meta">${r.team}${r.slot?' #'+r.slot:''} vs ${r.pit||r.opp}${r.pHand?' ('+r.pHand+'HP)':''} · ${r.opp}</div>
         </div>
         <span class="tier ${tc}">${tl}</span>
