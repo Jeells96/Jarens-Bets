@@ -276,10 +276,12 @@ function showView(v){
 
 /* ── config (lock threshold), PIN, and access gate ── */
 const PIN='2325';
-const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gkEdge:1.5,hrlEdge:0.4};
+const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kbLock:0.75,bbbLock:0.45,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gkEdge:1.5,hrlEdge:0.4};
+// P(1+) from an expected count (Poisson) — lets batter K/BB grade like hits, no DK line needed
+const p1of=r=>r&&r.prob!=null?r.prob:(r&&r.exp!=null?1-Math.exp(-r.exp):null);window.p1of=p1of;
 try{
   const c=JSON.parse(localStorage.getItem('fablehits_cfg')||'null');
-  if(c)['lock','hrLock','gmLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
+  if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
 }catch(e){}
 window.CONFIG=CONFIG; // shared with the standalone stats engine
 function cfgSave(){try{localStorage.setItem('fablehits_cfg',JSON.stringify(CONFIG));}catch(e){}}
@@ -289,7 +291,7 @@ async function cfgPull(){
     const doc=await withTO(FBH.db.collection('fable_settings').doc('config').get(),6000);
     if(doc.exists){
       const d=doc.data();
-      ['lock','hrLock','gmLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
+      ['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
     }
     cfgSave();
   }catch(e){}
@@ -1419,6 +1421,7 @@ async function loadDay(){
         const dk=propFor(j.name,mkt);
         MK[mk].push({id:j.pid,name:j.name,team:j.team,opp:j.opp,
           pit:j.oppPitName||'TBD',verified:j.verified,exp:bl.exp,
+          prob:Math.round((1-Math.exp(-bl.exp))*1000)/1000,
           line:dk?.line??null,lean:leanFor(bl.exp,dk?.line,th),
           edge:dk?.line!=null?bl.exp-dk.line:null,reasons:bl.reasons,
           math:'~'+bl.paEst.toFixed(1)+' PA \u00d7 '+(bl.r*100).toFixed(1)+'% rate \u00d7 pitcher \u00d7'+bl.pMult.toFixed(2)});
@@ -1632,7 +1635,7 @@ function showCached(){
 // game that day went Final — partial days regrade on the next Load.
 
 function dayTallies(rows,mk,res,dbgDate){
-  const t={hits:{h:0,n:0},hr:{h:0,n:0},kP:{w:0,l:0,p:0},kB:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},bbB:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
+  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
     if(!r.verified||(r.conf||0)<(CONFIG.gmLock||0))return;
     const g=res['g'+r.id];
@@ -1653,7 +1656,17 @@ function dayTallies(rows,mk,res,dbgDate){
     if(!playedBat(o))return;
     t.hr.n++;if((o.hr||0)>=1)t.hr.h++;
   });
-  ['kP','kB','bbP','bbB','tb','gmK','hrL'].forEach(m=>{
+  // batter K / batter BB grade like HITS: P(1+) lock vs the box score — no DK line
+  [['kB','so',CONFIG.kbLock],['bbB','bb',CONFIG.bbbLock]].forEach(([m,stat,lk])=>{
+    ((mk&&mk[m])||[]).forEach(r=>{
+      if(!r.verified||r.gradeFlag)return;
+      const p=p1of(r);if(p==null||p<lk)return;
+      const o=res[r.id]||res[String(r.id)];
+      if(!playedBat(o))return;
+      t[m].n++;if((o[stat]||0)>=1)t[m].h++;
+    });
+  });
+  ['kP','bbP','tb','gmK','hrL'].forEach(m=>{
     ((mk&&mk[m])||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag)return;
       const gr=lineGrade(r,MK_ACTUAL[m](res[r.id]||res[String(r.id)]));
@@ -1848,7 +1861,7 @@ function drawResultsList(){
   const shown=RVIEW==='14d'?dates.filter(d=>d>=cutoff):dates;
   // aggregate across shown days for the selected market
   let head='';
-  if(RM==='hits'||RM==='hr'){
+  if(RM==='hits'||RM==='hr'||RM==='kB'||RM==='bbB'){
     let h=0,n=0;shown.forEach(d=>{const o=days[d][RM];if(o){h+=o.h;n+=o.n;}});
     head=n?`<b>${Math.round(h/n*100)}%</b> (${h}/${n})${RM==='hits'?' <span class="goal">· goal 85%</span>':''}`:'no graded picks yet';
   }else{
@@ -1915,15 +1928,16 @@ function dayPlayerRows(R){
   const res=R.results||{};
   const note=r=>r.gradeFlag?' <span class="vbadge" style="color:var(--warm)">⚠ lineup shift — not counted</span>':(r.verified?'':' <span class="vbadge">○ not confirmed — not counted</span>');
   let rows;
-  if(RM==='hits'||RM==='hr'){
-    const src=RM==='hits'?(R.rows||[]):((R.mk?.hr)||[]);
-    rows=[...src].sort((a,b)=>(b.prob||0)-(a.prob||0)).map(r=>{
+  if(RM==='hits'||RM==='hr'||RM==='kB'||RM==='bbB'){
+    const src=RM==='hits'?(R.rows||[]):((R.mk?.[RM])||[]);
+    const statOf={hits:'h',hr:'hr',kB:'so',bbB:'bb'};
+    rows=[...src].map(r=>RM==='kB'||RM==='bbB'?{...r,prob:p1of(r)}:r).sort((a,b)=>(b.prob||0)-(a.prob||0)).map(r=>{
       const o=res[r.id];
       const played=playedBat(o);
-      const yes=played&&((RM==='hits'?o.h:o.hr)||0)>=1;
+      const yes=played&&((o[statOf[RM]])||0)>=1;
       const sym=!R.results?'—':!played?'—':yes?'✓':'✗';
       const cls=sym==='✓'?'rY':sym==='✗'?'rN':'rD';
-      const [tl,tc]=(RM==='hits'?tier:tierHR)(r.prob||0);
+      const [tl,tc]=(RM==='hits'||RM==='kB'?tier:tierHR)(r.prob||0);
       return `<div class="rrow"><span class="rres ${cls}">${sym}</span><span style="min-width:52px;font-variant-numeric:tabular-nums;color:var(--mt)">${((r.prob||0)*100).toFixed(1)}%</span><span class="tier ${tc}">${tl}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}${note(r)}</span><span style="color:var(--mt2);font-size:.68rem">${r.team}</span></div>`;
     });
   }else{
@@ -2016,9 +2030,10 @@ function tier(p){
 function todayMark(market,r){
   if(!DAY_RESULTS)return '';
   const o=DAY_RESULTS[r.id]||DAY_RESULTS[String(r.id)];
-  if(market==='hits'||market==='hr'){
+  if(market==='hits'||market==='hr'||market==='kB'||market==='bbB'){
     if(!playedBat(o))return '';
-    const yes=((market==='hits'?o.h:o.hr)||0)>=1;
+    const statOf={hits:'h',hr:'hr',kB:'so',bbB:'bb'};
+    const yes=((o[statOf[market]])||0)>=1;
     return yes?'<span class="rmark Y">✓</span>':'<span class="rmark N">✗</span>';
   }
   const gr=lineGrade(r,MK_ACTUAL[market]?MK_ACTUAL[market](o):null);
@@ -2248,7 +2263,7 @@ async function bootLeagueLoad(){
            in-app Save uses. The app + hub then show new-threshold rates. */
         try{
           await cfgPull();
-          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
+          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
           if(oldHash!==cfgHash){
@@ -2479,13 +2494,15 @@ async function bootLeagueLoad(){
         }
         return `<div class="rrow"><span class="rres ${cls}">${sym}</span><span style="min-width:44px;font-variant-numeric:tabular-nums;color:var(--mt)">${((r.conf||0)*100).toFixed(0)}%</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name} — <b>${r.pick}</b>${score}${r.verified?'':' <span class="vbadge">○ not confirmed — not counted</span>'}</span><span style="color:var(--mt2);font-size:.62rem;white-space:nowrap">${r.totLine!=null?'tot '+r.total+' vs '+r.totLine+(r.totLean&&r.totLean!=='—'?' '+r.totLean:''):'proj tot '+r.total}</span></div>`;
       });
-    }else if(MKT==='hits'||MKT==='hr'){
-      const src=MKT==='hits'?(D.rows||[]):((D.mk&&D.mk.hr)||[]);
-      const th=MKT==='hits'?cfg.lock:cfg.hrLock;
-      rows=src.filter(r=>r.prob!=null&&r.prob>=th).sort((a,b)=>b.prob-a.prob).map(r=>{
+    }else if(MKT==='hits'||MKT==='hr'||MKT==='kB'||MKT==='bbB'){
+      const src=MKT==='hits'?(D.rows||[]):((D.mk&&D.mk[MKT])||[]);
+      const th=MKT==='hits'?cfg.lock:MKT==='hr'?cfg.hrLock:MKT==='kB'?(cfg.kbLock??0.75):(cfg.bbbLock??0.45);
+      const statOf={hits:'h',hr:'hr',kB:'so',bbB:'bb'};
+      const pOf=window.p1of||(r=>r.prob);
+      rows=src.map(r=>MKT==='kB'||MKT==='bbB'?{...r,prob:pOf(r)}:r).filter(r=>r.prob!=null&&r.prob>=th).sort((a,b)=>b.prob-a.prob).map(r=>{
         const o=res[r.id];
         const pd=played(o);
-        const yes=pd&&(((MKT==='hits'?o.h:o.hr)||0)>=1);
+        const yes=pd&&(((o[statOf[MKT]])||0)>=1);
         const sym=!D.results?'—':!pd?'—':(yes?'✓':'✗');
         const cls=sym==='✓'?'rY':sym==='✗'?'rN':'rD';
         return `<div class="rrow"><span class="rres ${cls}">${sym}</span><span style="min-width:56px;font-variant-numeric:tabular-nums;color:var(--mt)">${(r.prob*100).toFixed(1)}%</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}${lbl(r)}${(!pd&&D.results)?' <span class="vbadge">— didn\u2019t play</span>':''}</span><span style="color:var(--mt2);font-size:.68rem">${r.team}</span></div>`;

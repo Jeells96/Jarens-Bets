@@ -908,7 +908,8 @@ function markLockedCards(){
 var PREM_KNOBS = [
   ['lock','Batter hits \u00b7 lock \u2265 %',true],['hrLock','Home runs \u00b7 lock \u2265 %',true],
   ['gmLock','Game predictions \u00b7 lock \u2265 %',true],
-  ['kEdge','Strikeout props \u00b7 edge \u2265',false],['bbEdge','Walk props \u00b7 edge \u2265',false],
+  ['kbLock','Batter K \u00b7 lock \u2265 %',true],['bbbLock','Batter BB \u00b7 lock \u2265 %',true],
+  ['kEdge','Pitcher K \u00b7 edge \u2265',false],['bbEdge','Pitcher BB \u00b7 edge \u2265',false],
   ['tbEdge','Total bases \u00b7 edge \u2265',false],['gkEdge','Game K \u00b7 edge \u2265',false],['hrlEdge','Game HRs \u00b7 edge \u2265',false]
 ];
 var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs'],['bb','Batter walks'],['bbat','Batter strikeouts'],['k','Pitcher strikeouts'],['pbb','Pitcher walks'],['hrLine','HR line'],['gnoHR','No-HR game'],['gmultiHR','Multi-HR game']];
@@ -932,9 +933,10 @@ async function listAllDocs(cfg, coll){
 }
 function premiumRates(days, cfg){
   var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
-  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, gm:{w:0,l:0}, kB:{w:0,l:0}, bbB:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmK:{w:0,l:0}, hrL:{w:0,l:0} };
-  var actual = { kB:'so', bbB:'bb', kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
-  var edgeKey = { kB:'kEdge', bbB:'bbEdge', kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
+  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{h:0,n:0}, bbB:{h:0,n:0}, gm:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmK:{w:0,l:0}, hrL:{w:0,l:0} };
+  var actual = { kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
+  var edgeKey = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
+  var p1 = function(r){ return r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null); };
   days.forEach(function(day){
     var res = day.data.results; if (!res) return;
     (day.data.rows || []).forEach(function(r){
@@ -953,6 +955,15 @@ function premiumRates(days, cfg){
       if (!r.verified || r.gradeFlag || (r.prob || 0) < cfg.hrLock) return;
       var o = res[r.id]; if (!played(o)) return;
       agg.hr.n++; if ((o.hr || 0) >= 1) agg.hr.h++;
+    });
+    // batter K / batter BB grade like hits: P(1+) lock vs box score, no DK line
+    [['kB','so','kbLock'],['bbB','bb','bbbLock']].forEach(function(c){
+      (mk[c[0]] || []).forEach(function(r){
+        if (!r.verified || r.gradeFlag) return;
+        var p = p1(r); if (p == null || p < cfg[c[2]]) return;
+        var o = res[r.id]; if (!played(o)) return;
+        agg[c[0]].n++; if ((o[c[1]] || 0) >= 1) agg[c[0]].h++;
+      });
     });
     Object.keys(actual).forEach(function(m){
       (mk[m] || []).forEach(function(r){
@@ -1114,7 +1125,7 @@ async function openSettingsPanel(){
   }
   var nflCfg = nflRaw ? fsFields(nflRaw.fields || {}) : null;
 
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
   var NBA_TH_DEF = { winner: 60, lines: 0, props: 0, dk: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
   var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
@@ -1262,7 +1273,7 @@ async function openSettingsPanel(){
     });
     return out;
   };
-  var normPremProbs = function(o){ if (o) ['lock','hrLock','gmLock'].forEach(function(k){ if (o[k] > 1) o[k] = o[k] / 100; }); return o; };
+  var normPremProbs = function(o){ if (o) ['lock','hrLock','gmLock','kbLock','bbbLock'].forEach(function(k){ if (o[k] > 1) o[k] = o[k] / 100; }); return o; };
   var readNums = function(knobs, prefix, max){
     var out = {}, bad = false;
     knobs.forEach(function(k){
@@ -1417,9 +1428,10 @@ async function openSettingsPanel(){
 
   hookSolve('pk-', PREM_KNOBS, [], async function(target){
     var days = await ensurePrem();
-    var pools = { lock: [], hrLock: [], gmLock: [], kEdge: [], bbEdge: [], tbEdge: [], gkEdge: [], hrlEdge: [] };
-    var edgeOf = { kB:'kEdge', kP:'kEdge', bbB:'bbEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
-    var actual = { kB:'so', bbB:'bb', kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
+    var pools = { lock: [], hrLock: [], gmLock: [], kbLock: [], bbbLock: [], kEdge: [], bbEdge: [], tbEdge: [], gkEdge: [], hrlEdge: [] };
+    var edgeOf = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
+    var actual = { kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
+    var p1 = function(r){ return r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null); };
     var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
     days.forEach(function(day){
       var res = day.data.results; if (!res) return;
@@ -1440,6 +1452,14 @@ async function openSettingsPanel(){
         var o = res[r.id]; if (!played(o)) return;
         pools.hrLock.push({ m: r.prob, h: (o.hr || 0) >= 1 });
       });
+      [['kB','so','kbLock'],['bbB','bb','bbbLock']].forEach(function(c){
+        (mk[c[0]] || []).forEach(function(r){
+          if (!r.verified || r.gradeFlag) return;
+          var p = p1(r); if (p == null) return;
+          var o = res[r.id]; if (!played(o)) return;
+          pools[c[2]].push({ m: p, h: (o[c[1]] || 0) >= 1 });
+        });
+      });
       Object.keys(edgeOf).forEach(function(m){
         (mk[m] || []).forEach(function(r){
           if (!r.verified || r.gradeFlag || r.line == null || r.exp == null) return;
@@ -1450,7 +1470,7 @@ async function openSettingsPanel(){
         });
       });
     });
-    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', gmLock:'Game predictions lock', kEdge:'K props edge', bbEdge:'BB props edge', tbEdge:'Total bases edge', gkEdge:'Game K edge', hrlEdge:'Game HRs edge' };
+    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', gmLock:'Game predictions lock', kbLock:'Batter K lock', bbbLock:'Batter BB lock', kEdge:'Pitcher K edge', bbEdge:'Pitcher BB edge', tbEdge:'Total bases edge', gkEdge:'Game K edge', hrlEdge:'Game HRs edge' };
     var f3 = function(v){ return (Math.round(v * 1000) / 1000); };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '%, set each knob to \u2265 the value shown</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k], target), f3); }).join('');
@@ -1602,7 +1622,7 @@ async function slEnsure(key, coll, cfg, unitsField){
 async function slConfigs(){
   var premRaw = await fsGetRaw(ADMIN, 'fable_settings/config');
   var premCfgRaw = premRaw ? fsFields(premRaw.fields || {}) : null;
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
   var prem = {}; Object.keys(PREM_DEF).forEach(function(k){ prem[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
   var readJson = async function(path){
     var raw = await fsGetRaw(NFLP, path);
@@ -1645,7 +1665,15 @@ async function slPremiumLane(cfgs){
       if (r.verified && !r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock)
         push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%');
     });
-    var edgeKey = { kB: 'kEdge', bbB: 'bbEdge', kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmK: 'gkEdge', hrL: 'hrlEdge' };
+    [['kB', 'so', 'kbLock', '1+ strikeout'], ['bbB', 'bb', 'bbbLock', '1+ walk']].forEach(function(c){
+      if (!qual[c[0]]) return;
+      (mk[c[0]] || []).forEach(function(r){
+        var p = r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null);
+        if (r.verified && !r.gradeFlag && p != null && p >= cfgs.prem[c[2]])
+          push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%');
+      });
+    });
+    var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmK: 'gkEdge', hrL: 'hrlEdge' };
     Object.keys(edgeKey).forEach(function(m){
       if (!qual[m]) return;
       (mk[m] || []).forEach(function(r){
