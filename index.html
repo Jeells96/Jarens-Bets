@@ -235,7 +235,13 @@ body{
 
   <div class="rule"></div>
 
+  <div id="viewpills" style="display:flex;gap:8px;margin:0 0 14px">
+    <button class="vpill on" id="vBoard" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">The Board</button>
+    <button class="vpill" id="vSuper" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">&#9889; Super Locks</button>
+  </div>
+
   <main id="cards"><!-- cards injected --></main>
+  <section id="superlocks" class="hidden" style="display:none"></section>
 
   <footer class="foot">
     <h2>How the records work</h2>
@@ -1557,9 +1563,197 @@ async function openSettingsPanel(){
   });
 }
 
+/* ═══ SUPER LOCKS — the quick bet finder ═══════════════════════════════════
+   A bet shows here ONLY if BOTH are true:
+   (a) its category's graded, all-time success rate is ≥ 80% on ≥ 20 picks
+       (computed from the same stored history the lock-grade previews use), and
+   (b) the app itself calls it a LOCK today at the current thresholds.
+   No filler — an empty day means nothing cleared the bar, and that's honest. */
+var SL_MIN_PCT = 80, SL_MIN_N = 20;
+var SL_CACHE = null;
+function slPct(o){ // rate engines emit {h,n} or {w,l}
+  if (!o) return null;
+  var n = o.n != null ? o.n : ((o.w || 0) + (o.l || 0));
+  var h = o.h != null ? o.h : (o.w || 0);
+  return n ? { pct: Math.round(100 * h / n), n: n } : null;
+}
+function slQualified(agg){
+  var q = {};
+  Object.keys(agg).forEach(function(k){
+    if (k === 'allLocks') return;
+    var r = slPct(agg[k]);
+    if (r && r.pct >= SL_MIN_PCT && r.n >= SL_MIN_N) q[k] = r;
+  });
+  return q;
+}
+function slTodayPT(){ return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); }
+async function slEnsure(key, coll, cfg, unitsField){
+  if (PREVIEW_CACHE[key]) return PREVIEW_CACHE[key];
+  var docs = await listAllDocs(cfg, coll);
+  if (!unitsField){ PREVIEW_CACHE[key] = docs; return docs; }
+  var units = [];
+  docs.forEach(function(d){
+    var s = unitsField === 'units' ? (/_units$/.test(d.id) ? d.data.units : null) : d.data.data;
+    if (typeof s === 'string'){ try { units = units.concat(JSON.parse(s) || []); } catch (e) {} }
+  });
+  PREVIEW_CACHE[key] = { units: units, days: docs.length };
+  return PREVIEW_CACHE[key];
+}
+async function slConfigs(){
+  var premRaw = await fsGetRaw(ADMIN, 'fable_settings/config');
+  var premCfgRaw = premRaw ? fsFields(premRaw.fields || {}) : null;
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var prem = {}; Object.keys(PREM_DEF).forEach(function(k){ prem[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
+  var readJson = async function(path){
+    var raw = await fsGetRaw(NFLP, path);
+    if (raw && raw.fields && raw.fields.data && raw.fields.data.stringValue){ try { return JSON.parse(raw.fields.data.stringValue); } catch (e) {} }
+    return null;
+  };
+  var nbaCfg = await readJson('nba/lockcfg'), iceCfg = await readJson('nhl/lockcfg');
+  var nflRaw = await fsGetRaw(NFLP, 'accuracy/config_locks');
+  var nflCfg = nflRaw ? fsFields(nflRaw.fields || {}) : null;
+  return {
+    prem: prem,
+    nbaTh: Object.assign({ winner: 60, lines: 0, props: 0, dk: 0 }, (nbaCfg && nbaCfg.lockThresholds) || {}),
+    nbaTol: Object.assign({ pts: 4, stat: 3 }, (nbaCfg && nbaCfg.hitTol) || {}),
+    iceTh: Object.assign({ winner: 58, lines: 0, props: 40, dk: 0 }, (iceCfg && iceCfg.lockThresholds) || {}),
+    iceTol: Object.assign({ goals: 1, p1: 1 }, (iceCfg && iceCfg.hitTol) || {}),
+    nflTh: Object.assign({ winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, (nflCfg && nflCfg.lockThresholds) || {}),
+    nflTol: Object.assign({ pts: 3, yds: 10 }, (nflCfg && nflCfg.hitTol) || {})
+  };
+}
+async function slPremiumLane(cfgs){
+  var days = await slEnsure('prem', 'fable_hits', ADMIN, null);
+  var qual = slQualified(premiumRates(days, cfgs.prem));
+  var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES', gmK: 'GAME K', hrL: 'GAME HRS' };
+  var today = slTodayPT();
+  var raw = await fsGetRaw(ADMIN, 'fable_hits/' + today);
+  var day = raw ? fsFields(raw.fields || {}) : null;
+  var locks = [];
+  if (day){
+    var push = function(m, desc, metric){ locks.push({ cat: L[m] || m, catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric }); };
+    if (qual.hits) (day.rows || []).forEach(function(r){
+      if (r.verified && !r.gradeFlag && r.prob != null && r.prob >= cfgs.prem.lock)
+        push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', Math.round(r.prob * 100) + '%');
+    });
+    var mk = day.mk || {};
+    if (qual.gm) (mk.gm || []).forEach(function(r){
+      if (r.verified && (r.conf || 0) >= (cfgs.prem.gmLock || 0))
+        push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — pick ' + r.pick, r.conf != null ? Math.round(r.conf) + '%' : '');
+    });
+    if (qual.hr) (mk.hr || []).forEach(function(r){
+      if (r.verified && !r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock)
+        push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%');
+    });
+    var edgeKey = { kB: 'kEdge', bbB: 'bbEdge', kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmK: 'gkEdge', hrL: 'hrlEdge' };
+    Object.keys(edgeKey).forEach(function(m){
+      if (!qual[m]) return;
+      (mk[m] || []).forEach(function(r){
+        if (!r.verified || r.gradeFlag || r.line == null || r.exp == null) return;
+        var d = r.exp - r.line, th = cfgs.prem[edgeKey[m]];
+        var lean = d >= th ? 'OVER' : d <= -th ? 'UNDER' : null;
+        if (!lean) return;
+        push(m, r.name + ' (' + (r.team || '') + ') — ' + lean + ' ' + r.line, 'exp ' + r.exp);
+      });
+    });
+  }
+  var note = !Object.keys(qual).length ? 'No Diamond IQ category is at 80%+ yet.'
+    : !day ? 'Today’s board isn’t saved yet — it lands during the daily picks run.'
+    : !locks.length ? 'No confirmed locks in an 80%+ category today.' : '';
+  return { name: 'Diamond IQ Premium', locks: locks, note: note };
+}
+async function slUnitsLane(cfgs, opts){
+  var data = await slEnsure(opts.cacheKey, opts.coll, NFLP, opts.unitsField || 'data');
+  var qual = slQualified(opts.rates(data.units));
+  var raw = await fsGetRaw(NFLP, opts.todayDoc);
+  var td = null;
+  if (raw && raw.fields){
+    if (raw.fields.data && raw.fields.data.stringValue){ try { td = JSON.parse(raw.fields.data.stringValue); } catch (e) {} }
+    else {
+      var f = fsFields(raw.fields);
+      if (typeof f.locks === 'string'){ try { f.locks = JSON.parse(f.locks); } catch (e){ f.locks = null; } }
+      td = f;
+    }
+  }
+  var locks = [];
+  if (td && td.date === slTodayPT() && Array.isArray(td.locks)){
+    td.locks.forEach(function(l){
+      var q = qual[l.cat];
+      if (!q) return;
+      locks.push({ cat: (opts.labels[l.cat] || l.cat).toUpperCase(), catPct: q.pct, catN: q.n, desc: l.desc, metric: l.metric != null ? l.metric + '%' : '' });
+    });
+  }
+  var note = !data.units.length ? opts.name + '’s graded history isn’t published yet.'
+    : !Object.keys(qual).length ? 'No ' + opts.name + ' category is at 80%+ yet.'
+    : (!td || td.date !== slTodayPT()) ? 'No slate published for today' + (opts.season ? ' (' + opts.season + ')' : '') + '.'
+    : !locks.length ? 'Today’s locks aren’t in an 80%+ category.' : '';
+  return { name: opts.name, locks: locks, note: note };
+}
+async function refreshSuperLocks(force){
+  var el = document.getElementById('superlocks');
+  if (!el) return;
+  if (SL_CACHE && !force){ el.innerHTML = SL_CACHE; return; }
+  el.innerHTML = '<div class="statusline" style="padding:20px 0">Reading every app’s graded record… first open takes a few seconds.</div>';
+  try {
+    var cfgs = await slConfigs();
+    var lanes = await Promise.all([
+      slPremiumLane(cfgs),
+      slUnitsLane(cfgs, { cacheKey: 'nba', coll: 'nba_accuracy', todayDoc: 'nba/today', name: 'The Key',
+        rates: function(u){ return nbaRates(u, cfgs.nbaTh, cfgs.nbaTol); },
+        labels: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Rebounds', playerAst: 'Assists', dkML: 'vs DK ML', dkTotal: 'vs DK total', dkSpread: 'vs DK spread' },
+        season: 'NBA runs Oct–Jun' }),
+      slUnitsLane(cfgs, { cacheKey: 'ice', coll: 'nhl_accuracy', todayDoc: 'nhl/today', name: 'Icing',
+        rates: function(u){ return iceRates(u, cfgs.iceTh, cfgs.iceTol); },
+        labels: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorer', point: 'Point scorer', dkML: 'vs DK ML', dkTotal: 'vs DK total' },
+        season: 'NHL runs Oct–Jun' }),
+      slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', unitsField: 'units',
+        rates: function(u){ return nflRates(u, cfgs.nflTh, cfgs.nflTol); },
+        labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', anytimeTd: 'Anytime TD', firstTd: 'First TD' },
+        season: 'NFL runs Sep–Feb' })
+    ]);
+    var total = lanes.reduce(function(s, a){ return s + a.locks.length; }, 0);
+    var html = '<div style="margin:4px 0 16px"><div style="font-weight:800;font-size:20px;letter-spacing:.04em">⚡ SUPER LOCKS · ' + total + ' today</div>' +
+      '<div class="statusline" style="margin-top:4px">Only locks from categories graded 80%+ all-time (min ' + SL_MIN_N + ' picks). Nothing else makes this list.</div></div>';
+    lanes.forEach(function(a){
+      html += '<div style="border:1px solid var(--hair);border-radius:14px;padding:14px 16px;margin-bottom:12px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
+        '<span style="font-weight:800">' + esc(a.name) + '</span>' +
+        '<span class="statusline" style="margin:0">' + (a.locks.length ? a.locks.length + ' super lock' + (a.locks.length > 1 ? 's' : '') : '—') + '</span></div>';
+      if (a.locks.length){
+        a.locks.forEach(function(l){
+          html += '<div style="display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hair)">' +
+            '<span style="flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.06em;color:#7fd99a">' + esc(l.cat) + ' ' + l.catPct + '%</span>' +
+            '<span style="flex:1;font-size:14px">' + esc(l.desc) + '</span>' +
+            '<span class="statusline" style="margin:0;flex:0 0 auto">' + esc(String(l.metric || '')) + '</span></div>';
+        });
+      } else {
+        html += '<div class="statusline" style="margin:0">' + esc(a.note || 'Nothing today.') + '</div>';
+      }
+      html += '</div>';
+    });
+    html += '<div class="statusline" style="margin-top:4px">Badge = that category’s all-time graded hit rate · right number = this pick’s model confidence.</div>';
+    SL_CACHE = html;
+    el.innerHTML = html;
+  } catch (e){
+    el.innerHTML = '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the tab again to retry.</div>';
+  }
+}
+function showView(which){
+  var isSuper = which === 'super';
+  document.getElementById('cards').style.display = isSuper ? 'none' : '';
+  document.getElementById('superlocks').style.display = isSuper ? '' : 'none';
+  var on = function(b, v){ b.classList.toggle('on', v); b.style.borderColor = v ? '#7fd99a' : 'var(--hair)'; b.style.color = v ? '#7fd99a' : ''; };
+  on(document.getElementById('vBoard'), !isSuper);
+  on(document.getElementById('vSuper'), isSuper);
+  if (isSuper) refreshSuperLocks(false);
+}
+
 document.addEventListener('DOMContentLoaded', function(){
   var g = document.getElementById('gearbtn');
   if (g) g.addEventListener('click', openSettingsPanel);
+  var vb = document.getElementById('vBoard'), vs = document.getElementById('vSuper');
+  if (vb) vb.addEventListener('click', function(){ showView('board'); });
+  if (vs) vs.addEventListener('click', function(){ showView('super'); });
   runGate();
 });
 document.addEventListener('DOMContentLoaded', boot);

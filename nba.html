@@ -1447,6 +1447,35 @@ async function runCronGrade(){
       }
       if (pruned) clog('retention: pruned ' + pruned + ' pre-season docs');
     } catch (e) {}
+    /* SUPER LOCKS: publish TODAY'S locks (nba/today) for the Board's quick bet
+       finder \u2014 same projections + lock thresholds the app itself uses. Wrapped
+       so a failure here can never break grading. */
+    try {
+      const tdate = todayPT();
+      let tgames = [];
+      try { const sb = await fetch(ESPN.scoreboard(toESPN(tdate)), { cache: 'no-store' }); if (sb.ok) tgames = parseScoreboard(await sb.json()); } catch (e) {}
+      const tlocks = [];
+      for (const g of tgames){
+        if (g.completed) continue;
+        let inj = {};
+        try { const s = await fetchSummary(g.id); if (s) inj = extractInjuries(s); } catch (e) {}
+        const proj = projectGame(g, inj, tdate);
+        if (!proj) continue;
+        const gm = g.away.abbr + '@' + g.home.abbr;
+        if (proj.winMetric >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + ' \u2014 winner ' + proj.winAb, metric: proj.winMetric });
+        if (proj.confTotal >= lockTh('lines')) tlocks.push({ cat: 'total', desc: gm + ' \u2014 total ' + proj.total + ' \u00b1' + hitTol('pts'), metric: proj.confTotal });
+        if (proj.confTeam >= lockTh('lines')){
+          tlocks.push({ cat: 'teamPts', desc: g.away.abbr + ' points ' + proj.awayPts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
+          tlocks.push({ cat: 'teamPts', desc: g.home.abbr + ' points ' + proj.homePts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
+        }
+        for (const p of (proj.props || [])){
+          if (p.conf >= lockTh('props')) tlocks.push({ cat: p.cat, desc: p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + hitTol('stat'), metric: p.conf });
+        }
+        await sleep(60);
+      }
+      await fbWrite(FB_NS, 'today', { date: tdate, locks: tlocks });
+      clog('published ' + tlocks.length + ' lock(s) to nba/today for the Board');
+    } catch (e){ clog('today-locks publish warn: ' + (e && e.message || e)); }
     const dates = Object.keys(state.seasonUnits || {}).length;
     const note = espnOK ? '' : ' (ESPN unreachable this run \u2014 graded from cloud records)';
     clog('done \u2014 ' + after + ' records, ' + dates + ' dates graded, ' + pushed + ' day(s) mirrored, nba/allTime updated' + note);

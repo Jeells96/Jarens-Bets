@@ -5453,6 +5453,40 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
         }
         if (pruned) console.log('[nfl] retention: pruned ' + pruned + ' docs from seasons before ' + keepFrom);
       } catch (e) {}
+      /* SUPER LOCKS: publish TODAY'S locks (gridline/todayLocks) for the
+         Board's quick bet finder. Only runs when ESPN shows NFL games today
+         (in-season); a failure here can never break the grading above. */
+      try {
+        const ptToday = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+        const sbUrl = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=' + ptToday.replace(/-/g, '');
+        const sbRes = await fetch(sbUrl, { cache: 'no-store' });
+        const sb = sbRes.ok ? await sbRes.json() : null;
+        const evToday = (sb && sb.events) || [];
+        const tlocks = [];
+        if (evToday.length && sb.week && sb.week.number && sb.season && sb.season.year){
+          state.season = sb.season.year;
+          state.week = sb.week.number;
+          await loadWeek(); // builds state.games with full projections context
+          for (const g of state.games){
+            if (g.completed) continue;
+            const gDay = g.date ? new Date(g.date).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) : null;
+            if (gDay !== ptToday) continue;
+            const proj = projectGame(g);
+            if (!proj) continue;
+            const gm = g.away.abbr + '@' + g.home.abbr;
+            const pickProb = Math.round(Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100);
+            const pickAb = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
+            if (pickProb >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + ' — winner ' + pickAb, metric: pickProb });
+            if (proj.conf >= lockTh('lines')){
+              tlocks.push({ cat: 'total', desc: gm + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+              tlocks.push({ cat: 'awayPts', desc: g.away.abbr + ' points ' + proj.awayPts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+              tlocks.push({ cat: 'homePts', desc: g.home.abbr + ' points ' + proj.homePts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+            }
+          }
+        }
+        await fsSetDoc('gridline/todayLocks', { date: ptToday, locks: JSON.stringify(tlocks), t: Date.now() });
+        console.log('[nfl] published ' + tlocks.length + ' lock(s) to gridline/todayLocks');
+      } catch (e) { console.log('[nfl] today-locks publish warn: ' + (e && e.message || e)); }
       console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
       window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks, ~' + graded + ' results), accuracy synced';
     } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }

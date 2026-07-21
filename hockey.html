@@ -890,6 +890,36 @@ async function runCronGrade(){
     // verify-don't-trust: read the summary back before claiming success
     const check = await fbRead(FB_NS, 'allTime');
     if (!check || !check.all || check.all.n !== summary.all.n) throw new Error('summary verify failed — wrote n=' + summary.all.n + ' but read back ' + JSON.stringify(check && check.all));
+    /* SUPER LOCKS: publish TODAY'S locks (nhl/today) for the Board's quick bet
+       finder — same walk-forward projections + thresholds the app uses. Wrapped
+       so a failure here can never break grading. */
+    try {
+      const tdate = todayPT();
+      let tgames = [];
+      try { tgames = parseScoreboard(await fetchJSON(ESPN.scoreboard(tdate))); } catch (e) {}
+      const tlocks = [];
+      const prior = priorRecords(tdate);
+      if (tgames.length && prior.length >= 100){
+        const tctx = { rates: teamRates(prior), players: playerRates(prior) };
+        for (const gg of tgames){
+          if (gg.completed) continue;
+          const proj = projectGame(gg, tctx);
+          if (!proj) continue;
+          const gm = gg.away.ab + '@' + gg.home.ab;
+          if (proj.winMetric >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + ' — winner ' + proj.winAb, metric: proj.winMetric });
+          if (proj.winMetric >= lockTh('lines')){
+            tlocks.push({ cat: 'total', desc: gm + ' — total ' + proj.total + ' ±' + hitTol('goals'), metric: proj.winMetric });
+            tlocks.push({ cat: 'p1', desc: gm + ' — 1st period ' + proj.p1 + ' ±' + hitTol('p1'), metric: proj.winMetric });
+          }
+          for (const pr of (proj.props || [])){
+            if (pr.goalConf >= lockTh('props')) tlocks.push({ cat: 'goal', desc: pr.name + ' (' + pr.ab + ') — anytime goal', metric: pr.goalConf });
+            if (pr.pointConf >= lockTh('props')) tlocks.push({ cat: 'point', desc: pr.name + ' (' + pr.ab + ') — 1+ point', metric: pr.pointConf });
+          }
+        }
+      }
+      await fbWrite(FB_NS, 'today', { date: tdate, locks: tlocks });
+      clog('published ' + tlocks.length + ' lock(s) to nhl/today for the Board');
+    } catch (e){ clog('today-locks publish warn: ' + (e && e.message || e)); }
     clog('done — ' + after + ' dates stored, ' + g.unitCount + ' units, ' + pushed + ' unit docs pushed, ' + mirrored + ' rec docs mirrored, nhl/allTime verified (' + summary.all.hit + '/' + summary.all.n + ' locks)');
   } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
   window.__cronDone = true;
