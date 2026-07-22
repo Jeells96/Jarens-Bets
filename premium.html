@@ -2592,18 +2592,38 @@ async function bootLeagueLoad(){
   function parseMembers(f){ if (f && f.members && f.members.stringValue){ try { return JSON.parse(f.members.stringValue) || []; } catch (e){ return []; } } return []; }
   function grantOf(s, list){
     if (!s) return { ok: false };
-    if (s.free) return { ok: true, apps: ['mlbfree'], dk: false };
-    if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true };
+    if (s.free) return { ok: true, apps: ['mlbfree'], dk: false, dkMode: 'off' };
+    if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true, dkMode: 'unlimited' };
     for (var i = 0; i < list.length; i++){ var m = list[i];
       if (norm(m.code) !== norm(s.code)) continue;              // must match THEIR personal code
       if (m.name != null && norm(m.name) !== norm(s.name)) continue; // AND their name
-      return { ok: true, apps: (m.apps && m.apps.length) ? m.apps : null, dk: m.dk !== false };
+      return { ok: true, apps: (m.apps && m.apps.length) ? m.apps : null, dk: m.dk !== false, dkMode: m.dkMode || (m.dk === false ? 'off' : 'unlimited') };
     }
     return { ok: false };
   }
   function okApp(g){ return g.ok && (!g.apps || g.apps.indexOf(APPKEY) >= 0); }
   var ov, dkVisG = true;
   function setDk(v){ window.__DK_OK = v; if (!v) document.documentElement.classList.add('dk-off'); else document.documentElement.classList.remove('dk-off'); try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(v); } catch (e) {} }
+  // DK 'limited' tiers get a 15-distinct-days-per-month pass, metered per device.
+  function dkLimitedOk(code){
+    try {
+      var d = new Date(), ym = d.getFullYear() + '-' + (d.getMonth() + 1);
+      var key = 'dkpass_' + norm(code) + '_' + ym;
+      var set = JSON.parse(localStorage.getItem(key) || '[]');
+      var today = d.toISOString().slice(0, 10);
+      if (set.indexOf(today) >= 0) return true;   // already spent today — still allowed
+      if (set.length >= 15) return false;         // pass used up for the month
+      set.push(today); localStorage.setItem(key, JSON.stringify(set)); return true;
+    } catch (e){ return true; } // never hard-block on a storage hiccup
+  }
+  function dkEff(g, dkVis, code){
+    var base = dkVis && g && (g.dk !== false);
+    if (!base) return false;
+    var mode = (g && g.dkMode) || 'unlimited';
+    if (mode === 'off') return false;
+    if (mode === 'limited') return dkLimitedOk(code);
+    return true; // unlimited
+  }
   function cover(html){
     if (ov) ov.remove();
     ov = document.createElement('div');
@@ -2649,7 +2669,7 @@ async function bootLeagueLoad(){
         logFree(name); pass(); return;
       }
       var g = grantOf({ name: name, code: code }, list);
-      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkVisG && (g.dk !== false)); pass(); }
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkEff(g, dkVisG, String(code).trim())); pass(); }
       else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
       else { err('No match — check your name and code, or your access was turned off.'); }
     };
@@ -2669,7 +2689,7 @@ async function bootLeagueLoad(){
       list = [];
     }
     var g = grantOf(s, list);
-    setDk(dkVis && (g.ok ? (g.dk !== false) : true)); // effective DK = global switch AND this member's DK toggle
+    setDk(g.ok ? dkEff(g, dkVis, (s && s.code) || '') : dkVis); // effective DK = global switch AND this member's DK mode (unlimited / 15-day pass / off)
     if (okApp(g)){ pass(); return; }
     showGate(list);
   })();

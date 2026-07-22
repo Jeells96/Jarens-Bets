@@ -440,7 +440,7 @@ function rankMarkets(rows, k){
   var rest = real.filter(function(r){ return r.n < MIN_N; })
     .sort(function(a, b){ return (b.n - a.n) || ((b.hit / b.n) - (a.hit / a.n)); });
   return eligible.concat(rest).slice(0, k).map(function(r){
-    return { label: r.label, pct: Math.round(100 * r.hit / r.n), n: r.n };
+    return { label: r.label, pct: Math.round(100 * r.hit / r.n), n: r.n, hit: r.hit, miss: r.n - r.hit };
   });
 }
 function packTop(rows, t){
@@ -575,7 +575,7 @@ function fillResult(s, result){
         '<span class="rk">' + (i + 1) + '</span>' +
         '<span class="mk">' + esc(m.label) + '</span>' +
         '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
-        '<span class="nn" title="Sample size: graded bets behind this rate">' + m.n + ' graded</span></li>';
+        '<span class="nn" title="' + m.hit + ' right · ' + m.miss + ' wrong (of ' + m.n + ' graded)">' + m.hit + '–' + m.miss + '</span></li>';
     }).join('');
     var freshLine = '';
     if (result.data.t){
@@ -588,7 +588,7 @@ function fillResult(s, result){
         (stale ? '\u26a0 record last graded ' + ageTxt : 'graded ' + ageTxt) + '</div>';
     }
     sb.innerHTML =
-      '<div class="lab">Most accurate markets</div>' +
+      '<div class="lab">Most accurate markets <span style="opacity:.6;font-weight:600">· % · right–wrong</span></div>' +
       '<ol class="top3">' + rows + '</ol>' + freshLine;
     var nums = sb.querySelectorAll('.num');
     Array.prototype.forEach.call(nums, function(el, i){
@@ -633,10 +633,10 @@ async function fillFreeTop3(){
         '<span class="rk">' + (i + 1) + '</span>' +
         '<span class="mk">' + esc(m.label) + '</span>' +
         '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
-        '<span class="nn" title="Sample size: graded bets behind this rate">' + m.n + ' graded</span></li>';
+        '<span class="nn" title="' + m.hit + ' right · ' + m.miss + ' wrong (of ' + m.n + ' graded)">' + m.hit + '–' + m.miss + '</span></li>';
     }).join('');
     sb.innerHTML =
-      '<div class="lab" style="color:var(--dim)">Free version <span style="opacity:.7">· lighter model, same slates</span></div>' +
+      '<div class="lab" style="color:var(--dim)">Free version <span style="opacity:.7">· lighter model · % · right–wrong</span></div>' +
       '<ol class="top3">' + lis + '</ol>';
     var nums = sb.querySelectorAll('.num');
     Array.prototype.forEach.call(nums, function(el, i){
@@ -872,12 +872,12 @@ function gateSuperPill(){
 // First-draft upgrade ad \u2014 fully editable in Board Settings \u2192 "Upgrade ad".
 var DEFAULT_AD = {
   title: 'Unlock the full Board',
-  pitch: 'You\u2019re on the free tier. Members get every model \u2014 sharper projections, deeper stats, and the bets the free version can\u2019t show.',
+  pitch: 'You\u2019re on the free tier. Pick a plan and get the real models \u2014 sharper projections, deeper stats, and the bets the free version can\u2019t show.',
   perks: [
-    'Diamond IQ Premium \u2014 advanced-stat MLB props on every slate',
-    'Gridline (NFL), The Key (NBA) & Icing (NHL) \u2014 full access',
-    'DraftKings lines + our edge vs the book on every pick',
-    '\u26a1 Super Locks \u2014 the day\u2019s 80%+ bets in one place'
+    '$10 / month \u2014 the sport of your choice + DraftKings odds 15 days a month',
+    '$20 / month \u2014 every sport + \u26a1 Super Locks (still a 15-day DK pass)',
+    '$40 / month \u2014 everything, plus unlimited DraftKings odds all month',
+    'Every pick graded walk-forward \u2014 check the record before you tap in'
   ],
   cta: 'Message me to upgrade',
   contact: 'Text or DM me and I\u2019ll switch your access on right away.'
@@ -1257,19 +1257,53 @@ async function openSettingsPanel(){
   var members = parseMembers(access);
   if (!members.length) members = [{ name: 'Jaren', code: 'greenlight', apps: null, active: true }];
 
+  var SPORT_KEYS = APP_KEYS.filter(function(a){ return a[0] !== 'mlbfree' && a[0] !== 'superlocks'; });
   var memberRowHtml = function(m, i){
+    var dkMode = m.dkMode || (m.dk === false ? 'off' : 'unlimited');
+    var tier = m.tier || 'custom';
+    var sport = m.sport || 'mlb';
+    var sel = function(v, want){ return v === want ? ' selected' : ''; };
     return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px" data-memrow="' + i + '">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">' +
         '<input type="text" class="m-name" value="' + esc(m.name || '') + '" placeholder="first & last name" autocapitalize="words" style="margin:0;flex:1;min-width:60px">' +
         '<input type="text" class="m-code" value="' + esc(m.code || '') + '" placeholder="their code" autocapitalize="none" style="margin:0;flex:1;min-width:60px">' +
         '<button class="close m-del" style="width:auto;margin:0;padding:4px 6px;color:#ff7a7a">\u2715</button></div>' +
-      '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">' +
-        '<label class="hint" style="display:flex;gap:5px;align-items:center;font-weight:700"><label class="tog" title="DK odds for this member" style="transform:scale(.82)"><input type="checkbox" class="m-dk"' + (m.dk !== false ? ' checked' : '') + '><span></span></label>DK odds</label>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px">' +
+        '<select class="m-tier" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' +
+          '<option value="1"' + sel(tier, '1') + '>Tier 1 \u00b7 $10 (one sport)</option>' +
+          '<option value="2"' + sel(tier, '2') + '>Tier 2 \u00b7 $20 (all + Super Locks)</option>' +
+          '<option value="3"' + sel(tier, '3') + '>Tier 3 \u00b7 $40 (all + unlimited DK)</option>' +
+          '<option value="custom"' + sel(tier, 'custom') + '>Custom</option></select>' +
+        '<select class="m-sport" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px;' + (tier === '1' ? '' : 'display:none') + '">' +
+          SPORT_KEYS.map(function(a){ return '<option value="' + a[0] + '"' + sel(sport, a[0]) + '>' + esc(a[1]) + '</option>'; }).join('') + '</select>' +
         '<span style="color:var(--hair);margin:0 2px">|</span>' +
+        '<label class="hint" style="display:flex;gap:4px;align-items:center">DK<select class="m-dkmode" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' +
+          '<option value="unlimited"' + sel(dkMode, 'unlimited') + '>Unlimited</option>' +
+          '<option value="limited"' + sel(dkMode, 'limited') + '>15-day pass</option>' +
+          '<option value="off"' + sel(dkMode, 'off') + '>Off</option></select></label>' +
+      '</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">' +
         APP_KEYS.map(function(a){
         var on = !m.apps || m.apps.indexOf(a[0]) >= 0;
         return '<label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="m-app" data-app="' + a[0] + '"' + (on ? ' checked' : '') + '>' + esc(a[1]) + '</label>';
       }).join('') + '</div></div>';
+  };
+  // Tier presets fill the app checkboxes + DK mode; "Custom" leaves them alone.
+  var applyTierPreset = function(row){
+    var tier = row.querySelector('.m-tier').value;
+    var sportSel = row.querySelector('.m-sport');
+    var dkSel = row.querySelector('.m-dkmode');
+    var checks = row.querySelectorAll('.m-app');
+    sportSel.style.display = tier === '1' ? '' : 'none';
+    if (tier === 'custom') return;
+    if (tier === '1'){
+      var sp = sportSel.value;
+      checks.forEach(function(cb){ var k = cb.getAttribute('data-app'); cb.checked = (k === sp || k === 'mlbfree'); });
+      dkSel.value = 'limited';
+    } else { // tier 2 or 3 = everything (all apps + Super Locks)
+      checks.forEach(function(cb){ cb.checked = true; });
+      dkSel.value = tier === '3' ? 'unlimited' : 'limited';
+    }
   };
   var knobHtml = function(id, label, val){
     return '<div class="row" style="margin:5px 0"><span class="hint" style="flex:1">' + esc(label) + '</span>' +
@@ -1325,7 +1359,7 @@ async function openSettingsPanel(){
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s puck drop</b>, once per game that day.</div></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Check what they may see — the apps they can enter, plus <b>⚡ Super Locks</b> (the Board’s quick bet finder, off unless you check it). Uncheck all (or delete) to remove them. The green <b>DK odds</b> toggle controls whether that person sees DraftKings lines.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + 15-day DK pass; <b>$20</b> = all sports + ⚡ Super Locks + 15-day DK; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, a 15-day-a-month pass, or Off. Uncheck all (or delete) to remove someone.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
@@ -1377,7 +1411,7 @@ async function openSettingsPanel(){
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
     var div = document.createElement('div');
-    div.innerHTML = memberRowHtml({ name: '', code: '', apps: null, active: true }, Date.now());
+    div.innerHTML = memberRowHtml({ name: '', code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'limited' }, Date.now());
     box.querySelector('#memlist').appendChild(div.firstChild);
     wireDel();
   });
@@ -1396,6 +1430,13 @@ async function openSettingsPanel(){
       c.style.fontWeight = on ? '700' : '400';
     });
   });
+  // Tier dropdown (or its sport) changing rewrites that member's checkboxes.
+  box.querySelector('#memlist').addEventListener('change', function(e){
+    if (e.target.classList.contains('m-tier') || e.target.classList.contains('m-sport')){
+      var row = e.target.closest('[data-memrow]');
+      if (row) applyTierPreset(row);
+    }
+  });
   var readMembers = function(){
     var out = [];
     box.querySelectorAll('[data-memrow]').forEach(function(row){
@@ -1404,7 +1445,11 @@ async function openSettingsPanel(){
       if (!name || code.length < 4) return;
       var apps = [];
       row.querySelectorAll('.m-app').forEach(function(cb){ if (cb.checked) apps.push(cb.getAttribute('data-app')); });
-      out.push({ name: name, code: code, apps: apps.length === APP_KEYS.length ? null : apps, dk: row.querySelector('.m-dk').checked });
+      var dkMode = row.querySelector('.m-dkmode').value;
+      out.push({ name: name, code: code,
+        apps: apps.length === APP_KEYS.length ? null : apps,
+        dk: dkMode !== 'off', dkMode: dkMode,
+        tier: row.querySelector('.m-tier').value, sport: row.querySelector('.m-sport').value });
     });
     return out;
   };
