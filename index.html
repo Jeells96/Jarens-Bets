@@ -224,6 +224,7 @@ body{
     <div class="eyebrow">
       <span>Members only</span><span style="color:var(--hair)">/</span>
       <span class="live"><span class="bulb"></span>Live</span>
+      <button id="planbtn" style="margin-left:auto;background:none;border:1px solid var(--hair);border-radius:8px;color:var(--dim);font:inherit;font-size:11px;letter-spacing:.12em;font-weight:700;padding:5px 9px;cursor:pointer">MY PLAN</button>
       <button class="gearbtn" id="gearbtn" aria-label="Settings">&#9881;</button>
     </div>
     <!-- Rename this wordmark to whatever you want the hub called. -->
@@ -645,6 +646,86 @@ async function fillFreeTop3(){
   } catch (e){ setMsg('<span class="k">Record briefly unavailable.</span> Try again shortly.'); }
 }
 
+/* ---------- My plan panel: current tier + what the others include ---------- */
+var TIER_DEFS = [
+  { id: '1', price: '$10', per: '/mo', name: 'Tier 1', tagline: 'One sport, your pick',
+    perks: ['The sport of your choice — MLB, NFL, NBA or NHL', 'DraftKings odds · 15-day-a-month pass', 'Every pick graded walk-forward'] },
+  { id: '2', price: '$20', per: '/mo', name: 'Tier 2', tagline: 'Every sport + Super Locks',
+    perks: ['All four sports — MLB, NFL, NBA & NHL', '⚡ Super Locks — the day’s 80%+ bets', 'DraftKings odds · 15-day-a-month pass'] },
+  { id: '3', price: '$40', per: '/mo', name: 'Tier 3', tagline: 'Everything, unlimited',
+    perks: ['Everything in Tier 2', 'Unlimited DraftKings odds — all month', 'First access to new features'] }
+];
+var SPORT_NAME = { mlb: 'Diamond IQ (MLB)', nfl: 'Gridline (NFL)', nba: 'The Key (NBA)', hockey: 'Icing (NHL)' };
+function dkModeLabel(m){ return m === 'unlimited' ? 'unlimited DK odds' : m === 'limited' ? '15-day DK pass' : 'no DK odds'; }
+function currentPlanInfo(){
+  var m = CURRENT_MEMBER || savedMember() || {};
+  if (m.admin || (m.code && adminPinOk(m.code))) return { kind: 'admin' };
+  if (m.free) return { kind: 'free' };
+  if (m.tier === '1' || m.tier === '2' || m.tier === '3') return { kind: 'tier', tier: m.tier, sport: m.sport, dkMode: m.dkMode };
+  return { kind: 'custom', dkMode: m.dkMode };
+}
+async function openPlanPanel(){
+  var info = currentPlanInfo();
+  var ad; try { ad = await loadAd(); } catch (e){ ad = normalizeAd({}); }
+  var ovl = document.createElement('div'); ovl.className = 'ovl';
+  document.body.appendChild(ovl); document.body.style.overflow = 'hidden';
+  var close = function(){ ovl.remove(); document.body.style.overflow = ''; };
+  ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
+
+  var banner;
+  if (info.kind === 'admin'){
+    banner = '<div style="border:1px solid #7fd99a;border-radius:10px;padding:10px 12px;margin-bottom:14px">' +
+      '<div style="font-weight:800;color:#7fd99a">Owner · full access</div>' +
+      '<div class="sub" style="margin:2px 0 0">You see everything. This is what members can buy.</div></div>';
+  } else if (info.kind === 'free'){
+    banner = '<div style="border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:14px">' +
+      '<div style="font-weight:800">You’re on the Free tier</div>' +
+      '<div class="sub" style="margin:2px 0 0">Pick a paid plan below to unlock the real models.</div></div>';
+  } else if (info.kind === 'tier'){
+    var td = TIER_DEFS.filter(function(t){ return t.id === info.tier; })[0];
+    banner = '<div style="border:1px solid #7fd99a;border-radius:10px;padding:10px 12px;margin-bottom:14px">' +
+      '<div style="font-weight:800;color:#7fd99a">Your plan · ' + esc(td.name) + ' · ' + esc(td.price + td.per) + '</div>' +
+      '<div class="sub" style="margin:2px 0 0">' +
+        (info.tier === '1' && info.sport ? 'Sport: ' + esc(SPORT_NAME[info.sport] || info.sport) + ' · ' : '') +
+        esc(dkModeLabel(info.dkMode || (info.tier === '3' ? 'unlimited' : 'limited'))) + '</div></div>';
+  } else {
+    banner = '<div style="border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:14px">' +
+      '<div style="font-weight:800">Custom access</div>' +
+      '<div class="sub" style="margin:2px 0 0">Your access was set by hand (' + esc(dkModeLabel(info.dkMode || 'unlimited')) + '). See the standard plans below.</div></div>';
+  }
+
+  var cards = TIER_DEFS.map(function(t){
+    var isCurrent = info.kind === 'tier' && info.tier === t.id;
+    var isUpgrade = info.kind === 'tier' && +t.id > +info.tier;
+    var tag = isCurrent ? '<span style="font-size:10px;font-weight:800;letter-spacing:.1em;color:#7fd99a;border:1px solid #7fd99a;border-radius:6px;padding:2px 6px">YOUR PLAN</span>'
+      : isUpgrade ? '<span style="font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--bone);border:1px solid var(--hair);border-radius:6px;padding:2px 6px">UPGRADE</span>' : '';
+    var perks = t.perks.map(function(p){
+      return '<li style="display:flex;gap:7px;align-items:flex-start;margin:5px 0;font-size:13px;line-height:1.35">' +
+        '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">✓</span><span>' + esc(p) + '</span></li>';
+    }).join('');
+    return '<div style="border:1px solid ' + (isCurrent ? '#7fd99a' : 'var(--hair)') + ';border-radius:12px;padding:12px 14px;margin-bottom:10px' + (isCurrent ? ';background:rgba(127,217,154,.06)' : '') + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:2px">' +
+        '<span style="font-weight:800">' + esc(t.name) + ' <span style="color:var(--dim2);font-weight:700">' + esc(t.tagline) + '</span></span>' +
+        '<span style="flex:0 0 auto">' + tag + '</span></div>' +
+      '<div style="font-size:22px;font-weight:800;margin:2px 0 6px">' + esc(t.price) + '<span style="font-size:13px;color:var(--dim2);font-weight:700">' + esc(t.per) + '</span></div>' +
+      '<ul style="list-style:none;padding:0;margin:0">' + perks + '</ul></div>';
+  }).join('');
+
+  var showUpgrade = info.kind !== 'admin' && !(info.kind === 'tier' && info.tier === '3');
+  var footer = showUpgrade
+    ? (ad.contact ? '<p class="sub" style="margin:2px 0 10px;color:var(--bone)">' + esc(ad.contact) + '</p>' : '') +
+      '<button class="go" id="plan-cta">' + esc(ad.cta) + '</button>' +
+      '<button class="close" id="plan-close" style="width:100%;margin-top:8px;border:1px solid var(--hair);border-radius:9px;padding:10px;background:transparent;color:var(--dim)">Close</button>'
+    : '<button class="go" id="plan-close">' + (info.kind === 'admin' ? 'Close' : 'You’re on the top tier · Close') + '</button>';
+
+  ovl.innerHTML = '<div class="box" style="max-width:420px">' +
+    '<h3>Your subscription</h3>' + banner +
+    '<div class="sub" style="margin:0 0 10px;font-weight:700;color:var(--bone)">Plans</div>' +
+    cards + footer + '</div>';
+  var cta = ovl.querySelector('#plan-cta'); if (cta) cta.addEventListener('click', close);
+  ovl.querySelector('#plan-close').addEventListener('click', close);
+}
+
 /* ---------- embedded app host ----------
    Same origin (all on jeells96.github.io), so each app iframes cleanly and
    keeps its own storage/PIN/Firebase. Loaded lazily on Enter; unloaded on
@@ -936,15 +1017,16 @@ function parseMembers(cfg){
 }
 function memberMatch(name, code, list){
   var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-  if (adminPinOk(code)) return { ok: true, apps: null, dk: true };
+  if (adminPinOk(code)) return { ok: true, apps: null, dk: true, member: { admin: true } };
   for (var i = 0; i < list.length; i++){
     var m = list[i];
     if (norm(m.code) !== norm(code)) continue;              // must match THEIR personal code
     if (m.name != null && norm(m.name) !== norm(name)) continue; // AND their name
-    return { ok: true, apps: m.apps && m.apps.length ? m.apps : null, dk: m.dk !== false };
+    return { ok: true, apps: m.apps && m.apps.length ? m.apps : null, dk: m.dk !== false, member: m };
   }
   return { ok: false };
 }
+var CURRENT_MEMBER = null; // the resolved identity, for the "My plan" panel
 function savedMember(){ try { return JSON.parse(localStorage.getItem(GATE_LS) || 'null'); } catch (e){ return null; } }
 async function runGate(){
   var saved = savedMember();
@@ -952,10 +1034,10 @@ async function runGate(){
   var list = parseMembers(cfg);
   if (!list.length) list = [{ name: null, code: 'greenlight', apps: null, active: true }]; // until first save
   // Free-tier device: remembered as free, gets ONLY the Diamond IQ Free app.
-  if (saved && saved.free){ GRANTS = new Set(['mlbfree']); markLockedCards(); return; }
+  if (saved && saved.free){ CURRENT_MEMBER = { free: true, name: saved.name }; GRANTS = new Set(['mlbfree']); markLockedCards(); return; }
   if (saved && saved.code){
     var g0 = memberMatch(saved.name, saved.code, list);
-    if (g0.ok){ GRANTS = g0.apps ? new Set(g0.apps) : null; markLockedCards(); return; }
+    if (g0.ok){ CURRENT_MEMBER = g0.member; GRANTS = g0.apps ? new Set(g0.apps) : null; markLockedCards(); return; }
   }
   // Identity is sticky: once a device has a name, re-gating only asks for the
   // (possibly new) access code — the person can\u2019t become someone else.
@@ -976,6 +1058,7 @@ async function runGate(){
   var enterFree = function(){
     var nm = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
     if (String(nm).split(/\s+/).filter(Boolean).length < 2){ document.getElementById('gateerr').textContent = 'Enter your first and last name — even for the free app.'; var gn = document.getElementById('gatename'); if (gn) gn.focus(); return; }
+    CURRENT_MEMBER = { free: true, name: nm };
     GRANTS = new Set(['mlbfree']);
     try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: nm })); } catch (e) {}
     logFreeSignin(nm);
@@ -987,6 +1070,7 @@ async function runGate(){
     var name = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
     var code = document.getElementById('gatein').value;
     if (adminPinOk(code) || adminPinOk(name)){ // admin PIN from EITHER field
+      CURRENT_MEMBER = { admin: true };
       GRANTS = null;
       try { localStorage.setItem(GATE_LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
       ovl.remove(); document.body.style.overflow = ''; markLockedCards(); return;
@@ -994,6 +1078,7 @@ async function runGate(){
     if (String(name).split(/\s+/).filter(Boolean).length < 2){ document.getElementById('gateerr').textContent = 'Enter your first and last name.'; return; }
     var g = memberMatch(name, code, list);
     if (g.ok){
+      CURRENT_MEMBER = g.member;
       GRANTS = g.apps ? new Set(g.apps) : null;
       try { localStorage.setItem(GATE_LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {}
       ovl.remove(); document.body.style.overflow = '';
@@ -1981,6 +2066,8 @@ function showView(which){
 document.addEventListener('DOMContentLoaded', function(){
   var g = document.getElementById('gearbtn');
   if (g) g.addEventListener('click', openSettingsPanel);
+  var pb = document.getElementById('planbtn');
+  if (pb) pb.addEventListener('click', openPlanPanel);
   var vb = document.getElementById('vBoard'), vs = document.getElementById('vSuper');
   if (vb) vb.addEventListener('click', function(){ showView('board'); });
   if (vs) vs.addEventListener('click', function(){ showView('super'); });
