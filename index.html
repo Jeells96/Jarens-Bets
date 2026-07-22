@@ -520,7 +520,12 @@ async function fetchAccuracy(cfg){
 
 /* ---------- render ---------- */
 function cardShell(s){
+  var freeReadout = (s.secondary && s.secondary.key === 'mlbfree') ?
+    '<div class="sb state" id="sb-free" style="margin-top:12px">' +
+      '<div class="lab">Free version · most accurate markets</div>' +
+      '<div class="readout"><div class="shimmer"></div></div></div>' : '';
   var secondary = s.secondary ? (
+    freeReadout +
     '<div class="subcap">' + esc(s.secondary.caption) + '</div>' +
     '<a class="cta cta2" href="' + esc(s.secondary.url) + '" data-app="' + esc(s.secondary.key) + '" target="_blank" rel="noopener">' +
       '<span class="btnbadge">' + esc(s.secondary.badge) + '</span>' +
@@ -599,6 +604,45 @@ function fillResult(s, result){
   else msg = '<span class="k">Record briefly unavailable.</span> ' + esc(result.error || 'Try again shortly.');
   sb.innerHTML = '<div class="lab">Most accurate markets</div>' +
     '<div class="readout"><div class="statemsg">' + msg + '</div></div>';
+}
+
+// Free-tier top-3: reuses the Board's own freeRates engine over shared_history
+// (the free app's cloud store) so the number matches what the free app reports.
+// Lazy — loaded after the main cards so it never blocks the board.
+var FREE_TOP_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
+var FREE_TOP_LABELS = { hits: 'Batter hits', tb: 'Total bases', hr: 'Home runs', bb: 'Batter walks', bbat: 'Batter strikeouts' };
+async function fillFreeTop3(){
+  var sb = document.getElementById('sb-free');
+  if (!sb) return;
+  var setMsg = function(html){
+    sb.innerHTML = '<div class="lab">Free version · most accurate markets</div>' +
+      '<div class="readout"><div class="statemsg">' + html + '</div></div>';
+  };
+  try {
+    var locksRaw = (await adminGetDoc('locks')) || {};
+    var locks = {}; Object.keys(FREE_TOP_DEF).forEach(function(k){ locks[k] = (typeof locksRaw[k] === 'number') ? locksRaw[k] : FREE_TOP_DEF[k]; });
+    var days = await listAllDocs(ADMIN, 'shared_history');
+    if (!days.length){ setMsg('<span class="k">Record syncing.</span> Free rates appear after the next graded slate.'); return; }
+    var agg = freeRates(days, locks);
+    var rows = Object.keys(FREE_TOP_LABELS).map(function(k){ return { label: FREE_TOP_LABELS[k], hit: agg[k].h, n: agg[k].n }; });
+    var top = rankMarkets(rows, 3);
+    if (!top.length){ setMsg('<span class="k">Record syncing.</span> Free rates appear after the next graded slate.'); return; }
+    sb.classList.remove('state');
+    var lis = top.map(function(m, i){
+      return '<li class="t3row' + (i === 0 ? ' lead' : '') + '">' +
+        '<span class="rk">' + (i + 1) + '</span>' +
+        '<span class="mk">' + esc(m.label) + '</span>' +
+        '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
+        '<span class="nn" title="Sample size: graded bets behind this rate">' + m.n + ' graded</span></li>';
+    }).join('');
+    sb.innerHTML =
+      '<div class="lab" style="color:var(--dim)">Free version <span style="opacity:.7">· lighter model, same slates</span></div>' +
+      '<ol class="top3">' + lis + '</ol>';
+    var nums = sb.querySelectorAll('.num');
+    Array.prototype.forEach.call(nums, function(el, i){
+      setTimeout(function(){ countUp(el, +el.getAttribute('data-v')); }, REDUCE ? 0 : i * 120);
+    });
+  } catch (e){ setMsg('<span class="k">Record briefly unavailable.</span> Try again shortly.'); }
 }
 
 /* ---------- embedded app host ----------
@@ -706,6 +750,7 @@ async function refreshRecords(){
     }
     refreshRecords._last = Date.now();
   } finally { refreshRecords._busy = false; }
+  fillFreeTop3(); // non-blocking teaser under the Diamond IQ card
 }
 
 async function boot(){
@@ -824,9 +869,63 @@ function gateSuperPill(){
     if (sl && sl.style.display !== 'none') showView('board'); // kick off the tab if they were on it
   }
 }
+// First-draft upgrade ad \u2014 fully editable in Board Settings \u2192 "Upgrade ad".
+var DEFAULT_AD = {
+  title: 'Unlock the full Board',
+  pitch: 'You\u2019re on the free tier. Members get every model \u2014 sharper projections, deeper stats, and the bets the free version can\u2019t show.',
+  perks: [
+    'Diamond IQ Premium \u2014 advanced-stat MLB props on every slate',
+    'Gridline (NFL), The Key (NBA) & Icing (NHL) \u2014 full access',
+    'DraftKings lines + our edge vs the book on every pick',
+    '\u26a1 Super Locks \u2014 the day\u2019s 80%+ bets in one place'
+  ],
+  cta: 'Message me to upgrade',
+  contact: 'Text or DM me and I\u2019ll switch your access on right away.'
+};
+var AD_CACHE = null;
+function normalizeAd(raw){
+  var a = {};
+  a.title = (raw && typeof raw.title === 'string' && raw.title.trim()) ? raw.title : DEFAULT_AD.title;
+  a.pitch = (raw && typeof raw.pitch === 'string' && raw.pitch.trim()) ? raw.pitch : DEFAULT_AD.pitch;
+  a.cta = (raw && typeof raw.cta === 'string' && raw.cta.trim()) ? raw.cta : DEFAULT_AD.cta;
+  a.contact = (raw && typeof raw.contact === 'string') ? raw.contact : DEFAULT_AD.contact;
+  var perks = null;
+  if (raw && typeof raw.perks === 'string'){ perks = raw.perks.split('\n').map(function(x){ return x.trim(); }).filter(Boolean); }
+  a.perks = (perks && perks.length) ? perks : DEFAULT_AD.perks;
+  return a;
+}
+async function loadAd(){
+  if (AD_CACHE) return AD_CACHE;
+  var raw = null; try { raw = await adminGetDoc('upgrade_ad'); } catch (e) {}
+  AD_CACHE = normalizeAd(raw || {});
+  return AD_CACHE;
+}
 function showDeniedNote(key){
   var s = SITES.filter(function(x){ return x.key === key; })[0];
-  alert('Your access doesn\u2019t include ' + (s ? s.name : 'this app') + '. Ask for an upgrade.');
+  var appName = s ? s.name : 'this app';
+  var ovl = document.createElement('div');
+  ovl.className = 'ovl';
+  ovl.innerHTML = '<div class="box"><div class="statemsg" style="text-align:center;color:var(--dim)">Loading\u2026</div></div>';
+  document.body.appendChild(ovl);
+  document.body.style.overflow = 'hidden';
+  var close = function(){ ovl.remove(); document.body.style.overflow = ''; };
+  ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
+  loadAd().then(function(ad){
+    var perks = ad.perks.map(function(p){
+      return '<li style="display:flex;gap:8px;align-items:flex-start;margin:7px 0;font-size:13.5px;line-height:1.4">' +
+        '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">\u2713</span><span>' + esc(p) + '</span></li>';
+    }).join('');
+    ovl.querySelector('.box').innerHTML =
+      '<div style="font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2);margin-bottom:6px">' + esc(appName) + ' \u00b7 members only</div>' +
+      '<h3 style="font-size:20px">' + esc(ad.title) + '</h3>' +
+      '<p class="sub" style="margin:6px 0 12px">' + esc(ad.pitch) + '</p>' +
+      '<ul style="list-style:none;padding:0;margin:0 0 14px">' + perks + '</ul>' +
+      (ad.contact ? '<p class="sub" style="margin:0 0 12px;color:var(--bone)">' + esc(ad.contact) + '</p>' : '') +
+      '<button class="go" id="ad-cta">' + esc(ad.cta) + '</button>' +
+      '<button class="close" id="ad-close" style="width:100%;margin-top:8px;border:1px solid var(--hair);border-radius:9px;padding:10px;background:transparent;color:var(--dim)">Maybe later</button>';
+    ovl.querySelector('#ad-cta').addEventListener('click', close);
+    ovl.querySelector('#ad-close').addEventListener('click', close);
+  });
 }
 function parseMembers(cfg){
   if (cfg && cfg.members){ try { return JSON.parse(cfg.members) || []; } catch (e){ return []; } }
@@ -1126,6 +1225,7 @@ async function openSettingsPanel(){
   var premRaw = await fsGetRaw(ADMIN, 'fable_settings/config');
   var premCfgRaw = premRaw ? fsFields(premRaw.fields || {}) : null;
   var freeLocks = (await adminGetDoc('locks')) || {};
+  var adCfg = normalizeAd((await adminGetDoc('upgrade_ad')) || {});
   var nbaRaw = await fsGetRaw(NFLP, 'nba/lockcfg');
   var nbaCfg = null;
   if (nbaRaw && nbaRaw.fields && nbaRaw.fields.data && nbaRaw.fields.data.stringValue){
@@ -1246,12 +1346,33 @@ async function openSettingsPanel(){
     lockSect('Lock grades \u00b7 Icing (NHL)',
       'Lock percentages per group + hit tolerances. Preview re-grades every stored pick at your proposed numbers.',
       ICE_KNOBS, 'ik-', Object.assign({}, iceTh, iceTol), 'i-preview', 'i-prevout') +
+    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown when a free user taps a paid app</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
+    '<label class="hint">Headline</label>' +
+    '<input type="text" id="ad-title" value="' + esc(adCfg.title) + '" style="margin:2px 0 10px">' +
+    '<label class="hint">Pitch (one or two sentences)</label>' +
+    '<textarea id="ad-pitch" rows="3" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.pitch) + '</textarea>' +
+    '<label class="hint">What’s included — one perk per line</label>' +
+    '<textarea id="ad-perks" rows="5" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.perks.join('\n')) + '</textarea>' +
+    '<label class="hint">How to reach you (optional line above the button)</label>' +
+    '<input type="text" id="ad-contact" value="' + esc(adCfg.contact) + '" style="margin:2px 0 10px">' +
+    '<label class="hint">Button label</label>' +
+    '<input type="text" id="ad-cta" value="' + esc(adCfg.cta) + '" style="margin:2px 0 4px">' +
+    '<button class="close" id="ad-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:8px">Preview the ad</button></div>' +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
     '<button class="close" id="s-signout" style="margin-top:6px">Sign out this device (switch account)</button>' +
     '<button class="close" id="s-close">Close</button>';
 
   var box = ovl.querySelector('.box');
+  box.querySelector('#ad-preview').addEventListener('click', function(){
+    AD_CACHE = normalizeAd({
+      title: box.querySelector('#ad-title').value, pitch: box.querySelector('#ad-pitch').value,
+      perks: box.querySelector('#ad-perks').value, contact: box.querySelector('#ad-contact').value,
+      cta: box.querySelector('#ad-cta').value
+    });
+    showDeniedNote('mlb'); // preview against the Premium app name
+  });
   box.querySelector('#s-close').addEventListener('click', function(){ ovl.remove(); });
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
@@ -1562,6 +1683,15 @@ async function openSettingsPanel(){
         dkVisible: box.querySelector('#s-dkvis').checked
       });
       await adminSetDoc('app_settings', 'board_access', { members: JSON.stringify(mems) });
+      var adSave = {
+        title: (box.querySelector('#ad-title').value || '').trim(),
+        pitch: (box.querySelector('#ad-pitch').value || '').trim(),
+        perks: (box.querySelector('#ad-perks').value || '').split('\n').map(function(x){ return x.trim(); }).filter(Boolean).join('\n'),
+        contact: (box.querySelector('#ad-contact').value || '').trim(),
+        cta: (box.querySelector('#ad-cta').value || '').trim()
+      };
+      await adminSetDoc('app_settings', 'upgrade_ad', adSave);
+      AD_CACHE = normalizeAd(adSave); // reflect the new copy immediately
       await adminSetDoc('fable_settings', 'config', premOut);
       await adminSetDoc('app_settings', 'locks', freeOut);
       var nbaSp = split2(nbaOut, ['pts','stat']);
