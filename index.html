@@ -112,7 +112,7 @@ body{
 .t3row .pc{ font:700 17px/1 ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums;
   color:var(--lane); letter-spacing:-.01em; }
 .t3row .nn{ font:600 11px/1 ui-monospace,Menlo,monospace; color:var(--dim2);
-  letter-spacing:.04em; min-width:44px; text-align:right; }
+  letter-spacing:.04em; min-width:64px; text-align:right; white-space:nowrap; }
 .t3row.lead .mk{ color:var(--bone); font-weight:700; }
 .t3row.lead .pc{ font-size:22px; text-shadow:0 0 20px color-mix(in srgb, var(--lane) 32%, transparent); }
 .t3row.lead .rk{ color:var(--lane); }
@@ -237,7 +237,7 @@ body{
 
   <div id="viewpills" style="display:flex;gap:8px;margin:0 0 14px">
     <button class="vpill on" id="vBoard" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">The Board</button>
-    <button class="vpill" id="vSuper" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">&#9889; Super Locks</button>
+    <button class="vpill" id="vSuper" style="display:none;flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">&#9889; Super Locks</button>
   </div>
 
   <main id="cards"><!-- cards injected --></main>
@@ -570,7 +570,7 @@ function fillResult(s, result){
         '<span class="rk">' + (i + 1) + '</span>' +
         '<span class="mk">' + esc(m.label) + '</span>' +
         '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
-        '<span class="nn">n=' + m.n + '</span></li>';
+        '<span class="nn" title="Sample size: graded bets behind this rate">' + m.n + ' graded</span></li>';
     }).join('');
     var freshLine = '';
     if (result.data.t){
@@ -807,10 +807,23 @@ function logFreeSignin(name){
 }
 
 /* ---- members: [{name, code, apps:['mlb',...]|null, active}] ---- */
-var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','Icing']];
+var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','Icing'],['superlocks','⚡ Super Locks']];
 var GATE_LS = 'board_member_v3';
-var GRANTS = null; // null = everything (admin), Set = specific apps
+var GRANTS = null; // null = everything (admin), Set = specific apps/tabs
 function appGranted(key){ return !GRANTS || GRANTS.has(key); }
+// The Super Locks tab is off by default for members — only shown when their
+// grant explicitly includes it (admin/full-access always sees it).
+function superLocksAllowed(){ return appGranted('superlocks'); }
+function gateSuperPill(){
+  var vs = document.getElementById('vSuper');
+  if (!vs) return;
+  if (superLocksAllowed()){ vs.style.display = ''; }
+  else {
+    vs.style.display = 'none';
+    var sl = document.getElementById('superlocks');
+    if (sl && sl.style.display !== 'none') showView('board'); // kick off the tab if they were on it
+  }
+}
 function showDeniedNote(key){
   var s = SITES.filter(function(x){ return x.key === key; })[0];
   alert('Your access doesn\u2019t include ' + (s ? s.name : 'this app') + '. Ask for an upgrade.');
@@ -895,6 +908,7 @@ async function runGate(){
   setTimeout(function(){ var i = document.getElementById(fixedName ? 'gatein' : 'gatename'); if (i) i.focus(); }, 250);
 }
 function markLockedCards(){
+  gateSuperPill(); // always run — even before the cards mount
   var els = document.querySelectorAll('.cta[data-app]');
   if (!els.length){ setTimeout(markLockedCards, 800); return; }
   els.forEach(function(a){
@@ -1211,7 +1225,7 @@ async function openSettingsPanel(){
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s puck drop</b>, once per game that day.</div></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Check the apps they may enter — uncheck an app to block it, uncheck all (or delete) to remove them. The green <b>DK odds</b> toggle controls whether that person sees DraftKings lines.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Check what they may see — the apps they can enter, plus <b>⚡ Super Locks</b> (the Board’s quick bet finder, off unless you check it). Uncheck all (or delete) to remove them. The green <b>DK odds</b> toggle controls whether that person sees DraftKings lines.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
@@ -1780,6 +1794,7 @@ async function refreshSuperLocks(force){
 }
 function showView(which){
   var isSuper = which === 'super';
+  if (isSuper && !superLocksAllowed()){ return; } // not permitted — ignore
   document.getElementById('cards').style.display = isSuper ? 'none' : '';
   document.getElementById('superlocks').style.display = isSuper ? '' : 'none';
   var on = function(b, v){ b.classList.toggle('on', v); b.style.borderColor = v ? '#7fd99a' : 'var(--hair)'; b.style.color = v ? '#7fd99a' : ''; };
