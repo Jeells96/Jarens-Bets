@@ -937,7 +937,7 @@ function logFreeSignin(name){
 var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','Icing'],['superlocks','⚡ Super Locks']];
 var GATE_LS = 'board_member_v3';
 var GRANTS = null; // null = everything (admin), Set = specific apps/tabs
-function appGranted(key){ return !GRANTS || GRANTS.has(key); }
+function appGranted(key){ return key === 'mlbfree' || !GRANTS || GRANTS.has(key); } // free MLB is never locked
 // The Super Locks tab is off by default for members — only shown when their
 // grant explicitly includes it (admin/full-access always sees it).
 function superLocksAllowed(){ return appGranted('superlocks'); }

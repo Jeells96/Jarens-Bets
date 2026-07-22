@@ -2601,7 +2601,7 @@ async function bootLeagueLoad(){
     }
     return { ok: false };
   }
-  function okApp(g){ return g.ok && (!g.apps || g.apps.indexOf(APPKEY) >= 0); }
+  function okApp(g){ return g.ok && (APPKEY === 'mlbfree' || !g.apps || g.apps.indexOf(APPKEY) >= 0); } // free MLB never locked
   var ov, dkVisG = true;
   function setDk(v){ window.__DK_OK = v; if (!v) document.documentElement.classList.add('dk-off'); else document.documentElement.classList.remove('dk-off'); try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(v); } catch (e) {} }
   // DK 'limited' tiers see DraftKings odds only on calendar days 1–15 each month;
