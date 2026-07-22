@@ -649,14 +649,14 @@ async function fillFreeTop3(){
 /* ---------- My plan panel: current tier + what the others include ---------- */
 var TIER_DEFS = [
   { id: '1', price: '$10', per: '/mo', name: 'Tier 1', tagline: 'One sport, your pick',
-    perks: ['The sport of your choice — MLB, NFL, NBA or NHL', 'DraftKings odds · 15-day-a-month pass', 'Every pick graded walk-forward'] },
+    perks: ['The sport of your choice — MLB, NFL, NBA or NHL', 'DraftKings odds · the 1st–15th of each month', 'Every pick graded walk-forward'] },
   { id: '2', price: '$20', per: '/mo', name: 'Tier 2', tagline: 'Every sport + Super Locks',
-    perks: ['All four sports — MLB, NFL, NBA & NHL', '⚡ Super Locks — the day’s 80%+ bets', 'DraftKings odds · 15-day-a-month pass'] },
+    perks: ['All four sports — MLB, NFL, NBA & NHL', '⚡ Super Locks — the day’s 80%+ bets', 'DraftKings odds · the 1st–15th of each month'] },
   { id: '3', price: '$40', per: '/mo', name: 'Tier 3', tagline: 'Everything, unlimited',
     perks: ['Everything in Tier 2', 'Unlimited DraftKings odds — all month', 'First access to new features'] }
 ];
 var SPORT_NAME = { mlb: 'Diamond IQ (MLB)', nfl: 'Gridline (NFL)', nba: 'The Key (NBA)', hockey: 'Icing (NHL)' };
-function dkModeLabel(m){ return m === 'unlimited' ? 'unlimited DK odds' : m === 'limited' ? '15-day DK pass' : 'no DK odds'; }
+function dkModeLabel(m){ return m === 'unlimited' ? 'unlimited DK odds' : m === 'limited' ? 'DK odds the 1st–15th' : 'no DK odds'; }
 function currentPlanInfo(){
   var m = CURRENT_MEMBER || savedMember() || {};
   if (m.admin || (m.code && adminPinOk(m.code))) return { kind: 'admin' };
@@ -1364,7 +1364,7 @@ async function openSettingsPanel(){
         '<span style="color:var(--hair);margin:0 2px">|</span>' +
         '<label class="hint" style="display:flex;gap:4px;align-items:center">DK<select class="m-dkmode" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' +
           '<option value="unlimited"' + sel(dkMode, 'unlimited') + '>Unlimited</option>' +
-          '<option value="limited"' + sel(dkMode, 'limited') + '>15-day pass</option>' +
+          '<option value="limited"' + sel(dkMode, 'limited') + '>DK days 1–15</option>' +
           '<option value="off"' + sel(dkMode, 'off') + '>Off</option></select></label>' +
       '</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">' +
@@ -1444,7 +1444,7 @@ async function openSettingsPanel(){
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s puck drop</b>, once per game that day.</div></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + 15-day DK pass; <b>$20</b> = all sports + ⚡ Super Locks + 15-day DK; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, a 15-day-a-month pass, or Off. Uncheck all (or delete) to remove someone.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + DK odds the 1st–15th; <b>$20</b> = all sports + ⚡ Super Locks + DK the 1st–15th; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
