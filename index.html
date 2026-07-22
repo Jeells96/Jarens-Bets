@@ -222,9 +222,9 @@ body{
 <div class="wrap">
   <header>
     <div class="eyebrow">
-      <span>Members only</span><span style="color:var(--hair)">/</span>
+      <span id="greet">Members only</span><span style="color:var(--hair)">/</span>
       <span class="live"><span class="bulb"></span>Live</span>
-      <button id="planbtn" style="margin-left:auto;background:none;border:1px solid var(--hair);border-radius:8px;color:var(--dim);font:inherit;font-size:11px;letter-spacing:.12em;font-weight:700;padding:5px 9px;cursor:pointer">MY PLAN</button>
+      <button id="planbtn" style="margin-left:auto;background:#7fd99a;border:0;border-radius:10px;color:#08130b;font:inherit;font-size:12.5px;letter-spacing:.06em;font-weight:800;padding:9px 15px;cursor:pointer;box-shadow:0 3px 14px rgba(127,217,154,.4);text-transform:none">&#9733; My Plan &amp; Upgrades</button>
       <button class="gearbtn" id="gearbtn" aria-label="Settings">&#9881;</button>
     </div>
     <!-- Rename this wordmark to whatever you want the hub called. -->
@@ -238,7 +238,7 @@ body{
 
   <div id="viewpills" style="display:flex;gap:8px;margin:0 0 14px">
     <button class="vpill on" id="vBoard" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">The Board</button>
-    <button class="vpill" id="vSuper" style="display:none;flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">&#9889; Super Locks</button>
+    <button class="vpill" id="vSuper" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">&#9889; Super Locks</button>
   </div>
 
   <main id="cards"><!-- cards injected --></main>
@@ -714,7 +714,7 @@ async function openPlanPanel(){
   var showUpgrade = info.kind !== 'admin' && !(info.kind === 'tier' && info.tier === '3');
   var footer = showUpgrade
     ? (ad.contact ? '<p class="sub" style="margin:2px 0 10px;color:var(--bone)">' + esc(ad.contact) + '</p>' : '') +
-      '<button class="go" id="plan-cta">' + esc(ad.cta) + '</button>' +
+      ctaButtonHtml(ad, 'plan-cta') +
       '<button class="close" id="plan-close" style="width:100%;margin-top:8px;border:1px solid var(--hair);border-radius:9px;padding:10px;background:transparent;color:var(--dim)">Close</button>'
     : '<button class="go" id="plan-close">' + (info.kind === 'admin' ? 'Close' : 'You’re on the top tier · Close') + '</button>';
 
@@ -943,12 +943,9 @@ function superLocksAllowed(){ return appGranted('superlocks'); }
 function gateSuperPill(){
   var vs = document.getElementById('vSuper');
   if (!vs) return;
-  if (superLocksAllowed()){ vs.style.display = ''; }
-  else {
-    vs.style.display = 'none';
-    var sl = document.getElementById('superlocks');
-    if (sl && sl.style.display !== 'none') showView('board'); // kick off the tab if they were on it
-  }
+  // Always visible — everyone sees it exists. A padlock hints it's a paid perk;
+  // tapping it when they don't have it opens the upgrade panel (see showView).
+  vs.innerHTML = superLocksAllowed() ? '⚡ Super Locks' : '⚡ Super Locks 🔒';
 }
 // First-draft upgrade ad \u2014 fully editable in Board Settings \u2192 "Upgrade ad".
 var DEFAULT_AD = {
@@ -960,8 +957,9 @@ var DEFAULT_AD = {
     '$40 / month \u2014 everything, plus unlimited DraftKings odds all month',
     'Every pick graded walk-forward \u2014 check the record before you tap in'
   ],
-  cta: 'Message me to upgrade',
-  contact: 'Text or DM me and I\u2019ll switch your access on right away.'
+  cta: 'Text me to upgrade',
+  contact: 'Text me and I\u2019ll switch your access on right away.',
+  phone: '503-278-6961'
 };
 var AD_CACHE = null;
 function normalizeAd(raw){
@@ -970,10 +968,23 @@ function normalizeAd(raw){
   a.pitch = (raw && typeof raw.pitch === 'string' && raw.pitch.trim()) ? raw.pitch : DEFAULT_AD.pitch;
   a.cta = (raw && typeof raw.cta === 'string' && raw.cta.trim()) ? raw.cta : DEFAULT_AD.cta;
   a.contact = (raw && typeof raw.contact === 'string') ? raw.contact : DEFAULT_AD.contact;
+  a.phone = (raw && typeof raw.phone === 'string') ? raw.phone : DEFAULT_AD.phone;
   var perks = null;
   if (raw && typeof raw.perks === 'string'){ perks = raw.perks.split('\n').map(function(x){ return x.trim(); }).filter(Boolean); }
   a.perks = (perks && perks.length) ? perks : DEFAULT_AD.perks;
   return a;
+}
+function smsHref(phone){
+  var digits = String(phone || '').replace(/[^0-9]/g, '');
+  if (digits.length === 10) digits = '1' + digits;
+  return digits ? 'sms:+' + digits : null;
+}
+// CTA rendered as an SMS link (opens Messages to the number) when a phone is set.
+function ctaButtonHtml(ad, id){
+  var href = smsHref(ad.phone);
+  var label = esc(ad.cta) + (ad.phone ? ' · ' + esc(ad.phone) : '');
+  if (href) return '<a class="go" id="' + id + '" href="' + href + '" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box">' + label + '</a>';
+  return '<button class="go" id="' + id + '">' + label + '</button>';
 }
 async function loadAd(){
   if (AD_CACHE) return AD_CACHE;
@@ -983,7 +994,7 @@ async function loadAd(){
 }
 function showDeniedNote(key){
   var s = SITES.filter(function(x){ return x.key === key; })[0];
-  var appName = s ? s.name : 'this app';
+  var appName = key === 'superlocks' ? '⚡ Super Locks' : (s ? s.name : 'this app');
   var ovl = document.createElement('div');
   ovl.className = 'ovl';
   ovl.innerHTML = '<div class="box"><div class="statemsg" style="text-align:center;color:var(--dim)">Loading\u2026</div></div>';
@@ -1002,7 +1013,7 @@ function showDeniedNote(key){
       '<p class="sub" style="margin:6px 0 12px">' + esc(ad.pitch) + '</p>' +
       '<ul style="list-style:none;padding:0;margin:0 0 14px">' + perks + '</ul>' +
       (ad.contact ? '<p class="sub" style="margin:0 0 12px;color:var(--bone)">' + esc(ad.contact) + '</p>' : '') +
-      '<button class="go" id="ad-cta">' + esc(ad.cta) + '</button>' +
+      ctaButtonHtml(ad, 'ad-cta') +
       '<button class="close" id="ad-close" style="width:100%;margin-top:8px;border:1px solid var(--hair);border-radius:9px;padding:10px;background:transparent;color:var(--dim)">Maybe later</button>';
     ovl.querySelector('#ad-cta').addEventListener('click', close);
     ovl.querySelector('#ad-close').addEventListener('click', close);
@@ -1091,7 +1102,17 @@ async function runGate(){
   ovl.querySelectorAll('input').forEach(function(i){ i.addEventListener('keydown', function(e){ if (e.key === 'Enter') tryIt(); }); });
   setTimeout(function(){ var i = document.getElementById(fixedName ? 'gatein' : 'gatename'); if (i) i.focus(); }, 250);
 }
+function updateGreeting(){
+  var el = document.getElementById('greet');
+  if (!el) return;
+  var m = CURRENT_MEMBER || savedMember() || {};
+  var name;
+  if (m.admin || (m.name && String(m.name).toLowerCase() === 'admin')) name = 'Owner';
+  else name = String(m.name || '').trim().split(/\s+/)[0];
+  el.textContent = name ? 'Hi, ' + name : 'Members only';
+}
 function markLockedCards(){
+  updateGreeting();
   gateSuperPill(); // always run — even before the cards mount
   var els = document.querySelectorAll('.cta[data-app]');
   if (!els.length){ setTimeout(markLockedCards, 800); return; }
@@ -1475,6 +1496,8 @@ async function openSettingsPanel(){
     '<textarea id="ad-perks" rows="5" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.perks.join('\n')) + '</textarea>' +
     '<label class="hint">How to reach you (optional line above the button)</label>' +
     '<input type="text" id="ad-contact" value="' + esc(adCfg.contact) + '" style="margin:2px 0 10px">' +
+    '<label class="hint">Your phone (the button texts this number)</label>' +
+    '<input type="text" id="ad-phone" value="' + esc(adCfg.phone) + '" placeholder="503-278-6961" style="margin:2px 0 10px">' +
     '<label class="hint">Button label</label>' +
     '<input type="text" id="ad-cta" value="' + esc(adCfg.cta) + '" style="margin:2px 0 4px">' +
     '<button class="close" id="ad-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:8px">Preview the ad</button></div>' +
@@ -1488,7 +1511,7 @@ async function openSettingsPanel(){
     AD_CACHE = normalizeAd({
       title: box.querySelector('#ad-title').value, pitch: box.querySelector('#ad-pitch').value,
       perks: box.querySelector('#ad-perks').value, contact: box.querySelector('#ad-contact').value,
-      cta: box.querySelector('#ad-cta').value
+      cta: box.querySelector('#ad-cta').value, phone: box.querySelector('#ad-phone').value
     });
     showDeniedNote('mlb'); // preview against the Premium app name
   });
@@ -1818,7 +1841,8 @@ async function openSettingsPanel(){
         pitch: (box.querySelector('#ad-pitch').value || '').trim(),
         perks: (box.querySelector('#ad-perks').value || '').split('\n').map(function(x){ return x.trim(); }).filter(Boolean).join('\n'),
         contact: (box.querySelector('#ad-contact').value || '').trim(),
-        cta: (box.querySelector('#ad-cta').value || '').trim()
+        cta: (box.querySelector('#ad-cta').value || '').trim(),
+        phone: (box.querySelector('#ad-phone').value || '').trim()
       };
       await adminSetDoc('app_settings', 'upgrade_ad', adSave);
       AD_CACHE = normalizeAd(adSave); // reflect the new copy immediately
@@ -2054,7 +2078,7 @@ async function refreshSuperLocks(force){
 }
 function showView(which){
   var isSuper = which === 'super';
-  if (isSuper && !superLocksAllowed()){ return; } // not permitted — ignore
+  if (isSuper && !superLocksAllowed()){ showDeniedNote('superlocks'); return; } // locked — pitch the upgrade
   document.getElementById('cards').style.display = isSuper ? 'none' : '';
   document.getElementById('superlocks').style.display = isSuper ? '' : 'none';
   var on = function(b, v){ b.classList.toggle('on', v); b.style.borderColor = v ? '#7fd99a' : 'var(--hair)'; b.style.color = v ? '#7fd99a' : ''; };
