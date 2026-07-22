@@ -10777,7 +10777,7 @@ function openHRLineMo(gamePk,opts={}){
     for (var i = 0; i < list.length; i++){ var m = list[i];
       if (norm(m.code) !== norm(s.code)) continue;              // must match THEIR personal code
       if (m.name != null && norm(m.name) !== norm(s.name)) continue; // AND their name
-      return { ok: true, apps: (m.apps && m.apps.length) ? m.apps : null, dk: m.dk !== false };
+      return { ok: true, apps: Array.isArray(m.apps) ? m.apps : null, dk: m.dk !== false };
     }
     return { ok: false };
   }

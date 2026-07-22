@@ -946,7 +946,12 @@ function gateSuperPill(){
   if (!vs) return;
   // Always visible — everyone sees it exists. A padlock hints it's a paid perk;
   // tapping it when they don't have it opens the upgrade panel (see showView).
-  vs.innerHTML = superLocksAllowed() ? '⚡ Super Locks' : '⚡ Super Locks 🔒';
+  var ok = superLocksAllowed();
+  vs.innerHTML = ok ? '⚡ Super Locks' : '⚡ Super Locks 🔒';
+  if (!ok){ // if access was just revoked while they were viewing it, drop them out
+    var sl = document.getElementById('superlocks');
+    if (sl && sl.style.display !== 'none') showView('board');
+  }
 }
 // First-draft upgrade ad \u2014 fully editable in Board Settings \u2192 "Upgrade ad".
 var DEFAULT_AD = {
@@ -1034,7 +1039,7 @@ function memberMatch(name, code, list){
     var m = list[i];
     if (norm(m.code) !== norm(code)) continue;              // must match THEIR personal code
     if (m.name != null && norm(m.name) !== norm(name)) continue; // AND their name
-    return { ok: true, apps: m.apps && m.apps.length ? m.apps : null, dk: m.dk !== false, member: m };
+    return { ok: true, apps: Array.isArray(m.apps) ? m.apps : null, dk: m.dk !== false, member: m };
   }
   return { ok: false };
 }
