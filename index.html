@@ -575,7 +575,7 @@ function fillResult(s, result){
         '<span class="rk">' + (i + 1) + '</span>' +
         '<span class="mk">' + esc(m.label) + '</span>' +
         '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
-        '<span class="nn" title="' + m.hit + ' right · ' + m.miss + ' wrong (of ' + m.n + ' graded)">' + m.hit + '–' + m.miss + '</span></li>';
+        '<span class="nn" title="' + m.hit + ' of ' + m.n + ' right · ' + m.miss + ' wrong">' + m.hit + '/' + m.n + '</span></li>';
     }).join('');
     var freshLine = '';
     if (result.data.t){
@@ -588,7 +588,7 @@ function fillResult(s, result){
         (stale ? '\u26a0 record last graded ' + ageTxt : 'graded ' + ageTxt) + '</div>';
     }
     sb.innerHTML =
-      '<div class="lab">Most accurate markets <span style="opacity:.6;font-weight:600">· % · right–wrong</span></div>' +
+      '<div class="lab">Most accurate markets <span style="opacity:.6;font-weight:600">· % · right/total</span></div>' +
       '<ol class="top3">' + rows + '</ol>' + freshLine;
     var nums = sb.querySelectorAll('.num');
     Array.prototype.forEach.call(nums, function(el, i){
@@ -633,10 +633,10 @@ async function fillFreeTop3(){
         '<span class="rk">' + (i + 1) + '</span>' +
         '<span class="mk">' + esc(m.label) + '</span>' +
         '<span class="pc"><span class="num" data-v="' + m.pct + '">0</span>%</span>' +
-        '<span class="nn" title="' + m.hit + ' right · ' + m.miss + ' wrong (of ' + m.n + ' graded)">' + m.hit + '–' + m.miss + '</span></li>';
+        '<span class="nn" title="' + m.hit + ' of ' + m.n + ' right · ' + m.miss + ' wrong">' + m.hit + '/' + m.n + '</span></li>';
     }).join('');
     sb.innerHTML =
-      '<div class="lab" style="color:var(--dim)">Free version <span style="opacity:.7">· lighter model · % · right–wrong</span></div>' +
+      '<div class="lab" style="color:var(--dim)">Free version <span style="opacity:.7">· lighter model · % · right/total</span></div>' +
       '<ol class="top3">' + lis + '</ol>';
     var nums = sb.querySelectorAll('.num');
     Array.prototype.forEach.call(nums, function(el, i){
