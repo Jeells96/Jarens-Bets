@@ -5475,32 +5475,31 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
         }
         if (pruned) console.log('[nfl] retention: pruned ' + pruned + ' docs from seasons before ' + keepFrom);
       } catch (e) {}
-      /* SUPER LOCKS: publish TODAY'S locks (gridline/todayLocks) for the
-         Board's quick bet finder. Only runs when ESPN shows NFL games today
-         (in-season); a failure here can never break the grading above. */
+      /* SUPER LOCKS: publish THIS WEEK'S locks (gridline/todayLocks) for the
+         Board's quick bet finder — NFL is weekly, so the whole remaining slate
+         of the current week goes up, each game tagged with its day. Only runs
+         in-season; a failure here can never break the grading above. */
       try {
         const ptToday = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-        const sbUrl = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=' + ptToday.replace(/-/g, '');
-        const sbRes = await fetch(sbUrl, { cache: 'no-store' });
+        const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard', { cache: 'no-store' });
         const sb = sbRes.ok ? await sbRes.json() : null;
-        const evToday = (sb && sb.events) || [];
+        const evWeek = (sb && sb.events) || [];
         const tlocks = [];
-        if (evToday.length && sb.week && sb.week.number && sb.season && sb.season.year){
+        if (evWeek.length && sb.week && sb.week.number && sb.season && sb.season.year){
           state.season = sb.season.year;
           state.week = sb.week.number;
           await loadWeek(); // builds state.games with full projections context
           for (const g of state.games){
             if (g.completed) continue;
-            const gDay = g.date ? new Date(g.date).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) : null;
-            if (gDay !== ptToday) continue;
+            const dayTag = g.date ? ' (' + new Date(g.date).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' }) + ')' : '';
             const proj = projectGame(g);
             if (!proj) continue;
             const gm = g.away.abbr + '@' + g.home.abbr;
             const pickProb = Math.round(Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100);
             const pickAb = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
-            if (pickProb >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + ' — winner ' + pickAb, metric: pickProb });
+            if (pickProb >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + dayTag + ' — winner ' + pickAb, metric: pickProb });
             if (proj.conf >= lockTh('lines')){
-              tlocks.push({ cat: 'total', desc: gm + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+              tlocks.push({ cat: 'total', desc: gm + dayTag + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
               tlocks.push({ cat: 'awayPts', desc: g.away.abbr + ' points ' + proj.awayPts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
               tlocks.push({ cat: 'homePts', desc: g.home.abbr + ' points ' + proj.homePts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
             }

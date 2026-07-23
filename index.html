@@ -2100,7 +2100,15 @@ async function slUnitsLane(cfgs, opts){
     }
   }
   var locks = [];
-  if (td && td.date === slTodayPT() && Array.isArray(td.locks)){
+  // Weekly sports (NFL, NASCAR) publish one slate for the WHOLE week — accept
+  // a doc up to maxAgeDays old; daily sports still require today's date.
+  var maxAge = opts.maxAgeDays || 0;
+  var fresh = false;
+  if (td && td.date){
+    var ageDays = Math.floor((new Date(slTodayPT() + 'T12:00:00Z') - new Date(String(td.date) + 'T12:00:00Z')) / 86400000);
+    fresh = ageDays >= 0 && ageDays <= maxAge;
+  }
+  if (td && fresh && Array.isArray(td.locks)){
     td.locks.forEach(function(l){
       var q = qual[l.cat];
       if (!q) return;
@@ -2109,8 +2117,8 @@ async function slUnitsLane(cfgs, opts){
   }
   var note = !data.units.length ? opts.name + '’s graded history isn’t published yet.'
     : !Object.keys(qual).length ? 'No ' + opts.name + ' category is at 80%+ yet.'
-    : (!td || td.date !== slTodayPT()) ? 'No slate published for today' + (opts.season ? ' (' + opts.season + ')' : '') + '.'
-    : !locks.length ? 'Today’s locks aren’t in an 80%+ category.' : '';
+    : (!td || !fresh) ? 'No slate published for ' + (maxAge > 0 ? 'this week' : 'today') + (opts.season ? ' (' + opts.season + ')' : '') + '.'
+    : !locks.length ? (maxAge > 0 ? 'This week’s' : 'Today’s') + ' locks aren’t in an 80%+ category.' : '';
   return { name: opts.name, locks: locks, note: note };
 }
 async function refreshSuperLocks(force){
@@ -2135,18 +2143,18 @@ async function refreshSuperLocks(force){
         rates: function(u){ return iceRates(u, cfgs.iceTh, cfgs.iceTol); },
         labels: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorer', point: 'Point scorer', dkML: 'vs DK ML', dkTotal: 'vs DK total' },
         season: 'NHL runs Oct–Jun' }),
-      slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', unitsField: 'units',
+      slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', unitsField: 'units', maxAgeDays: 6,
         rates: function(u){ return nflRates(u, cfgs.nflTh, cfgs.nflTol); },
         labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', anytimeTd: 'Anytime TD', firstTd: 'First TD' },
         season: 'NFL runs Sep–Feb' }),
-      slUnitsLane(cfgs, { cacheKey: 'nascar', coll: 'nascar_accuracy', todayDoc: 'nascar/today', name: "Pete's Picks",
+      slUnitsLane(cfgs, { cacheKey: 'nascar', coll: 'nascar_accuracy', todayDoc: 'nascar/today', name: "Pete's Picks", maxAgeDays: 6,
         rates: function(u){ return nascarRates(u, cfgs.nascarTh); },
         labels: { winner: 'Race winner', top5: 'Top 5', top10: 'Top 10', top15: 'Top 15', h2h: 'Head-to-head' },
         season: 'NASCAR runs Feb–Nov' })
     ]);
     var total = lanes.reduce(function(s, a){ return s + a.locks.length; }, 0);
-    var html = '<div style="margin:4px 0 16px"><div style="font-weight:800;font-size:20px;letter-spacing:.04em">⚡ SUPER LOCKS · ' + total + ' today</div>' +
-      '<div class="statusline" style="margin-top:4px">Only locks from categories graded 80%+ all-time (min ' + SL_MIN_N + ' picks). Nothing else makes this list.</div></div>';
+    var html = '<div style="margin:4px 0 16px"><div style="font-weight:800;font-size:20px;letter-spacing:.04em">⚡ SUPER LOCKS · ' + total + ' live</div>' +
+      '<div class="statusline" style="margin-top:4px">Only locks from categories graded 80%+ all-time (min ' + SL_MIN_N + ' picks). Daily sports show today\u2019s slate; NFL and NASCAR show the whole week. Nothing else makes this list.</div></div>';
     lanes.forEach(function(a){
       html += '<div style="border:1px solid var(--hair);border-radius:14px;padding:14px 16px;margin-bottom:12px">' +
         '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
