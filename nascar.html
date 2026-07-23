@@ -63,14 +63,14 @@ table.grid td:first-child{text-align:left}
   <span class="pill" id="verBadge"></span>
 </header>
 <main>
-  <section id="tab-race"></section>
-  <section id="tab-bets" class="hidden"></section>
+  <section id="tab-race" class="hidden"></section>
+  <section id="tab-bets"></section>
   <section id="tab-facts" class="hidden"></section>
   <section id="tab-settings" class="hidden"></section>
 </main>
 <nav>
-  <button data-tab="race" class="on"><span class="ico">&#127937;</span>Next race</button>
-  <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
+  <button data-tab="bets" class="on"><span class="ico">&#128274;</span>Bets</button>
+  <button data-tab="race"><span class="ico">&#127937;</span>Next race</button>
   <button data-tab="facts"><span class="ico">&#128202;</span>Results</button>
   <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
 </nav>
@@ -110,7 +110,7 @@ const SIGMA = { super: 11, inter: 6.5, short: 6, road: 6 }; // finishing-positio
 const MIN_RACES = 3;        // driver needs this many prior finishes for a real rating
 const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
 const state = {
-  tab: 'race', projections: {}, nextRace: null,
+  tab: 'bets', projections: {}, nextRace: null,
   seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false
 };
 
@@ -492,22 +492,29 @@ const CAT_PLAIN = {
   h2h:    { tag: 'MATCHUP', what: 'finishes ahead of the other driver' }
 };
 function bestBetsList(up, cap){
-  // The money view: every qualifying lock across all bet types, strongest first.
+  // Every qualifying lock across all bet types, strongest first. A driver can
+  // appear under EVERY bucket they clear (Top 5 AND Top 10 AND Top 15) — each
+  // is a separate real bet, and Top 15 is our most accurate one.
   const P = up.proj, bets = [];
   const fav = P.favId && P.byId[P.favId];
-  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, txt: '<b>' + esc(fav.name) + '</b> wins the race', cat: 'Winner', catKey: 'winner' });
+  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, drv: fav.name, txt: '<b>' + esc(fav.name) + '</b> wins the race', cat: 'Winner', catKey: 'winner' });
   for (const id in P.byId){
     const d = P.byId[id];
-    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, txt: '<b>' + esc(d.name) + '</b> finishes 5th or better', cat: 'Top 5', catKey: 'top5' });
-    else if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, txt: '<b>' + esc(d.name) + '</b> finishes 10th or better', cat: 'Top 10', catKey: 'top10' });
-    else if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, txt: '<b>' + esc(d.name) + '</b> finishes 15th or better', cat: 'Top 15', catKey: 'top15' });
+    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 5th or better', cat: 'Top 5', catKey: 'top5' });
+    if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 10th or better', cat: 'Top 10', catKey: 'top10' });
+    if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 15th or better', cat: 'Top 15', catKey: 'top15' });
   }
-  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), cat: 'Matchup', catKey: 'h2h' }); }
+  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, drv: m.aName, txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), cat: 'Matchup', catKey: 'h2h' }); }
   bets.sort((a, b) => b.conf - a.conf);
-  return cap ? bets.slice(0, cap) : bets;
+  if (!cap) return bets;
+  // Capped summary view: one bet per driver (their strongest) for variety.
+  const seen = {}, out = [];
+  for (const b of bets){ if (seen[b.drv]) continue; seen[b.drv] = 1; out.push(b); if (out.length >= cap) break; }
+  return out;
 }
+// Confidence grade: a plain number (no % sign) — higher = stronger pick.
 function betRow(b){
-  return '<div class="drow"><span class="tag">' + CAT_PLAIN[b.catKey].tag + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
+  return '<div class="drow"><span class="tag">' + CAT_PLAIN[b.catKey].tag + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>';
 }
 function renderRace(){
   const el = $id('tab-race');
@@ -526,16 +533,9 @@ function renderRace(){
   const top = bestBetsList(up, 8);
   const best = top.length
     ? '<div class="card"><h2>Best bets · this race</h2>' + top.map(betRow).join('') +
-      '<div class="small dim" style="margin-top:8px">The <b style="color:var(--lock)">red %</b> is that pick\u2019s chance of hitting. Full list on the <b>Bets</b> tab · each bet type\u2019s track record on <b>Results</b>.</div></div>'
+      '<div class="small dim" style="margin-top:8px">The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade — higher is stronger. Full list on the <b>Bets</b> tab · each bet type\u2019s track record on <b>Results</b>.</div></div>'
     : '<div class="card"><h2>Best bets · this race</h2><div class="muted small">Nothing clears the lock thresholds yet for this race.</div></div>';
-  // Driver board: ONE line per driver — their single best bet. The 4-column
-  // probability grid confused people; it lives behind a "detailed view" toggle.
-  const bestOf = function(d){
-    if (d.pTop5 * 100 >= lockTh('top5')) return { what: 'finishes 5th or better', p: d.pTop5, lock: true };
-    if (d.pTop10 * 100 >= lockTh('top10')) return { what: 'finishes 10th or better', p: d.pTop10, lock: true };
-    if (d.pTop15 * 100 >= lockTh('top15')) return { what: 'finishes 15th or better', p: d.pTop15, lock: true };
-    return { what: 'finishes 15th or better', p: d.pTop15, lock: false }; // reference odds, not a lock
-  };
+  // Driver board: just the projected finishing order — P1 at the top.
   const rows = state.fieldExpanded ? up.rows : up.rows.slice(0, 20);
   let boardBody;
   if (state.fieldDetailed){
@@ -549,13 +549,9 @@ function renderRace(){
       '</table><div class="small dim" style="margin-top:8px">Each column = the chance that driver finishes at or better than that spot. 🔒 = strong enough to bet.</div>';
   } else {
     boardBody = rows.map(function(d, i){
-      const b = bestOf(d);
-      const right = b.lock
-        ? '<span class="pct lock">' + pct(b.p) + ' 🔒</span>'
-        : '<span class="pct dim">' + pct(b.p) + '</span>';
-      return '<div class="drow"><span class="rk">' + (i + 1) + '</span><span class="grow"><b>' + esc(d.name) + '</b> <span class="dim small">' + b.what + '</span></span>' + right + '</div>';
+      return '<div class="drow"><span class="rk" style="width:34px;font-weight:800;color:var(--speed)">P' + (i + 1) + '</span><span class="grow"><b>' + esc(d.name) + '</b></span></div>';
     }).join('') +
-    '<div class="small dim" style="margin-top:8px">One line per driver — their strongest bet this race. 🔒 = strong enough to bet; grey = the odds aren\u2019t there.</div>';
+    '<div class="small dim" style="margin-top:8px">Our projected finishing order for this race. Tap <b>Detailed view</b> for the full probability table.</div>';
   }
   const body = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><h2 style="margin:0">Driver board · ' + trackLabel(up.trackType) + '</h2>' +
     '<button class="btn ghost" id="fieldDetail" style="padding:5px 10px;font-size:11.5px">' + (state.fieldDetailed ? 'Simple view' : 'Detailed view') + '</button></div>' +
@@ -572,7 +568,11 @@ function trackLabel(t){ return { super: 'Superspeedway', inter: 'Intermediate', 
 function renderBets(){
   const el = $id('tab-bets');
   const up = projectUpcoming();
-  if (!up){ el.innerHTML = '<div class="card muted small">No projected locks yet — needs race history. Check the Results tab as the season builds.</div>'; return; }
+  if (!up){
+    el.innerHTML = '<div class="card muted small">Building the race history\u2026 <span class="spin"></span><br><span class="dim">Bets appear the moment it\u2019s done \u2014 no tap needed.</span></div>';
+    buildFactsBackground();
+    return;
+  }
   const bets = bestBetsList(up, 0);
   if (!bets.length){
     el.innerHTML = '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
@@ -584,7 +584,7 @@ function renderBets(){
   const order = ['winner', 'top5', 'top10', 'top15', 'h2h'];
   const byKey = {};
   bets.forEach(function(b){ (byKey[b.catKey] = byKey[b.catKey] || []).push(b); });
-  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — every bet below is strong enough to play. The <b style="color:var(--lock)">red %</b> is that pick\u2019s own chance of hitting.</div></div>';
+  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — every bet below is strong enough to play. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade (higher = stronger).</div></div>';
   for (const key of order){
     const arr = byKey[key];
     if (!arr || !arr.length) continue;
@@ -597,7 +597,7 @@ function renderBets(){
       '<div class="small dim" style="margin:2px 0 6px">Bet = the driver ' + meta.what + '.</div>';
     const cap = key === 'h2h' && !state.h2hExpanded ? 10 : arr.length;
     html += arr.slice(0, cap).map(function(b){
-      return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
+      return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>';
     }).join('');
     if (key === 'h2h' && arr.length > 10 && !state.h2hExpanded){
       html += '<button class="btn ghost" id="h2hMore" style="width:100%;margin-top:7px">Show all ' + arr.length + ' matchups</button>';
@@ -750,8 +750,8 @@ async function runCronGrade(){
   if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
   pullSharedLockCfg().then(got => { if (got) rerenderCurrent(); }).catch(() => {});
   loadCatRecords();
-  loadNextRace().then(() => { if (state.tab === 'race') renderRace(); });
-  renderRace();
+  loadNextRace().then(() => rerenderCurrent());
+  switchTab(state.tab); // Bets is the front page
   setTimeout(() => { buildFactsBackground(); }, 1000);
 })();
 </script>
