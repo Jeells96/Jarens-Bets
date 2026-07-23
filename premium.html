@@ -478,7 +478,8 @@ let TEAM_OAA={};     // team full name -> outs above average (Savant, advanced d
 let OAA_OK=null;
 let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
 let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gmK:[],hrL:[]};
-let MARKET='gm';
+let MARKET='hits'; // first tab you see = Hits
+let AUTO_REFRESH=false; // true while the on-open background reload is running
 const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gmK:'GAME K',hrL:'GAME HRs'};
 
 function toast(msg,kind){
@@ -1296,15 +1297,22 @@ async function backfillYesterday(today){
 }
 
 async function loadDay(){
+  if(loadDay._running)return;
+  loadDay._running=true;
   const date=$('dp').value||todayStr();
   CUR_DATE=date;
   const btn=$('loadBtn');btn.disabled=true;btn.textContent='Loading…';
+  const prevBoard={rows:ROWS,mk:MK,pending:PENDING}; // restore point for a failed background refresh
   ROWS=[];PENDING=[];MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmK:[],hrL:[]};const PITJOBS=[];const GAMEJOBS=[];
   const EXPHR={},SPKEXP={}; // per-batter expected HR count / per-starter expected K — feed the game-level markets
   try{
     prog('Fetching schedule…');
     const games=await fetchScheduleDay(date);
-    if(!games.length){render('No games scheduled for '+date+'.');return;}
+    if(!games.length){
+      if(AUTO_REFRESH&&prevBoard.rows&&prevBoard.rows.length){ROWS=prevBoard.rows;MK=prevBoard.mk;PENDING=prevBoard.pending;prog('');}
+      else render('No games scheduled for '+date+'.');
+      return;
+    }
 
     // collect batter jobs: posted lineups verify+lock; missing ones project from last game
     const jobs=[];
@@ -1611,8 +1619,15 @@ async function loadDay(){
       try{await backfillYesterday(date);}finally{loadDay._backfilling=false;}
     }
   }catch(e){
-    render('Something broke while loading: '+e.message+'. Tap Load to retry.');
+    if(AUTO_REFRESH&&prevBoard.rows&&prevBoard.rows.length){
+      // background refresh failed — quietly keep the board that was on screen
+      ROWS=prevBoard.rows;MK=prevBoard.mk;PENDING=prevBoard.pending;
+      prog('Background refresh failed — showing the last saved board. Tap Load to retry.');
+    }else{
+      render('Something broke while loading: '+e.message+'. Tap Load to retry.');
+    }
   }finally{
+    loadDay._running=false;
     btn.disabled=false;btn.textContent='Load';
     prog('');
   }
@@ -2003,7 +2018,7 @@ async function computeSuccessStats(){
   try{localStorage.setItem('fablehits_stats',JSON.stringify(stats));}catch(e){}
   toast(`computeStats: local ${Object.keys(local).length} + remote ${Object.keys(remote).length} = ${Object.keys(days).length} day(s) · all ${all.h}/${all.n}`,(all.n||!FBH.lastErr)?null:'err');
   renderHeaderStats();
-  try{if($('mkhead'))drawCurrent();}catch(e){} // refresh the market header's all-time chip
+  try{if($('mkhead')&&!loadDay._running)drawCurrent();}catch(e){} // refresh the all-time chip — never mid-load (globals are being rebuilt)
   return stats;
 }
 function renderHeaderStats(){
@@ -2062,7 +2077,7 @@ function render(msg,cachedAt){
   if(!ROWS.length&&!PENDING.length){out.innerHTML='<div class="empty"><b>No lineups posted yet</b>Lineups usually appear 1–2 hours before first pitch. Tap Load again closer to game time.</div>';return;}
 
   let h='';
-  if(cachedAt)h+=`<div class="day-note">Loaded from the league snapshot (${cachedAt.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}). Tap Load to refresh unconfirmed matchups — confirmed ones stay locked.</div>`;
+  if(cachedAt)h+=`<div class="day-note">Loaded from the league snapshot (${cachedAt.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}). ${AUTO_REFRESH?'Refreshing in the background now — the board swaps to the fresh numbers the moment it\u2019s ready.':'Tap Load to refresh unconfirmed matchups — confirmed ones stay locked.'}</div>`;
   if(SAVANT_OK===false)h+=`<div class="day-note">Pitch-type layer unavailable — Baseball Savant couldn't be reached from this browser, so predictions skip batter-vs-pitch-type adjustments this load. Everything else still applies.</div>`;
   if(FBH.lastErr)h+=`<div class="day-note" style="border-color:var(--cold)">League sync failed${isPermErr(FBH.lastErr)?' — Firestore rules are blocking the Premium collections. Fix the rules in the Firebase console.':' ('+FBH.lastErr.message+').'} Predictions saved on this device only.</div>`;
   h+=`<div class="chips" id="mkbar">${Object.keys(MK_LABEL).map(m=>`<span class="chip mk ${MARKET===m?'on':''}" onclick="setMarket('${m}')">${MK_LABEL[m]}</span>`).join('')}</div>`;
@@ -2255,6 +2270,7 @@ function hydrateCompact(remote){
 async function bootLeagueLoad(){
   const date=todayStr();
   CUR_DATE=date;
+  AUTO_REFRESH=(date===todayStr()); // set before the snapshot paints so its note says a refresh is coming
   let local=null;
   try{local=JSON.parse(localStorage.getItem('fablehits_'+date)||'null');}catch(e){}
   if(local&&local.rows&&local.rows.length){
@@ -2271,6 +2287,12 @@ async function bootLeagueLoad(){
       DAY_RESULTS=remote.results;render(null,local?new Date(local.ts):undefined);
     }
   }
+  /* AUTO-REFRESH: rebuild today's board in the background on every open. The
+     snapshot above stays on screen untouched — loadDay() only repaints when it
+     finishes, so the swap is instant (no loading screen ever replaces it). */
+  if(date===todayStr()&&!loadDay._running){
+    loadDay().catch(function(){}).then(function(){AUTO_REFRESH=false;});
+  }else{AUTO_REFRESH=false;}
   // Always load success stats on boot (independent of today's board) and paint
   // the header + Results list once they land — even with no save happening.
   await computeSuccessStats();
