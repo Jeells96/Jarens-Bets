@@ -111,7 +111,7 @@ const MIN_RACES = 3;        // driver needs this many prior finishes for a real 
 const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
 const state = {
   tab: 'bets', projections: {}, nextRace: null,
-  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false, betsOpen: {}
 };
 
 /* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
@@ -505,7 +505,10 @@ function bestBetsList(up, cap){
     if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 15th or better', cat: 'Top 15', catKey: 'top15' });
   }
   for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, drv: m.aName, txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), cat: 'Matchup', catKey: 'h2h' }); }
-  bets.sort((a, b) => b.conf - a.conf);
+  // Rank by what has actually CASHED: the bet type's all-time success rate
+  // leads, the pick's own confidence breaks ties within a type.
+  bets.forEach(function(b){ const r = catRate(b.catKey); b.catPct = r ? r.pct : 0; });
+  bets.sort((a, b) => (b.catPct - a.catPct) || (b.conf - a.conf));
   if (!cap) return bets;
   // Capped summary view: one bet per driver (their strongest) for variety.
   const seen = {}, out = [];
@@ -533,7 +536,7 @@ function renderRace(){
   const top = bestBetsList(up, 8);
   const best = top.length
     ? '<div class="card"><h2>Best bets · this race</h2>' + top.map(betRow).join('') +
-      '<div class="small dim" style="margin-top:8px">The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade — higher is stronger. Full list on the <b>Bets</b> tab · each bet type\u2019s track record on <b>Results</b>.</div></div>'
+      '<div class="small dim" style="margin-top:8px">Ordered by each bet type\u2019s real all-time success rate (most proven first). The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. Full list on the <b>Bets</b> tab.</div></div>'
     : '<div class="card"><h2>Best bets · this race</h2><div class="muted small">Nothing clears the lock thresholds yet for this race.</div></div>';
   // Driver board: just the projected finishing order — P1 at the top.
   const rows = state.fieldExpanded ? up.rows : up.rows.slice(0, 20);
@@ -573,40 +576,78 @@ function renderBets(){
     buildFactsBackground();
     return;
   }
-  const bets = bestBetsList(up, 0);
-  if (!bets.length){
-    el.innerHTML = '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
-    return;
-  }
-  // One card per bet type. The header says what the bet IS in plain words and
-  // shows that bet type's track record — clearly labeled so it can't be
-  // mistaken for a pick's own odds (which are the only numbers on the rows).
+  // Every driver's confidence for a category — not just the locks — so the
+  // dropdown can draw a hard line between "bet" and "skip".
+  const catAllRows = function(key){
+    const P = up.proj, rows = [];
+    if (key === 'h2h'){
+      for (const m of P.h2h) rows.push({ txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), conf: m.p * 100 });
+    } else {
+      const pk = { winner: 'pWin', top5: 'pTop5', top10: 'pTop10', top15: 'pTop15' }[key];
+      for (const id in P.byId){ const d = P.byId[id]; rows.push({ txt: '<b>' + esc(d.name) + '</b>', conf: d[pk] * 100 }); }
+    }
+    rows.sort((a, b) => b.conf - a.conf);
+    return rows;
+  };
   const order = ['winner', 'top5', 'top10', 'top15', 'h2h'];
+  // Order the CARDS by category success rate too — most proven bet type on top.
+  order.sort(function(a, b){ const ra = catRate(a), rb = catRate(b); return ((rb ? rb.pct : 0) - (ra ? ra.pct : 0)); });
+  const bets = bestBetsList(up, 0);
   const byKey = {};
   bets.forEach(function(b){ (byKey[b.catKey] = byKey[b.catKey] || []).push(b); });
-  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — every bet below is strong enough to play. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade (higher = stronger).</div></div>';
+  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — bet types ordered by their real success rate, most proven first. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. <b>Tap a card</b> to see every driver and the bet line.</div></div>';
   for (const key of order){
-    const arr = byKey[key];
-    if (!arr || !arr.length) continue;
+    const arr = byKey[key] || [];
     const r = catRate(key);
     const meta = CAT_PLAIN[key];
+    const th = lockTh(key);
+    const open = !!state.betsOpen[key];
     html += '<div class="card">' +
-      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
-        '<h2 style="margin:0;color:var(--speed)">' + meta.tag + '</h2>' +
-        (r ? '<span class="small dim">this bet type has hit <b style="color:var(--tx)">' + r.pct + '%</b> of the time (' + r.hit + '/' + r.n + ')</span>' : '') + '</div>' +
-      '<div class="small dim" style="margin:2px 0 6px">Bet = the driver ' + meta.what + '.</div>';
-    const cap = key === 'h2h' && !state.h2hExpanded ? 10 : arr.length;
-    html += arr.slice(0, cap).map(function(b){
-      return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>';
-    }).join('');
-    if (key === 'h2h' && arr.length > 10 && !state.h2hExpanded){
-      html += '<button class="btn ghost" id="h2hMore" style="width:100%;margin-top:7px">Show all ' + arr.length + ' matchups</button>';
+      '<div class="betshead" data-cat="' + key + '" style="cursor:pointer">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+          '<h2 style="margin:0;color:var(--speed)">' + meta.tag + ' <span style="color:var(--mt2);font-weight:600;font-size:11px">' + (open ? '▴' : '▾') + '</span></h2>' +
+          (r ? '<span class="small dim">this bet type has hit <b style="color:var(--tx)">' + r.pct + '%</b> of the time (' + r.hit + '/' + r.n + ')</span>' : '') + '</div>' +
+        '<div class="small dim" style="margin:2px 0 6px">Bet = the driver ' + meta.what + (th > 0 ? ' · bet line: confidence <b style="color:var(--tx)">' + th + '+</b>' : ' · longshot board — no bet line, the favorite is shown for reference') + '</div>' +
+      '</div>';
+    if (!open){
+      // Collapsed: just the locks (the bets worth playing), like a bet slip.
+      if (arr.length){
+        const capN = key === 'h2h' ? 10 : arr.length;
+        html += arr.slice(0, capN).map(function(b){
+          return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>';
+        }).join('');
+        if (arr.length > capN) html += '<div class="small dim" style="padding:4px 0 0">+' + (arr.length - capN) + ' more — tap the card to see them all.</div>';
+      } else {
+        html += '<div class="small dim" style="padding:4px 0">No picks clear the bet line for this race — tap to see the whole field.</div>';
+      }
+    } else {
+      // Expanded: EVERY driver, with a hard line at the threshold.
+      const rows = catAllRows(key);
+      let lineDrawn = false;
+      html += rows.map(function(x, xi){
+        const isBet = th > 0 ? x.conf >= th : (key === 'winner' && xi === 0);
+        let pre = '';
+        if (th > 0 && !isBet && !lineDrawn){
+          lineDrawn = true;
+          pre = '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed var(--speed)"></div>' +
+            '<span style="font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--speed);white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span>' +
+            '<div style="flex:1;border-top:2px dashed var(--speed)"></div></div>';
+        }
+        return pre + '<div class="drow"><span class="grow"' + (isBet ? '' : ' style="color:var(--mt2)"') + '>' + x.txt + '</span>' +
+          '<span class="pct ' + (isBet ? 'lock' : 'dim') + '">' + Math.round(x.conf) + '</span></div>';
+      }).join('');
+      if (!lineDrawn && th > 0) html += '<div class="small dim" style="padding:4px 0 0">Everyone shown clears the bet line.</div>';
     }
     html += '</div>';
   }
   el.innerHTML = html;
-  const hm = $id('h2hMore');
-  if (hm) hm.addEventListener('click', function(){ state.h2hExpanded = true; renderBets(); });
+  el.querySelectorAll('.betshead').forEach(function(h){
+    h.addEventListener('click', function(){
+      const k = h.getAttribute('data-cat');
+      state.betsOpen[k] = !state.betsOpen[k];
+      renderBets();
+    });
+  });
 }
 function renderFacts(){
   const el = $id('tab-facts');
