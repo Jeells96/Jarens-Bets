@@ -111,7 +111,7 @@ const MIN_RACES = 3;        // driver needs this many prior finishes for a real 
 const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
 const state = {
   tab: 'race', projections: {}, nextRace: null,
-  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, h2hExpanded: false
 };
 
 /* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
@@ -212,8 +212,18 @@ function parseEventRace(ev){
   return { id: ev.id, date, race: ev.name || ev.shortName || 'Race', trackType: trackTypeOf((ev.name || '') + ' ' + (ev.shortName || '')), drivers };
 }
 async function buildData(onProg){
+  // Frugal: each season file is ~4MB. Skip a PRIOR season already fully stored
+  // (30+ race dates), and refetch the CURRENT season at most every 6 hours —
+  // races are weekly, so anything fresher is wasted phone data. The cron runs
+  // in a fresh browser (empty store), so it always does the full build.
   let built = 0, failed = 0;
+  const curYear = (new Date()).getFullYear();
+  const stampKey = 'nascar_lastbuild';
+  let lastBuild = 0; try { lastBuild = +localStorage.getItem(stampKey) || 0; } catch (e) {}
   for (const y of YEARS){
+    const haveY = allRecDates().filter(d => d.slice(0, 4) === String(y)).length;
+    if (y < curYear && haveY >= 30) continue;                       // prior season complete
+    if (y === curYear && haveY > 0 && Date.now() - lastBuild < 6 * 3600 * 1000) continue; // checked recently
     if (onProg) onProg('Fetching ' + y + ' season…');
     try {
       const j = await fetchJSON(ESPN.season(y));
@@ -224,6 +234,7 @@ async function buildData(onProg){
         (byDate[rec.date] = byDate[rec.date] || []).push(rec);
       }
       for (const d in byDate){ saveRecs(d, byDate[d]); built += byDate[d].length; }
+      if (y === curYear){ try { localStorage.setItem(stampKey, String(Date.now())); } catch (e) {} }
     } catch (e){ failed++; }
   }
   return { built, failed };
@@ -470,6 +481,26 @@ function projectUpcoming(){
   const rows = field.map(d => Object.assign({ id: d.id }, proj.byId[d.id])).sort((a, b) => a.rating - b.rating);
   return { proj, rows, trackType: tt, prior: prior.length };
 }
+function bestBetsList(up, cap){
+  // The money view: every qualifying lock across all bet types, strongest first.
+  const P = up.proj, bets = [];
+  const fav = P.favId && P.byId[P.favId];
+  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, txt: '<b>' + esc(fav.name) + '</b> to win the race', cat: 'Winner', catKey: 'winner' });
+  for (const id in P.byId){
+    const d = P.byId[id];
+    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 5 finish', cat: 'Top 5', catKey: 'top5' });
+    else if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 10 finish', cat: 'Top 10', catKey: 'top10' });
+    else if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 15 finish', cat: 'Top 15', catKey: 'top15' });
+  }
+  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, txt: '<b>' + esc(m.aName) + '</b> beats ' + esc(m.bName), cat: 'H2H', catKey: 'h2h' }); }
+  bets.sort((a, b) => b.conf - a.conf);
+  return cap ? bets.slice(0, cap) : bets;
+}
+function betRow(b){
+  const r = catRate(b.catKey);
+  const hist = r ? '<span class="dim" style="font-size:11px;margin-left:5px">' + r.pct + '% all-time</span>' : '';
+  return '<div class="drow"><span class="tag">' + b.cat + '</span><span class="grow">' + b.txt + hist + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
+}
 function renderRace(){
   const el = $id('tab-race');
   const nr = state.nextRace;
@@ -477,49 +508,66 @@ function renderRace(){
     '<div style="font-weight:800;font-size:16px">' + esc(nr ? nr.name : 'Loading…') + '</div>' +
     (nr ? '<div class="small dim" style="margin-top:3px">' + esc(nr.date || '') + ' · ' + trackLabel(nr.trackType) + ' · projections are walk-forward (only past races used)</div>' : '') + '</div>';
   if (allRecDates().length < 5){
-    el.innerHTML = head + '<div class="card muted small">Building the season record… this fills in automatically from the last two Cup seasons. If it persists, the grading autopilot seeds it on its next run.</div>';
+    el.innerHTML = head + '<div class="card muted small">Building the season record… <span class="spin"></span><br><span class="dim">Fills in automatically from the last two Cup seasons.</span></div>';
     buildFactsBackground();
     return;
   }
   const up = projectUpcoming();
   if (!up){ el.innerHTML = head + '<div class="card muted small">Not enough race history yet to project (need ' + MIN_PRIOR_RACES + ' prior races). It builds as the season fills in.</div>'; return; }
+  // Best bets FIRST — the reason anyone opens the app.
+  const top = bestBetsList(up, 8);
+  const best = top.length
+    ? '<div class="card"><h2>Best bets · this race</h2>' + top.map(betRow).join('') +
+      '<div class="small dim" style="margin-top:8px">Strongest locks across every bet type — the full list is on the <b>Bets</b> tab.</div></div>'
+    : '<div class="card"><h2>Best bets · this race</h2><div class="muted small">Nothing clears the lock thresholds yet for this race.</div></div>';
   const th5 = lockTh('top5'), th10 = lockTh('top10'), th15 = lockTh('top15'), thW = lockTh('winner');
-  const flag = (v, t) => (v * 100 >= t ? ' 🔒' : '');
+  const cell = (v, t) => { const on = v * 100 >= t; return '<td' + (on ? ' style="color:var(--speed);font-weight:800"' : '') + '>' + pct(v) + (on ? ' 🔒' : '') + '</td>'; };
+  const rows = state.fieldExpanded ? up.rows : up.rows.slice(0, 20);
   const body = '<div class="card"><h2>Field projection · ' + trackLabel(up.trackType) + '</h2>' +
-    '<table class="grid"><tr><th>Driver</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 15</th></tr>' +
-    up.rows.map(function(d){
-      return '<tr><td>' + esc(d.name) + '</td>' +
-        '<td>' + pct(d.pWin) + flag(d.pWin, thW) + '</td>' +
-        '<td>' + pct(d.pTop5) + flag(d.pTop5, th5) + '</td>' +
-        '<td>' + pct(d.pTop10) + flag(d.pTop10, th10) + '</td>' +
-        '<td>' + pct(d.pTop15) + flag(d.pTop15, th15) + '</td></tr>';
+    '<table class="grid"><tr><th>#</th><th>Driver</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 15</th></tr>' +
+    rows.map(function(d, i){
+      return '<tr><td class="dim">' + (i + 1) + '</td><td>' + esc(d.name) + '</td>' +
+        cell(d.pWin, thW) + cell(d.pTop5, th5) + cell(d.pTop10, th10) + cell(d.pTop15, th15) + '</tr>';
     }).join('') + '</table>' +
-    '<div class="small dim" style="margin-top:8px">🔒 = clears the current lock threshold for that bet. Sorted by projected strength. See the <b>Bets</b> tab for every lock, and <b>Results</b> for how each bet type has graded.</div></div>';
-  el.innerHTML = head + body;
+    (up.rows.length > 20 ? '<button class="btn ghost" id="fieldMore" style="width:100%;margin-top:9px">' + (state.fieldExpanded ? 'Show top 20 only' : 'Show the full field (' + up.rows.length + ' drivers)') + '</button>' : '') +
+    '<div class="small dim" style="margin-top:8px">🔒 = clears that bet type\u2019s lock threshold. Sorted by projected strength.</div></div>';
+  el.innerHTML = head + best + body;
+  const fm = $id('fieldMore');
+  if (fm) fm.addEventListener('click', function(){ state.fieldExpanded = !state.fieldExpanded; renderRace(); });
 }
 function trackLabel(t){ return { super: 'Superspeedway', inter: 'Intermediate', short: 'Short track', road: 'Road course' }[t] || 'Intermediate'; }
 function renderBets(){
   const el = $id('tab-bets');
   const up = projectUpcoming();
   if (!up){ el.innerHTML = catStripHtml() + '<div class="card muted small">No projected locks yet — needs race history. Check the Results tab as the season builds.</div>'; return; }
-  const bets = [];
-  const P = up.proj;
-  const fav = P.favId && P.byId[P.favId];
-  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, txt: '<b>' + esc(fav.name) + '</b> to win the race', cat: 'Winner' });
-  for (const id in P.byId){
-    const d = P.byId[id];
-    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 5 finish', cat: 'Top 5' });
-    else if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 10 finish', cat: 'Top 10' });
-    else if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 15 finish', cat: 'Top 15' });
+  const bets = bestBetsList(up, 0);
+  if (!bets.length){
+    el.innerHTML = catStripHtml() + '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
+    return;
   }
-  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, txt: '<b>' + esc(m.aName) + '</b> beats ' + esc(m.bName), cat: 'H2H' }); }
-  bets.sort((a, b) => b.conf - a.conf);
-  const list = bets.length
-    ? '<div class="card"><h2>Locks · ' + esc((state.nextRace && state.nextRace.name) || 'next race') + '</h2>' +
-      bets.map(function(b){ return '<div class="drow"><span class="tag">' + b.cat + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>'; }).join('') +
-      '<div class="small dim" style="margin-top:8px">Only bets clearing the current lock thresholds appear, strongest first. Thresholds are set on the Board.</div></div>'
-    : '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
-  el.innerHTML = catStripHtml() + list;
+  // Grouped by bet type, each group led by its all-time success rate.
+  const order = ['Winner', 'Top 5', 'Top 10', 'Top 15', 'H2H'];
+  const byCat = {};
+  bets.forEach(function(b){ (byCat[b.cat] = byCat[b.cat] || []).push(b); });
+  let html = '<div class="card"><h2>Locks · ' + esc((state.nextRace && state.nextRace.name) || 'next race') + '</h2>';
+  for (const cat of order){
+    const arr = byCat[cat];
+    if (!arr || !arr.length) continue;
+    const key = arr[0].catKey, r = catRate(key);
+    const rateTxt = r ? '<span class="dim" style="font-weight:600">' + r.pct + '% all-time · ' + r.hit + '/' + r.n + '</span>' : '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin:11px 0 2px"><span style="font-size:12px;font-weight:800;letter-spacing:.07em;color:var(--speed)">' + cat.toUpperCase() + '</span><span class="small">' + rateTxt + '</span></div>';
+    const cap = cat === 'H2H' && !state.h2hExpanded ? 10 : arr.length;
+    html += arr.slice(0, cap).map(function(b){
+      return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
+    }).join('');
+    if (cat === 'H2H' && arr.length > 10 && !state.h2hExpanded){
+      html += '<button class="btn ghost" id="h2hMore" style="width:100%;margin-top:7px">Show all ' + arr.length + ' head-to-heads</button>';
+    }
+  }
+  html += '<div class="small dim" style="margin-top:10px">Only bets clearing the lock thresholds appear, strongest first. Each heading shows that bet type\u2019s real graded record.</div></div>';
+  el.innerHTML = catStripHtml() + html;
+  const hm = $id('h2hMore');
+  if (hm) hm.addEventListener('click', function(){ state.h2hExpanded = true; renderBets(); });
 }
 function renderFacts(){
   const el = $id('tab-facts');
