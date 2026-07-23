@@ -3092,6 +3092,27 @@ function tdProbability(p, oppDefRating, oppProfile, lgYds) {
 // ============================================================================
 // Render dispatcher
 // ============================================================================
+/* Success-rate strip: every bet type's all-time graded record (same numbers as
+   the Facts tab), always visible above the games list. */
+function catRateNFL(k){
+  const c = state.fsAccuracy && state.fsAccuracy.cats && state.fsAccuracy.cats[k];
+  if (!c || !c.n) return null;
+  return { pct: Math.round(100 * c.hit / c.n), hit: c.hit, n: c.n, label: c.label || k };
+}
+function catStripHtml(){
+  if (!state.fsAccuracy || !state.fsAccuracy.cats) return '';
+  const chips = [];
+  for (const k in state.fsAccuracy.cats){
+    if (typeof window !== 'undefined' && window.__DK_OK === false && /^dk/i.test(k)) continue;
+    const r = catRateNFL(k);
+    if (!r) continue;
+    const col = r.pct >= 80 ? 'var(--green,#39d98a)' : r.pct >= 60 ? 'var(--amber,#f5a623)' : 'var(--text-dim,#8593a1)';
+    chips.push('<span class="chip" style="cursor:default">' + escapeHtml(r.label) + ' <b style="color:' + col + '">' + r.pct + '%</b> <span style="opacity:.65">' + r.hit + '/' + r.n + '</span></span>');
+  }
+  if (!chips.length) return '';
+  return '<div class="hint" style="margin-bottom:10px"><div class="title" style="font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;opacity:.7">Success rate by bet type · all-time</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">' + chips.join('') + '</div></div>';
+}
 function render() {
   const main = document.getElementById('main');
   // Facts works pre-load: all-time record + season scan need no loaded week
@@ -3153,6 +3174,7 @@ function renderGames(main) {
     state.openGameId = null;
   }
   let html = '<div class="games">';
+  html += catStripHtml();
   html += '<div class="bet-search-wrap">' +
     '<input type="search" id="bet-search" class="bet-search" placeholder="Search bets — player or team…" value="' + escapeHtml(state.betSearch || '') + '" autocomplete="off">' +
   '</div>' +
@@ -5554,7 +5576,7 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
 // Background automation (GitHub Action) handles scheduled pulls now.
 // On boot: adopt any newer background odds + show automation status.
-setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg().then(ok => { if (ok && state.activeTab === 'facts') render(); }); }, 600);
+setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg().then(ok => { if (ok && state.activeTab === 'facts') render(); }); if (!new URLSearchParams(location.search).get('cron')) loadFirebaseAccuracy(); }, 600);
 </script>
 
 <script>window.__APPKEY='nfl';</script>

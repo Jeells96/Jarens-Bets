@@ -2024,8 +2024,13 @@ async function slUnitsLane(cfgs, opts){
 async function refreshSuperLocks(force){
   var el = document.getElementById('superlocks');
   if (!el) return;
-  if (SL_CACHE && !force){ el.innerHTML = SL_CACHE; return; }
-  el.innerHTML = '<div class="statusline" style="padding:20px 0">Reading every app’s graded record… first open takes a few seconds.</div>';
+  if (refreshSuperLocks._busy) return; // one pull at a time
+  refreshSuperLocks._busy = true;
+  // Every open pulls the freshest data: show the last result instantly (if any)
+  // with an updating note, drop the caches, and re-read everything live.
+  delete PREVIEW_CACHE.prem; delete PREVIEW_CACHE.nba; delete PREVIEW_CACHE.ice; delete PREVIEW_CACHE.nfl;
+  if (SL_CACHE) el.innerHTML = '<div class="statusline" style="padding:0 0 10px">↻ Updating to the latest grades…</div>' + SL_CACHE;
+  else el.innerHTML = '<div class="statusline" style="padding:20px 0">Reading every app’s graded record… takes a few seconds.</div>';
   try {
     var cfgs = await slConfigs();
     var lanes = await Promise.all([
@@ -2080,7 +2085,7 @@ async function refreshSuperLocks(force){
     el.innerHTML = html;
   } catch (e){
     el.innerHTML = '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the tab again to retry.</div>';
-  }
+  } finally { refreshSuperLocks._busy = false; }
 }
 function showView(which){
   var isSuper = which === 'super';

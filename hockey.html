@@ -608,6 +608,32 @@ function renderGames(msg){
   const b = $id('loadBtn');
   if (b) b.onclick = () => loadSlate($id('dp').value || todayPT());
 }
+/* Per-category success rates for members: the grading autopilot publishes the
+   full record map to nhl/allTime (cats). Read once on boot; shown on the bet
+   lists so the success rate for each bet type is always in view. */
+let CAT_RECORDS = null;
+async function loadCatRecords(){
+  try { const d = await fbRead(FB_NS, 'allTime'); CAT_RECORDS = (d && d.cats) || null; } catch (e) {}
+  try { renderBets(); } catch (e) {}
+}
+function catRate(k){
+  const c = CAT_RECORDS && CAT_RECORDS[k];
+  if (!c || !c.n) return null;
+  return { pct: Math.round(100 * c.hit / c.n), hit: c.hit, n: c.n };
+}
+function catStripHtml(){
+  if (!CAT_RECORDS) return '';
+  const chips = [];
+  for (const k in CAT_META){
+    if (typeof window !== 'undefined' && window.__DK_OK === false && /^dk/.test(k)) continue;
+    const r = catRate(k);
+    if (!r) continue;
+    const col = r.pct >= 80 ? 'var(--green,#39d98a)' : r.pct >= 60 ? 'var(--amber,#ffb454)' : 'var(--dim,#8593a1)';
+    chips.push('<span class="chip" style="cursor:default"><span class="dim">' + esc(CAT_META[k].short) + '</span> <b style="color:' + col + '">' + r.pct + '%</b> <span class="dim">' + r.hit + '/' + r.n + '</span></span>');
+  }
+  if (!chips.length) return '';
+  return '<div class="card" style="padding:8px 10px"><div class="small dim" style="margin-bottom:4px">Success rate by bet type · all-time, graded</div>' + chips.join(' ') + '</div>';
+}
 function renderBets(){
   const el = $id('tab-bets');
   const th = '<div class="small dim" style="margin-top:4px">Thresholds: winner ≥' + lockTh('winner') + '% · lines ≥' + lockTh('lines') + '% · players ≥' + lockTh('props') + '% · tol ±' + hitTol('goals') + ' goals / ±' + hitTol('p1') + ' 1st-period</div>';
@@ -662,9 +688,9 @@ function renderBets(){
   bets.sort((a, b) => b.conf - a.conf);
   const head = '<div class="card"><h2>Locks · ' + esc(state.slate.date) + '</h2><div class="small">' + bets.length + ' qualifying bets' +
     (gradedN ? ' · completed so far: <b>' + hitN + '/' + gradedN + '</b>' : '') + '</div>' + th + '</div>';
-  el.innerHTML = bets.length
+  el.innerHTML = catStripHtml() + (bets.length
     ? head + '<div class="card"><h2>All bets · highest confidence first</h2>' + bets.map(b => b.html).join('') + '</div>'
-    : head + '<div class="card muted small">Nothing clears the current thresholds — that is the system working. Lower thresholds from the Board settings for more (weaker) bets.</div>';
+    : head + '<div class="card muted small">Nothing clears the current thresholds — that is the system working. Lower thresholds from the Board settings for more (weaker) bets.</div>');
 }
 function renderFacts(){
   const el = $id('tab-facts');
@@ -885,7 +911,9 @@ async function runCronGrade(){
     const entries = Object.keys(agg).filter(k => k !== 'allLocks' && agg[k].n >= 20)
       .map(k => ({ label: agg[k].label, pct: Math.round(100 * agg[k].hit / Math.max(1, agg[k].n)), n: agg[k].n }))
       .sort((a, b) => b.pct - a.pct).slice(0, 3);
-    const summary = { t: new Date().toISOString(), all: { hit: agg.allLocks.hit, n: agg.allLocks.n }, top: entries };
+    const catsOut = {};
+    for (const k in CAT_META){ const c = agg[k]; if (c && c.n) catsOut[k] = { hit: c.hit, n: c.n, label: c.label }; }
+    const summary = { t: new Date().toISOString(), all: { hit: agg.allLocks.hit, n: agg.allLocks.n }, top: entries, cats: catsOut };
     await fbWrite(FB_NS, 'allTime', summary); // awaited — the verify below must see THIS write
     // verify-don't-trust: read the summary back before claiming success
     const check = await fbRead(FB_NS, 'allTime');
@@ -932,6 +960,7 @@ async function runCronGrade(){
   if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
   if (new URLSearchParams(location.search).get('cron') === 'dk'){ runCronDkPull(); return; }
   pullSharedLockCfg().then(got => { if (got && state.tab === 'facts') renderFacts(); }).catch(() => {});
+  loadCatRecords(); // per-category success rates for the bet lists
   renderGames();
   // auto-load today's slate if we already have history; otherwise Facts builds it
   if (allRecDates().length > 50) loadSlate(todayPT());

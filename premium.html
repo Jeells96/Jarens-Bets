@@ -2003,6 +2003,7 @@ async function computeSuccessStats(){
   try{localStorage.setItem('fablehits_stats',JSON.stringify(stats));}catch(e){}
   toast(`computeStats: local ${Object.keys(local).length} + remote ${Object.keys(remote).length} = ${Object.keys(days).length} day(s) · all ${all.h}/${all.n}`,(all.n||!FBH.lastErr)?null:'err');
   renderHeaderStats();
+  try{if($('mkhead'))drawCurrent();}catch(e){} // refresh the market header's all-time chip
   return stats;
 }
 function renderHeaderStats(){
@@ -2077,17 +2078,34 @@ function setMarket(m){
   drawCurrent();
 }
 function curRows(){return MARKET==='hits'?ROWS:(MK[MARKET]||[]);}
+// This market's ALL-TIME graded record (from the synced league summary) — shown
+// on every bet-type tab so the success rate is never more than a glance away.
+function mkAllTime(m){
+  const s=statsCache();const days=s?.daysMap||{};let h=0,n=0;
+  Object.keys(days).forEach(d=>{
+    const o=days[d]?.[m];if(!o)return;
+    if(o.h!=null&&o.n!=null){h+=o.h;n+=o.n;}
+    else if(o.w!=null){h+=o.w;n+=o.w+(o.l||0);}
+  });
+  return n?{h,n,pct:Math.round(100*h/n)}:null;
+}
+function rateChip(m){
+  const r=mkAllTime(m);
+  if(!r)return `<span class="chip">all-time record: none yet</span>`;
+  const col=r.pct>=80?'var(--gn,#39d98a)':r.pct>=65?'var(--warm,#ffb454)':'var(--cold,#ff7a7a)';
+  return `<span class="chip" style="border-color:${col}"><b style="color:${col}">${r.pct}%</b>&nbsp;all-time · ${r.h}/${r.n}</span>`;
+}
 function drawCurrent(rowsOverride){
   const rows=rowsOverride||curRows();
   const head=$('mkhead');
   if(MARKET==='hits'){
     const counts={LOCK:0,STRONG:0,LEAN:0,PASS:0};
     ROWS.forEach(r=>{counts[tier(r.prob)[0]]++;});
-    head.innerHTML=`<div class="chips"><span class="chip"><b>${counts.LOCK}</b> lock ≥${Math.round(CONFIG.lock*100)}%</span><span class="chip"><b>${counts.STRONG}</b> strong</span><span class="chip"><b>${counts.LEAN}</b> lean</span><span class="chip"><b>${ROWS.length}</b> batters</span></div>`;
+    head.innerHTML=`<div class="chips">${rateChip('hits')}<span class="chip"><b>${counts.LOCK}</b> lock ≥${Math.round(CONFIG.lock*100)}%</span><span class="chip"><b>${counts.STRONG}</b> strong</span><span class="chip"><b>${counts.LEAN}</b> lean</span><span class="chip"><b>${ROWS.length}</b> batters</span></div>`;
     drawList(rows);
   }else if(MARKET==='hr'){
     const sorted=[...rows].sort((a,b)=>(b.prob??0)-(a.prob??0)); // highest odds first
-    head.innerHTML=`<div class="chips"><span class="chip"><b>${sorted.length}</b> batters · P(home run) · tiers: LOCK ≥${(CONFIG.hrLock*100).toFixed(0)}% · STRONG ≥7.5% · LEAN ≥5.5%</span></div>`;
+    head.innerHTML=`<div class="chips">${rateChip('hr')}<span class="chip"><b>${sorted.length}</b> batters · P(home run) · tiers: LOCK ≥${(CONFIG.hrLock*100).toFixed(0)}% · STRONG ≥7.5% · LEAN ≥5.5%</span></div>`;
     drawProbList(sorted,tierHR,r=>(r.prob*100).toFixed(1)+'%');
   }else if(MARKET==='kB'||MARKET==='bbB'){
     const tf=MARKET==='kB'?tierK:tierBB;
@@ -2095,18 +2113,18 @@ function drawCurrent(rowsOverride){
     const sorted=[...rows].sort((a,b)=>(b.prob??0)-(a.prob??0)); // highest odds first
     const locks=sorted.filter(r=>(r.prob??0)>=lk).length;
     const stat=MARKET==='kB'?'1+ strikeout':'1+ walk';
-    head.innerHTML=`<div class="chips"><span class="chip"><b>${locks}</b> lock ≥${Math.round(lk*100)}%</span><span class="chip"><b>${sorted.length}</b> batters · P(${stat}) · graded vs the box score</span></div>`;
+    head.innerHTML=`<div class="chips">${rateChip(MARKET)}<span class="chip"><b>${locks}</b> lock ≥${Math.round(lk*100)}%</span><span class="chip"><b>${sorted.length}</b> batters · P(${stat}) · graded vs the box score</span></div>`;
     drawProbList(sorted,tf,r=>((r.prob??0)*100).toFixed(1)+'%',p=>p>=lk?'p-hi':p>=lk*0.85?'p-md':'p-lo');
   }else if(MARKET==='gm'){
     const withOdds=rows.filter(r=>r.mlEdge!=null||r.totLine!=null).length;
-    head.innerHTML=`<div class="chips"><span class="chip"><b>${rows.length}</b> games · model win prob + projected total</span><span class="chip"><b>${withOdds}</b> with DK lines${withOdds?'':' — pull game odds on Diamond IQ main'}</span></div>`;
+    head.innerHTML=`<div class="chips">${rateChip('gm')}<span class="chip"><b>${rows.length}</b> games · model win prob + projected total</span><span class="chip"><b>${withOdds}</b> with DK lines${withOdds?'':' — pull game odds on Diamond IQ main'}</span></div>`;
     drawGames(rows);
   }else{
     const withLine=rows.filter(r=>r.line!=null).length;
     const unit=MARKET==='tb'?'total bases':MARKET==='gmK'?'combined strikeouts':MARKET==='hrL'?'combined home runs':MARKET.startsWith('k')?'strikeouts':'walks';
     const who=(MARKET==='gmK'||MARKET==='hrL')?'games':MARKET.endsWith('P')?'pitchers':'batters';
     const lineNote=(MARKET==='gmK'||MARKET==='hrL')?`<span class="chip">graded vs the standard ${MARKET==='gmK'?'16.5':'2.5'} line</span>`:`<span class="chip"><b>${withLine}</b> with DK lines${withLine?'':' — pull props on Diamond IQ main first'}</span>`;
-    head.innerHTML=`<div class="chips"><span class="chip"><b>${rows.length}</b> ${who} · expected ${unit}</span>${lineNote}</div>`;
+    head.innerHTML=`<div class="chips">${rateChip(MARKET)}<span class="chip"><b>${rows.length}</b> ${who} · expected ${unit}</span>${lineNote}</div>`;
     drawLineList(rows);
   }
 }

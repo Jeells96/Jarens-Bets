@@ -467,6 +467,38 @@ function aggregateUnits(units){
   }
   return Object.assign({ allLocks: all }, cats);
 }
+/* Category success rates for members: the grading autopilot publishes the
+   full per-category record to nba/allTime — read it once on boot and show it
+   next to every bet type so the success rate is always visible. */
+let CAT_RECORDS = null;
+async function loadCatRecords(){
+  try { CAT_RECORDS = await fbRead(FB_NS, 'allTime'); } catch (e) {}
+  try { renderGames(); } catch (e) {}
+}
+function catRate(k){
+  const c = CAT_RECORDS && CAT_RECORDS[k];
+  if (!c || !c.n) return null;
+  return { pct: Math.round(100 * c.hit / c.n), hit: c.hit, n: c.n };
+}
+function rateBadge(k){
+  const r = catRate(k);
+  if (!r) return '';
+  const col = r.pct >= 80 ? 'var(--green,#39d98a)' : r.pct >= 60 ? 'var(--amber)' : 'var(--muted)';
+  return ' <span class="small" style="color:' + col + ';font-weight:700" title="This category all-time: ' + r.hit + '/' + r.n + '">' + r.pct + '% all-time (' + r.hit + '/' + r.n + ')</span>';
+}
+function catStripHtml(){
+  if (!CAT_RECORDS) return '';
+  const chips = [];
+  for (const k in CAT_META){
+    if (typeof window !== 'undefined' && window.__DK_OK === false && /^dk/.test(k)) continue;
+    const r = catRate(k);
+    if (!r) continue;
+    const col = r.pct >= 80 ? 'var(--green,#39d98a)' : r.pct >= 60 ? 'var(--amber)' : 'var(--muted)';
+    chips.push('<span class="chip" style="cursor:default"><span class="muted">' + esc(CAT_META[k].short) + '</span> <b style="color:' + col + '">' + r.pct + '%</b> <span class="muted">' + r.hit + '/' + r.n + '</span></span>');
+  }
+  if (!chips.length) return '';
+  return '<div class="card" style="padding:8px 10px"><div class="small muted" style="margin-bottom:4px">Success rate by bet type · all-time, graded</div>' + chips.join(' ') + '</div>';
+}
 function sortedCatEntries(cats){
   const entries = Object.entries(cats);
   const pinned = entries.filter(function(e){ return e[0] === 'allLocks'; });
@@ -1188,7 +1220,8 @@ function propsHtml(proj, recData){
     const stat = s[0];
     const rows = proj.props.filter(function(p){ return p.stat === stat; }).sort(function(a, b){ return b.conf - a.conf; });
     if (!rows.length) continue;
-    html += '<div class="card"><h2>' + s[1] + ' \u00b1' + hitTol('stat') + '</h2>';
+    const secCat = { pts: 'playerPts', reb: 'playerReb', ast: 'playerAst' }[stat];
+    html += '<div class="card"><h2>' + s[1] + ' \u00b1' + hitTol('stat') + rateBadge(secCat) + '</h2>';
     for (const p of rows){
       const lock = p.conf >= lockTh('props');
       const act = actualFor(recData, p.pid, stat);
@@ -1909,6 +1942,9 @@ function renderGames(){
   const dp = document.getElementById('dPick');
   if (dp && dp.value !== state.slateDate) dp.value = state.slateDate;
   const list = document.getElementById('gamesList');
+  let strip = document.getElementById('catStrip');
+  if (!strip && list && list.parentNode){ strip = document.createElement('div'); strip.id = 'catStrip'; list.parentNode.insertBefore(strip, list); }
+  if (strip) strip.innerHTML = catStripHtml();
   const q = (document.getElementById('gameSearch').value || '').trim().toLowerCase();
   if (!state.slate || state.slate.date !== state.slateDate){
     list.innerHTML = '<div class="card muted small">Nothing loads automatically. Tap <b>Load Slate</b> for this date.</div>';
@@ -2676,6 +2712,7 @@ function boot(){
   state.settings = loadSettings();
   // League-wide lock config from the Board overrides device settings on open.
   pullSharedLockCfg().then(function(got){ if (got){ try { renderFactsBody(); } catch (e) {} } }).catch(function(){});
+  loadCatRecords(); // per-category success rates for the bet lists
   state.slateDate = todayPT();
 
   document.getElementById('dPrev').addEventListener('click', function(){
