@@ -239,11 +239,32 @@ async function buildData(onProg){
   }
   return { built, failed };
 }
+/* ESPN often titles races generically ('NASCAR Cup Series at Indianapolis').
+   Map the CLASSIC, stable race names by venue + month — never sponsored names
+   that change yearly (a wrong name would be worse than a generic one). */
+function officialRaceName(name, dateStr){
+  const m = +String(dateStr || '').slice(5, 7);
+  const t = String(name || '').toLowerCase();
+  if (/indianapolis/.test(t) && (m === 7 || m === 8)) return 'Brickyard 400';
+  if (/charlotte/.test(t) && !/road/.test(t) && m === 5) return 'Coca-Cola 600';
+  if (/darlington/.test(t) && (m === 8 || m === 9)) return 'Southern 500';
+  if (/phoenix/.test(t) && m === 11) return 'Cup Series Championship';
+  return null;
+}
+function raceTitle(){
+  const nr = state.nextRace;
+  if (!nr) return 'Next race';
+  return nr.official || nr.name;
+}
 async function loadNextRace(){
   try {
     const j = await fetchJSON(ESPN.next());
     const ev = (j.events || [])[0];
-    if (ev) state.nextRace = { name: ev.name || ev.shortName || 'Next race', date: (ev.date || '').slice(0, 10), trackType: trackTypeOf((ev.name || '') + ' ' + (ev.shortName || '')) };
+    if (ev){
+      const name = ev.name || ev.shortName || 'Next race';
+      const date = (ev.date || '').slice(0, 10);
+      state.nextRace = { name: name, date: date, official: officialRaceName(name, date), trackType: trackTypeOf((ev.name || '') + ' ' + (ev.shortName || '')) };
+    }
   } catch (e) {}
   return state.nextRace;
 }
@@ -570,9 +591,9 @@ function wireWhyRows(el, up){
 function renderRace(){
   const el = $id('tab-race');
   const nr = state.nextRace;
-  const head = '<div class="card"><h2>Next race</h2>' +
-    '<div style="font-weight:800;font-size:16px">' + esc(nr ? nr.name : 'Loading…') + '</div>' +
-    (nr ? '<div class="small dim" style="margin-top:3px">' + esc(nr.date || '') + ' · ' + trackLabel(nr.trackType) + ' · projections are walk-forward (only past races used)</div>' : '') + '</div>';
+  const head = '<div class="card"><h2>This week\u2019s race</h2>' +
+    '<div style="font-weight:800;font-size:17px">' + esc(nr ? raceTitle() : 'Loading…') + '</div>' +
+    (nr ? '<div class="small dim" style="margin-top:3px">' + (nr.official ? esc(nr.name) + ' · ' : '') + esc(nr.date || '') + ' · ' + trackLabel(nr.trackType) + ' · projections are walk-forward (only past races used)</div>' : '') + '</div>';
   if (allRecDates().length < 5){
     el.innerHTML = head + '<div class="card muted small">Building the season record… <span class="spin"></span><br><span class="dim">Fills in automatically from the last two Cup seasons.</span></div>';
     buildFactsBackground();
@@ -646,7 +667,7 @@ function renderBets(){
   const bets = bestBetsList(up, 0);
   const byKey = {};
   bets.forEach(function(b){ (byKey[b.catKey] = byKey[b.catKey] || []).push(b); });
-  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — bet types ordered by their real success rate, most proven first. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. <b>Tap a card</b> for every driver and the bet line · <b>tap a driver</b> to see why they have that grade.</div></div>';
+  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc(raceTitle()) + '</b>' + (state.nextRace && state.nextRace.date ? ' <span class="dim">· ' + esc(state.nextRace.date) + '</span>' : '') + ' — bet types ordered by their real success rate, most proven first. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. <b>Tap a card</b> for every driver and the bet line · <b>tap a driver</b> to see why they have that grade.</div></div>';
   for (const key of order){
     const arr = byKey[key] || [];
     const r = catRate(key);
