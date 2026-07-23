@@ -1346,8 +1346,11 @@ function rateRow(label, cur, prop){
     var h = o.h != null ? o.h : o.w, n = o.n != null ? o.n : (o.w + o.l);
     return n ? Math.round(100 * h / n) + '% (' + h + '/' + n + ')' : '\u2014';
   };
+  // The bold number is the success rate AT THE VALUES ENTERED RIGHT NOW —
+  // the saved config is only a small labeled reference so there's no mixup.
   return '<div class="row" style="margin:4px 0"><span class="hint" style="flex:1">' + esc(label) + '</span>' +
-    '<span class="hint">' + f(cur) + '</span><span style="font-size:12.5px;font-weight:700;min-width:86px;text-align:right">\u2192 ' + f(prop) + '</span></div>';
+    '<span class="hint" style="font-size:10.5px;opacity:.75">saved: ' + f(cur) + '</span>' +
+    '<span style="font-size:13px;font-weight:800;min-width:92px;text-align:right">' + f(prop) + '</span></div>';
 }
 
 async function openSettingsPanel(){
@@ -1728,7 +1731,7 @@ async function openSettingsPanel(){
     await ensurePrem();
     var cur = premiumRates(PREVIEW_CACHE.prem, premCfg), nxt = premiumRates(PREVIEW_CACHE.prem, prop);
     var L = { hits:'Batter hits', hr:'Home runs', gm:'Game predictions', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmK:'Game K', hrL:'Game HRs' };
-    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
+    return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
   hookPreview('f-preview', 'f-prevout', async function(){
@@ -1737,7 +1740,7 @@ async function openSettingsPanel(){
     await ensureFree();
     var cur = freeRates(PREVIEW_CACHE.free, freeCfg), nxt = freeRates(PREVIEW_CACHE.free, prop);
     var L = { hits:'Batter hits', tb:'Total bases', hr:'Home runs', bb:'Batter walks', bbat:'Batter strikeouts' };
-    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.free.length + ' stored days)</div>' +
+    return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.free.length + ' stored days)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
   hookPreview('b-preview', 'b-prevout', async function(){
@@ -1748,7 +1751,7 @@ async function openSettingsPanel(){
     if (!PREVIEW_CACHE.nba.units.length) throw new Error('No stored picks yet — the next NBA grading run uploads them (every 2h). Try again after it runs.');
     var cur = nbaRates(PREVIEW_CACHE.nba.units, nbaTh, nbaTol), nxt = nbaRates(PREVIEW_CACHE.nba.units, sp.th, sp.tol);
     var L = { allLocks:'All locks', winner:'Winner', total:'Game total', teamPts:'Team points', playerPts:'Player points', playerReb:'Player rebounds', playerAst:'Player assists', dkML:'vs DK ML value', dkTotal:'vs DK Total', dkSpread:'vs DK Spread' };
-    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.nba.days + ' stored slates)</div>' +
+    return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.nba.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
   hookPreview('g-preview', 'g-prevout', async function(){
@@ -1769,7 +1772,7 @@ async function openSettingsPanel(){
     if (!PREVIEW_CACHE.nfl.units.length) throw new Error('No stored picks yet — the next Gridline grading run uploads them (every 6h). Try again after it runs.');
     var cur = nflRates(PREVIEW_CACHE.nfl.units, nflTh, nflTol), nxt = nflRates(PREVIEW_CACHE.nfl.units, sp.th, sp.tol);
     var L = { allLocks:'All locks', winner:'Winner', total:'Game total', awayPts:'Away score', homePts:'Home score', teamPass:'Team pass yds', teamRush:'Team rush yds', playerPass:'Player pass yds', playerRush:'Player rush yds', playerRec:'Player rec yds', anytimeTd:'Anytime TD', firstTd:'First TD' };
-    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.nfl.weeks + ' stored weeks)</div>' +
+    return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.nfl.weeks + ' stored weeks)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
 
@@ -1781,7 +1784,7 @@ async function openSettingsPanel(){
     if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next Icing grading run uploads them (every 2h). Try again after it runs.');
     var cur = iceRates(PREVIEW_CACHE.ice.units, iceTh, iceTol), nxt = iceRates(PREVIEW_CACHE.ice.units, sp.th, sp.tol);
     var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers', dkML:'vs DK ML value', dkTotal:'vs DK Total' };
-    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
+    return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
   hookPreview('nc-preview', 'nc-prevout', async function(){
@@ -1791,7 +1794,7 @@ async function openSettingsPanel(){
     if (!PREVIEW_CACHE.nascar.units.length) throw new Error('No stored races yet \u2014 the next NASCAR grading run uploads them (every 2h). Try again after it runs.');
     var cur = nascarRates(PREVIEW_CACHE.nascar.units, nascarTh), nxt = nascarRates(PREVIEW_CACHE.nascar.units, prop);
     var L = { allLocks:'All locks', winner:'Race winner', top5:'Top 5', top10:'Top 10', top15:'Top 15', h2h:'Head-to-head' };
-    return '<div class="hint" style="padding:6px 0 2px">current \u2192 proposed (' + PREVIEW_CACHE.nascar.days + ' stored races)</div>' +
+    return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.nascar.days + ' stored races)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
 
