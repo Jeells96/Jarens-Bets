@@ -1,0 +1,27 @@
+name: Grade - Pete's Picks (NASCAR)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 */2 * * *"
+
+concurrency:
+  group: grade-nascar
+  cancel-in-progress: false
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+      - name: Grade NASCAR
+        run: node grade_cron.js nascar

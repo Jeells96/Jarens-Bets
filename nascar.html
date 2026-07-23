@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pete's Picks — NASCAR</title>
+<style>
+:root{
+  --bg:#0b0c10; --panel:#14161d; --face:#1c1f28; --hair:#2a2f3c; --hair2:#20242f;
+  --tx:#eef1f6; --mt:#9aa4b5; --mt2:#616b7d; --speed:#ff4d4f; --good:#3ddc84; --bad:#ff5d73;
+  --amber:#ffb454; --green:#3ddc84; --lock:#ff4d4f;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding-bottom:calc(66px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:20;background:rgba(11,12,16,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--hair2);padding:calc(10px + env(safe-area-inset-top)) 14px 10px;display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;letter-spacing:-.01em}
+header h1 span{color:var(--speed)}
+.pill{font-size:10.5px;color:var(--mt2);border:1px solid var(--hair);border-radius:99px;padding:2px 8px;margin-left:auto;white-space:nowrap}
+main{padding:12px;max-width:660px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--hair2);border-radius:13px;padding:13px;margin-bottom:11px}
+.card h2{font-size:13px;margin:0 0 8px;color:var(--mt);text-transform:uppercase;letter-spacing:.09em}
+.row{display:flex;align-items:center;gap:8px}
+.grow{flex:1;min-width:0}
+.small{font-size:12.8px}
+.muted{color:var(--mt)}
+.dim{color:var(--mt2)}
+.btn{background:var(--speed);color:#160404;border:0;border-radius:9px;padding:11px 15px;font-weight:800;font-size:14px}
+.btn.ghost{background:none;border:1px solid var(--hair);color:var(--tx);font-weight:600}
+.btn:disabled{opacity:.5}
+input[type=text]{background:var(--face);border:1px solid var(--hair);border-radius:9px;color:var(--tx);padding:9px 11px;font-size:15px}
+nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:rgba(14,16,22,.97);backdrop-filter:blur(10px);border-top:1px solid var(--hair2);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:0;color:var(--mt2);font-size:12px;padding:10px 0 9px;display:flex;flex-direction:column;gap:3px;align-items:center;font-weight:600}
+nav button.on{color:var(--speed)}
+nav .ico{font-size:21px;line-height:1}
+.hidden{display:none}
+.rate-good{color:var(--good);font-weight:700}
+.rate-bad{color:var(--bad);font-weight:700}
+.lock{color:var(--lock);font-weight:800;font-size:12.5px;white-space:nowrap}
+.chip{display:inline-block;border:1px solid var(--hair);border-radius:99px;padding:4px 11px;font-size:12px;color:var(--mt);margin:0 6px 6px 0;cursor:pointer}
+.chip.on{border-color:var(--speed);color:var(--speed);font-weight:700}
+.drow{display:flex;align-items:center;gap:8px;padding:7px 2px;border-top:1px solid var(--hair2);font-size:13.5px}
+.drow:first-child{border-top:0}
+.rk{width:22px;text-align:right;color:var(--mt2);font-variant-numeric:tabular-nums}
+.pct{font-variant-numeric:tabular-nums;font-weight:700;min-width:44px;text-align:right}
+.tag{font-size:10px;border:1px solid var(--hair);border-radius:5px;padding:1px 5px;color:var(--mt2);text-transform:uppercase;letter-spacing:.06em}
+table.grid{width:100%;border-collapse:collapse;font-size:13px}
+table.grid th{color:var(--mt2);font-weight:600;text-align:right;padding:4px 5px;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+table.grid th:first-child{text-align:left}
+table.grid td{padding:6px 5px;border-top:1px solid var(--hair2);text-align:right;font-variant-numeric:tabular-nums}
+table.grid td:first-child{text-align:left}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:#241014;border:1px solid var(--hair);color:var(--tx);border-radius:10px;padding:9px 14px;font-size:12.8px;z-index:50;max-width:88vw;transition:opacity .3s}
+#toast.hidden{opacity:0;pointer-events:none}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--hair);border-top-color:var(--speed);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <div style="height:40px;width:40px;border-radius:9px;background:linear-gradient(135deg,#ff4d4f,#7a0f10);display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:18px">P</div>
+  <h1>Pete's Picks <span>NASCAR</span></h1>
+  <span class="pill" id="verBadge"></span>
+</header>
+<main>
+  <section id="tab-race"></section>
+  <section id="tab-bets" class="hidden"></section>
+  <section id="tab-facts" class="hidden"></section>
+  <section id="tab-settings" class="hidden"></section>
+</main>
+<nav>
+  <button data-tab="race" class="on"><span class="ico">&#127937;</span>Next race</button>
+  <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
+  <button data-tab="facts"><span class="ico">&#128202;</span>Results</button>
+  <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
+</nav>
+<div id="toast" class="hidden"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Pete's Picks — NASCAR Edition. Walk-forward like The Key / Icing: every race
+   projection uses ONLY races completed before it (no leakage). Projection-only
+   (no DraftKings — our odds provider carries no motorsport). Model is a
+   deterministic Poisson-binomial over driver strength → P(win), P(top 5/10/15),
+   and head-to-head, graded against the real finishing order. ?cron=1 self-grades.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══ SECTION: CONFIG ═══ */
+const APP = { version: '0.1' };
+const YEARS = (function(){ const y = (new Date()).getFullYear(); return [y - 1, y]; })(); // prior + current season for track history
+const SEASON = { start: (YEARS[0]) + '-01-01' }; // retention floor = keep both seasons
+const ESPN = {
+  season: y => 'https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard?dates=' + y,
+  next: () => 'https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard'
+};
+const CAT_META = {
+  winner: { label: 'Race Winner', th: 'winner', short: 'Winner' },
+  top5:   { label: 'Top 5 Finish', th: 'top5', short: 'Top 5' },
+  top10:  { label: 'Top 10 Finish', th: 'top10', short: 'Top 10' },
+  top15:  { label: 'Top 15 Finish', th: 'top15', short: 'Top 15' },
+  h2h:    { label: 'Head-to-Head', th: 'h2h', short: 'H2H' }
+};
+const LOCK_DEFAULTS = { winner: 0, top5: 45, top10: 58, top15: 68, h2h: 60 };
+// Recalibration: the raw Thurstonian model is well-calibrated up to ~55%, but
+// over-optimistic in the tail (NASCAR's wreck/strategy chaos caps real top-10
+// rates around 60% even for the best). Compress everything above 0.55 so the
+// probabilities we DISPLAY and GRADE match reality. Fit on 2024→2025 walk-forward.
+const recal = p => p <= 0.55 ? p : 0.55 + (p - 0.55) * 0.55;
+const SIGMA = { super: 11, inter: 6.5, short: 6, road: 6 }; // finishing-position noise by track type
+const MIN_RACES = 3;        // driver needs this many prior finishes for a real rating
+const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
+const state = {
+  tab: 'race', projections: {}, nextRace: null,
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false
+};
+
+/* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
+const FB = { projectId: 'nflbets-45561', apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZYpYjrIP3g' };
+const FB_NS = 'nascar';           // singleton docs: nascar/allTime, nascar/lockcfg, nascar/today
+const FB_RECS = 'nascar_recs';    // per-date race records (finishing order)
+const FB_ACC = 'nascar_accuracy'; // per-date raw graded units
+function fbReady(){ return FB.projectId.length > 0; }
+function fbDocUrl(col, doc){
+  return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
+    '/databases/(default)/documents/' + col + '/' + doc + '?key=' + FB.apiKey;
+}
+async function fbRead(col, doc){
+  if (!fbReady()) return null;
+  const res = await fetch(fbDocUrl(col, doc));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('FB read ' + res.status);
+  const j = await res.json();
+  const s = j.fields && j.fields.data && j.fields.data.stringValue;
+  return s ? JSON.parse(s) : null;
+}
+async function fbWrite(col, doc, obj){
+  if (!fbReady()) return false;
+  const body = { fields: { data: { stringValue: JSON.stringify(obj) }, t: { stringValue: new Date().toISOString() } } };
+  const res = await fetch(fbDocUrl(col, doc) + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error('FB write ' + res.status);
+  return true;
+}
+async function fbListCol(col){
+  if (!fbReady()) return {};
+  const out = {}; let tok = '';
+  for (let page = 0; page < 4; page++){
+    const url = 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
+      '/databases/(default)/documents/' + col + '?pageSize=300&key=' + FB.apiKey + (tok ? '&pageToken=' + tok : '');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('FB list ' + res.status);
+    const j = await res.json();
+    for (const d of (j.documents || [])){
+      const id = d.name.split('/').pop();
+      const s = d.fields && d.fields.data && d.fields.data.stringValue;
+      if (s){ try { out[id] = JSON.parse(s); } catch (e) {} }
+    }
+    tok = j.nextPageToken || '';
+    if (!tok) break;
+  }
+  return out;
+}
+async function fbListColIds(col){ const o = await fbListCol(col); return Object.keys(o); }
+const REC_PREFIX = 'nascar_recs_'; // one localStorage key per race date
+function loadRecs(date){ try { return JSON.parse(localStorage.getItem(REC_PREFIX + date) || 'null'); } catch (e){ return null; } }
+function saveRecs(date, recs){ try { localStorage.setItem(REC_PREFIX + date, JSON.stringify(recs)); return true; } catch (e){ return false; } }
+function allRecDates(){
+  const out = [];
+  for (let i = 0; i < localStorage.length; i++){
+    const k = localStorage.key(i);
+    if (k && k.indexOf(REC_PREFIX) === 0) out.push(k.slice(REC_PREFIX.length));
+  }
+  return out.sort();
+}
+async function pullSharedLockCfg(){
+  try {
+    const cfg = await fbRead(FB_NS, 'lockcfg');
+    if (!cfg) return false;
+    state.settings.lockThresholds = Object.assign({}, state.settings.lockThresholds, cfg.lockThresholds || {});
+    return true;
+  } catch (e){ return false; }
+}
+
+/* ═══ SECTION: DATA (ESPN NASCAR Cup Series — public, one fetch per season) ═══ */
+async function fetchJSON(url){
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function trackTypeOf(name){
+  const s = String(name || '').toLowerCase();
+  const has = arr => arr.some(k => s.indexOf(k) >= 0);
+  if (has(['daytona', 'talladega', 'atlanta'])) return 'super';       // pack racing / drafting
+  if (has(['watkins glen', 'sonoma', 'cota', 'circuit of', 'road america', 'roval', 'chicago', 'mexico', 'road course', 'grand prix'])) return 'road';
+  if (has(['martinsville', 'bristol', 'richmond', 'phoenix', 'wilkesboro', 'iowa', 'loudon', 'new hampshire'])) return 'short';
+  return 'inter'; // 1.5-mile intermediates + the rest
+}
+function parseEventRace(ev){
+  const comp = (ev.competitions || [])[0] || {};
+  const st = (ev.status || {}).type || {};
+  if (!st.completed) return null;
+  const drivers = [];
+  for (const c of (comp.competitors || [])){
+    if (c.order == null) continue; // non-starter / not classified
+    const a = c.athlete || {};
+    drivers.push({ id: String(a.id || c.id), name: a.displayName || a.shortName || '?', finish: +c.order, winner: !!c.winner });
+  }
+  if (drivers.length < 10) return null; // not a full race result
+  const date = (ev.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return { id: ev.id, date, race: ev.name || ev.shortName || 'Race', trackType: trackTypeOf((ev.name || '') + ' ' + (ev.shortName || '')), drivers };
+}
+async function buildData(onProg){
+  let built = 0, failed = 0;
+  for (const y of YEARS){
+    if (onProg) onProg('Fetching ' + y + ' season…');
+    try {
+      const j = await fetchJSON(ESPN.season(y));
+      const byDate = {};
+      for (const ev of (j.events || [])){
+        const rec = parseEventRace(ev);
+        if (!rec) continue;
+        (byDate[rec.date] = byDate[rec.date] || []).push(rec);
+      }
+      for (const d in byDate){ saveRecs(d, byDate[d]); built += byDate[d].length; }
+    } catch (e){ failed++; }
+  }
+  return { built, failed };
+}
+async function loadNextRace(){
+  try {
+    const j = await fetchJSON(ESPN.next());
+    const ev = (j.events || [])[0];
+    if (ev) state.nextRace = { name: ev.name || ev.shortName || 'Next race', date: (ev.date || '').slice(0, 10), trackType: trackTypeOf((ev.name || '') + ' ' + (ev.shortName || '')) };
+  } catch (e) {}
+  return state.nextRace;
+}
+
+/* ═══ SECTION: MODEL (deterministic — walk-forward driver ratings + Poisson-binomial) ═══ */
+function priorRaces(beforeDate){
+  const out = [];
+  for (const d of allRecDates()){
+    if (d >= beforeDate) break;
+    const races = loadRecs(d);
+    if (races) for (const r of races) out.push(r);
+  }
+  return out;
+}
+function recentRaces(n){
+  const out = [];
+  const dates = allRecDates().slice().reverse();
+  for (const d of dates){
+    const races = loadRecs(d);
+    if (races) for (const r of races){ out.push(r); if (out.length >= n) return out; }
+  }
+  return out;
+}
+function inferField(){
+  const seen = {};
+  for (const race of recentRaces(3)) for (const d of race.drivers){ if (!seen[d.id]) seen[d.id] = { id: d.id, name: d.name }; }
+  return Object.values(seen);
+}
+function driverRatings(prior, trackType){
+  const hist = {}; let sumF = 0, nF = 0;
+  for (const rec of prior){
+    for (const d of rec.drivers){
+      const h = hist[d.id] || (hist[d.id] = { finishes: [], typeFin: [], name: d.name });
+      h.name = d.name; h.finishes.push(d.finish);
+      if (rec.trackType === trackType) h.typeFin.push(d.finish);
+      sumF += d.finish; nF++;
+    }
+  }
+  const lgAvg = nF ? sumF / nF : 20;
+  const decay = 0.94;
+  const wmean = arr => { if (!arr.length) return null; let s = 0, w = 0; const N = arr.length; for (let k = 0; k < N; k++){ const wt = Math.pow(decay, N - 1 - k); s += arr[k] * wt; w += wt; } return s / w; };
+  const rating = {}, count = {}, names = {};
+  for (const id in hist){
+    const h = hist[id]; count[id] = h.finishes.length; names[id] = h.name;
+    if (h.finishes.length < MIN_RACES){ rating[id] = lgAvg + 2; continue; } // thin history → just below field average
+    const overall = wmean(h.finishes);
+    const typ = h.typeFin.length >= 2 ? wmean(h.typeFin) : null;
+    rating[id] = typ != null ? 0.55 * typ + 0.45 * overall : overall; // track-type-weighted
+  }
+  return { rating, lgAvg, count, names };
+}
+function erf(x){
+  const s = x < 0 ? -1 : 1; x = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return s * y;
+}
+function normCdf(z){ return 0.5 * (1 + erf(z / Math.SQRT2)); }
+// P(driver i finishes top-K / wins) via a Thurstonian model: each driver's race
+// pace ~ Normal(rating, sigma), lower finishes ahead. We integrate over driver
+// i's own pace x; GIVEN x, the others' "finish ahead of i" events ARE independent,
+// so their count is an exact Poisson-binomial. Deterministic → grades never drift.
+// (A raw pairwise product would ignore that all pair events share i's pace and
+// bias the win probability badly low.)
+function finishProbs(ratings, i, sigma){
+  const ri = ratings[i], K = 16, GN = 41, span = 4;
+  let pWin = 0, pT5 = 0, pT10 = 0, pT15 = 0, wsum = 0;
+  for (let g = 0; g < GN; g++){
+    const z = -span + 2 * span * g / (GN - 1);
+    const x = ri + sigma * z;            // a candidate pace for driver i
+    const wpdf = Math.exp(-0.5 * z * z); // ∝ Normal(ri, sigma) density at x
+    const pmf = new Array(K).fill(0); pmf[0] = 1;
+    for (let j = 0; j < ratings.length; j++){
+      if (j === i) continue;
+      const q = normCdf((x - ratings[j]) / sigma); // P(j's pace < x) = P(j finishes ahead of i)
+      for (let k = K - 1; k >= 1; k--) pmf[k] = pmf[k] * (1 - q) + pmf[k - 1] * q;
+      pmf[0] = pmf[0] * (1 - q);
+    }
+    const cum = k => { let s = 0; for (let m = 0; m <= k && m < K; m++) s += pmf[m]; return s; };
+    pWin += wpdf * pmf[0]; pT5 += wpdf * cum(4); pT10 += wpdf * cum(9); pT15 += wpdf * cum(14); wsum += wpdf;
+  }
+  return { pWin: recal(pWin / wsum), pTop5: recal(pT5 / wsum), pTop10: recal(pT10 / wsum), pTop15: recal(pT15 / wsum) };
+}
+function projectRace(fieldDrivers, prior, trackType){
+  const R = driverRatings(prior, trackType);
+  const ids = fieldDrivers.map(d => d.id);
+  const names = {}; fieldDrivers.forEach(d => names[d.id] = d.name);
+  const ratings = ids.map(id => R.rating[id] != null ? R.rating[id] : R.lgAvg + 3);
+  const sigma = SIGMA[trackType] || SIGMA.inter;
+  const byId = {}; let favId = null, favP = -1;
+  ids.forEach((id, i) => {
+    const pr = finishProbs(ratings, i, sigma);
+    byId[id] = { pWin: pr.pWin, pTop5: pr.pTop5, pTop10: pr.pTop10, pTop15: pr.pTop15, name: names[id], rating: ratings[i] };
+    if (pr.pWin > favP){ favP = pr.pWin; favId = id; }
+  });
+  // Head-to-head among the projected top 16 by rating (both tight + lopsided pairs).
+  const ordered = ids.map((id, i) => [id, ratings[i]]).sort((a, b) => a[1] - b[1]).slice(0, 16);
+  const sd = sigma * Math.SQRT2, h2h = [];
+  for (let x = 0; x < ordered.length; x++) for (let y = x + 1; y < ordered.length; y++){
+    const aId = ordered[x][0], ra = ordered[x][1], bId = ordered[y][0], rb = ordered[y][1];
+    h2h.push({ aId, bId, aName: names[aId], bName: names[bId], p: normCdf((rb - ra) / sd) }); // P(a beats b)
+  }
+  return { byId, favId, h2h };
+}
+
+/* ═══ SECTION: GRADE (stored races vs projections — read-time thresholds) ═══ */
+function lockTh(key){
+  const lt = state.settings.lockThresholds || {};
+  const v = +lt[key];
+  return isFinite(v) && lt[key] !== '' && lt[key] != null ? Math.max(0, Math.min(99, v)) : LOCK_DEFAULTS[key];
+}
+function unitsFromRace(rec, proj){
+  const units = [];
+  const finById = {}; for (const d of rec.drivers) finById[d.id] = d.finish;
+  const r = rec.race;
+  // Winner — one unit per race: our single favorite. hit = they won.
+  if (proj.favId && finById[proj.favId] != null){
+    const f = proj.byId[proj.favId];
+    units.push({ cat: 'winner', metric: Math.round(f.pWin * 100), hit: finById[proj.favId] === 1, race: r,
+      desc: r + ' — pick ' + f.name + ' to win (' + Math.round(f.pWin * 100) + '%) → P' + finById[proj.favId] });
+  }
+  // Finish-position — one unit per driver per bucket; the lock threshold surfaces the strong calls.
+  for (const id in proj.byId){
+    const f = proj.byId[id]; const fin = finById[id];
+    if (fin == null) continue;
+    units.push({ cat: 'top5', metric: Math.round(f.pTop5 * 100), hit: fin <= 5, race: r, desc: f.name + ' top 5 ' + Math.round(f.pTop5 * 100) + '% → P' + fin });
+    units.push({ cat: 'top10', metric: Math.round(f.pTop10 * 100), hit: fin <= 10, race: r, desc: f.name + ' top 10 ' + Math.round(f.pTop10 * 100) + '% → P' + fin });
+    units.push({ cat: 'top15', metric: Math.round(f.pTop15 * 100), hit: fin <= 15, race: r, desc: f.name + ' top 15 ' + Math.round(f.pTop15 * 100) + '% → P' + fin });
+  }
+  // Head-to-head — hit = stronger driver actually finished ahead.
+  for (const m of proj.h2h){
+    const fa = finById[m.aId], fb = finById[m.bId];
+    if (fa == null || fb == null) continue;
+    units.push({ cat: 'h2h', metric: Math.round(m.p * 100), hit: fa < fb, race: r, desc: m.aName + ' beats ' + m.bName + ' ' + Math.round(m.p * 100) + '% → P' + fa + ' vs P' + fb });
+  }
+  return units;
+}
+function unitQualifies(u){ return u.metric >= lockTh(CAT_META[u.cat].th); }
+function aggregateUnits(units){
+  const cats = {};
+  for (const k in CAT_META) cats[k] = { hit: 0, n: 0, label: CAT_META[k].label };
+  const all = { hit: 0, n: 0, label: 'All Locks' };
+  for (const u of units){
+    if (!cats[u.cat] || !unitQualifies(u)) continue;
+    cats[u.cat].n++; if (u.hit) cats[u.cat].hit++;
+    all.n++; if (u.hit) all.hit++;
+  }
+  return Object.assign({ allLocks: all }, cats);
+}
+async function regradeAll(onProg){
+  state.seasonUnits = {};
+  const dates = allRecDates();
+  let graded = 0, unitCount = 0, skipped = 0;
+  for (let i = 0; i < dates.length; i++){
+    const d = dates[i];
+    const races = loadRecs(d);
+    if (!races || !races.length) continue;
+    const prior = priorRaces(d);
+    if (prior.length < MIN_PRIOR_RACES){ skipped++; continue; } // not enough history yet — honest
+    if (onProg && i % 4 === 0) onProg('Grading ' + d + '…');
+    await new Promise(r => setTimeout(r, 0));
+    for (const rec of races){
+      const proj = projectRace(rec.drivers, prior, rec.trackType);
+      const units = unitsFromRace(rec, proj);
+      if (units.length){ (state.seasonUnits[d] = state.seasonUnits[d] || []).push.apply(state.seasonUnits[d], units); unitCount += units.length; }
+    }
+    graded++;
+  }
+  return { graded, unitCount, skipped };
+}
+function flatUnits(){ let out = []; for (const d of Object.keys(state.seasonUnits).sort()) out = out.concat(state.seasonUnits[d]); return out; }
+async function pushUnitsFB(onProg){
+  const dates = Object.keys(state.seasonUnits).sort();
+  let ok = 0;
+  for (let i = 0; i < dates.length; i++){
+    if (onProg && i % 5 === 0) onProg('Pushing units ' + (i + 1) + '/' + dates.length + '…');
+    try { await fbWrite(FB_ACC, dates[i], state.seasonUnits[dates[i]]); ok++; } catch (e) {}
+    await new Promise(r => setTimeout(r, 45));
+  }
+  return ok;
+}
+async function pushRecsFB(onProg){
+  let ok = 0;
+  for (const d of allRecDates()){
+    const races = loadRecs(d);
+    if (!races || !races.length) continue; // only real race days
+    try { await fbWrite(FB_RECS, d, races); ok++; } catch (e) {}
+    await new Promise(r => setTimeout(r, 45));
+  }
+  return ok;
+}
+async function seedFromFB(onProg){
+  let seeded = 0;
+  try { const col = await fbListCol(FB_RECS); for (const d in col){ if (!loadRecs(d)){ saveRecs(d, col[d]); seeded++; } } } catch (e) {}
+  return seeded;
+}
+
+/* ═══ SECTION: RENDER ═══ */
+function $id(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+let toastT;
+function toast(msg){ const t = $id('toast'); if (!t) return; t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.add('hidden'), 2600); }
+function pct(x){ return Math.round(x * 100) + '%'; }
+function ptDateStr(d){ return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
+function todayPT(){ return ptDateStr(new Date()); }
+
+let CAT_RECORDS = null;
+async function loadCatRecords(){
+  try { const d = await fbRead(FB_NS, 'allTime'); CAT_RECORDS = (d && d.cats) || null; } catch (e) {}
+  try { if (state.tab === 'bets') renderBets(); } catch (e) {}
+}
+function catRate(k){
+  const c = CAT_RECORDS && CAT_RECORDS[k];
+  if (!c || !c.n) return null;
+  return { pct: Math.round(100 * c.hit / c.n), hit: c.hit, n: c.n };
+}
+function catStripHtml(){
+  if (!CAT_RECORDS) return '';
+  const chips = [];
+  for (const k in CAT_META){
+    const r = catRate(k); if (!r) continue;
+    const col = r.pct >= 80 ? 'var(--green)' : r.pct >= 60 ? 'var(--amber)' : 'var(--mt2)';
+    chips.push('<span class="chip" style="cursor:default"><span class="dim">' + esc(CAT_META[k].short) + '</span> <b style="color:' + col + '">' + r.pct + '%</b> <span class="dim">' + r.hit + '/' + r.n + '</span></span>');
+  }
+  if (!chips.length) return '';
+  return '<div class="card" style="padding:9px 11px"><div class="small dim" style="margin-bottom:5px">Success rate by bet type · all-time, graded</div>' + chips.join(' ') + '</div>';
+}
+function projectUpcoming(){
+  const field = inferField();
+  if (!field.length) return null;
+  const prior = priorRaces(todayPT());
+  if (prior.length < MIN_PRIOR_RACES) return null;
+  const tt = (state.nextRace && state.nextRace.trackType) || 'inter';
+  const proj = projectRace(field, prior, tt);
+  const rows = field.map(d => Object.assign({ id: d.id }, proj.byId[d.id])).sort((a, b) => a.rating - b.rating);
+  return { proj, rows, trackType: tt, prior: prior.length };
+}
+function renderRace(){
+  const el = $id('tab-race');
+  const nr = state.nextRace;
+  const head = '<div class="card"><h2>Next race</h2>' +
+    '<div style="font-weight:800;font-size:16px">' + esc(nr ? nr.name : 'Loading…') + '</div>' +
+    (nr ? '<div class="small dim" style="margin-top:3px">' + esc(nr.date || '') + ' · ' + trackLabel(nr.trackType) + ' · projections are walk-forward (only past races used)</div>' : '') + '</div>';
+  if (allRecDates().length < 5){
+    el.innerHTML = head + '<div class="card muted small">Building the season record… this fills in automatically from the last two Cup seasons. If it persists, the grading autopilot seeds it on its next run.</div>';
+    buildFactsBackground();
+    return;
+  }
+  const up = projectUpcoming();
+  if (!up){ el.innerHTML = head + '<div class="card muted small">Not enough race history yet to project (need ' + MIN_PRIOR_RACES + ' prior races). It builds as the season fills in.</div>'; return; }
+  const th5 = lockTh('top5'), th10 = lockTh('top10'), th15 = lockTh('top15'), thW = lockTh('winner');
+  const flag = (v, t) => (v * 100 >= t ? ' 🔒' : '');
+  const body = '<div class="card"><h2>Field projection · ' + trackLabel(up.trackType) + '</h2>' +
+    '<table class="grid"><tr><th>Driver</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 15</th></tr>' +
+    up.rows.map(function(d){
+      return '<tr><td>' + esc(d.name) + '</td>' +
+        '<td>' + pct(d.pWin) + flag(d.pWin, thW) + '</td>' +
+        '<td>' + pct(d.pTop5) + flag(d.pTop5, th5) + '</td>' +
+        '<td>' + pct(d.pTop10) + flag(d.pTop10, th10) + '</td>' +
+        '<td>' + pct(d.pTop15) + flag(d.pTop15, th15) + '</td></tr>';
+    }).join('') + '</table>' +
+    '<div class="small dim" style="margin-top:8px">🔒 = clears the current lock threshold for that bet. Sorted by projected strength. See the <b>Bets</b> tab for every lock, and <b>Results</b> for how each bet type has graded.</div></div>';
+  el.innerHTML = head + body;
+}
+function trackLabel(t){ return { super: 'Superspeedway', inter: 'Intermediate', short: 'Short track', road: 'Road course' }[t] || 'Intermediate'; }
+function renderBets(){
+  const el = $id('tab-bets');
+  const up = projectUpcoming();
+  if (!up){ el.innerHTML = catStripHtml() + '<div class="card muted small">No projected locks yet — needs race history. Check the Results tab as the season builds.</div>'; return; }
+  const bets = [];
+  const P = up.proj;
+  const fav = P.favId && P.byId[P.favId];
+  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, txt: '<b>' + esc(fav.name) + '</b> to win the race', cat: 'Winner' });
+  for (const id in P.byId){
+    const d = P.byId[id];
+    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 5 finish', cat: 'Top 5' });
+    else if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 10 finish', cat: 'Top 10' });
+    else if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 15 finish', cat: 'Top 15' });
+  }
+  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, txt: '<b>' + esc(m.aName) + '</b> beats ' + esc(m.bName), cat: 'H2H' }); }
+  bets.sort((a, b) => b.conf - a.conf);
+  const list = bets.length
+    ? '<div class="card"><h2>Locks · ' + esc((state.nextRace && state.nextRace.name) || 'next race') + '</h2>' +
+      bets.map(function(b){ return '<div class="drow"><span class="tag">' + b.cat + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>'; }).join('') +
+      '<div class="small dim" style="margin-top:8px">Only bets clearing the current lock thresholds appear, strongest first. Thresholds are set on the Board.</div></div>'
+    : '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
+  el.innerHTML = catStripHtml() + list;
+}
+function renderFacts(){
+  const el = $id('tab-facts');
+  const agg = aggregateUnits(flatUnits());
+  const dates = Object.keys(state.seasonUnits).length;
+  if (!dates && !CAT_RECORDS){
+    el.innerHTML = '<div class="card"><h2>Results</h2><div class="muted small">Building the graded record on this device… <span class="spin"></span></div></div>';
+    buildFactsBackground();
+    return;
+  }
+  const src = dates ? agg : catFromRecords();
+  const cats = [['allLocks', 'All locks']].concat(Object.keys(CAT_META).map(k => [k, CAT_META[k].short]));
+  const rows = cats.map(function(c){
+    const o = src[c[0]] || { hit: 0, n: 0 };
+    const p = o.n ? Math.round(100 * o.hit / o.n) : null;
+    const col = p == null ? 'var(--mt2)' : p >= 80 ? 'var(--green)' : p >= 60 ? 'var(--amber)' : 'var(--mt)';
+    return '<tr><td>' + esc(c[1]) + '</td><td style="color:' + col + ';font-weight:700">' + (p == null ? '—' : p + '%') + '</td><td class="dim">' + o.hit + '/' + o.n + '</td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="card"><h2>Results · all-time, current thresholds</h2>' +
+    '<table class="grid"><tr><th>Bet type</th><th>Hit rate</th><th>Graded</th></tr>' + rows + '</table>' +
+    '<div class="small dim" style="margin-top:8px">Walk-forward: every projection used only races finished before it. Change a threshold on the Board and this re-grades instantly.</div></div>';
+}
+function catFromRecords(){
+  const out = { allLocks: { hit: 0, n: 0 } };
+  if (CAT_RECORDS) for (const k in CAT_RECORDS){ out[k] = CAT_RECORDS[k]; out.allLocks.hit += CAT_RECORDS[k].hit; out.allLocks.n += CAT_RECORDS[k].n; }
+  return out;
+}
+function renderSettings(){
+  const el = $id('tab-settings');
+  el.innerHTML = '<div class="card"><h2>About</h2>' +
+    '<div class="small">Pete\'s Picks — NASCAR Edition · v' + APP.version + '</div>' +
+    '<div class="small dim" style="margin-top:6px">Projection-only. Deterministic Poisson-binomial model over walk-forward driver strength (recency-weighted average finish, weighted toward this track type). Grades against the real finishing order. Lock thresholds are managed on the Board.</div></div>' +
+    '<div class="card"><h2>Data</h2>' +
+    '<div class="row"><button class="btn ghost" id="rebuild">↻ Rebuild &amp; regrade</button><span class="small dim grow" id="rebuildMsg"></span></div>' +
+    '<div class="small dim" style="margin-top:8px">' + allRecDates().length + ' race dates stored · ' + Object.keys(state.seasonUnits).length + ' graded.</div></div>';
+  $id('rebuild').addEventListener('click', async function(){
+    $id('rebuildMsg').textContent = 'Working…';
+    await buildData(m => $id('rebuildMsg').textContent = m);
+    const g = await regradeAll(m => $id('rebuildMsg').textContent = m);
+    $id('rebuildMsg').textContent = g.graded + ' races graded · ' + g.unitCount + ' units';
+    renderSettings();
+  });
+}
+async function buildFactsBackground(){
+  if (state.building) return;
+  state.building = true;
+  try {
+    await seedFromFB();
+    await buildData();
+    await regradeAll();
+    CAT_RECORDS = null; try { const d = await fbRead(FB_NS, 'allTime'); CAT_RECORDS = (d && d.cats) || catFromRecords(); } catch (e) { CAT_RECORDS = catFromRecords(); }
+    rerenderCurrent();
+  } catch (e) {} finally { state.building = false; }
+}
+function rerenderCurrent(){ const t = state.tab; if (t === 'race') renderRace(); else if (t === 'bets') renderBets(); else if (t === 'facts') renderFacts(); else renderSettings(); }
+function switchTab(tab){
+  state.tab = tab;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.getAttribute('data-tab') === tab));
+  ['race', 'bets', 'facts', 'settings'].forEach(t => $id('tab-' + t).classList.toggle('hidden', t !== tab));
+  rerenderCurrent();
+}
+
+/* ═══ SECTION: CRON (?cron=1 — headless grading, same model the app uses) ═══ */
+async function runCronGrade(){
+  const clog = m => { window.__cronStatus = 'cron: ' + m; try { console.log('[nascar] ' + m); } catch (e) {} };
+  window.__cronStatus = 'cron: starting';
+  try {
+    clog('applying shared lock config');
+    try { await pullSharedLockCfg(); } catch (e) {}
+    const seeded = await seedFromFB(clog);
+    clog('seeded ' + seeded + ' race dates from ' + FB_RECS);
+    let espnOK = false;
+    try { const j = await fetchJSON(ESPN.season(YEARS[YEARS.length - 1])); espnOK = !!(j && j.events); clog('ESPN probe ' + YEARS[YEARS.length - 1] + ': ' + ((j.events || []).length) + ' events'); }
+    catch (e){ clog('ESPN probe FAILED — runner IP likely blocked (retries next run)'); }
+    if (espnOK){ const b = await buildData(clog); clog('build: +' + b.built + ' races (' + b.failed + ' season fetch failures)'); }
+    const after = allRecDates().length;
+    if (!after){
+      if (!espnOK){ clog('SKIPPED — ESPN refused this runner and the cloud has no records yet. Next run gets a fresh IP.'); window.__cronDone = true; return; }
+      throw new Error('0 race dates after build despite ESPN probe OK');
+    }
+    clog('regrading (walk-forward)');
+    const g = await regradeAll(clog);
+    clog('graded ' + g.graded + ' races · ' + g.unitCount + ' units · ' + g.skipped + ' early races skipped');
+    if (!g.unitCount) throw new Error('0 graded units after regrade — see log');
+    clog('pushing units to ' + FB_ACC);
+    const pushed = await pushUnitsFB(clog);
+    clog('mirroring race records to ' + FB_RECS);
+    const mirrored = await pushRecsFB(clog);
+    /* RETENTION: keep the last two seasons — prune older docs. */
+    try {
+      let pruned = 0;
+      for (const col of [FB_RECS, FB_ACC]){
+        const ids = await fbListColIds(col);
+        for (const id of ids){
+          if (/^\d{4}-\d{2}-\d{2}$/.test(id) && id < SEASON.start){
+            try { await fetch(fbDocUrl(col, id), { method: 'DELETE' }); pruned++; } catch (e) {}
+            await new Promise(r => setTimeout(r, 45));
+          }
+        }
+      }
+      if (pruned) clog('retention: pruned ' + pruned + ' old docs');
+    } catch (e) {}
+    const agg = aggregateUnits(flatUnits());
+    const entries = Object.keys(agg).filter(k => k !== 'allLocks' && agg[k].n >= 15)
+      .map(k => ({ label: agg[k].label, pct: Math.round(100 * agg[k].hit / Math.max(1, agg[k].n)), n: agg[k].n }))
+      .sort((a, b) => b.pct - a.pct).slice(0, 3);
+    const catsOut = {};
+    for (const k in CAT_META){ const c = agg[k]; if (c && c.n) catsOut[k] = { hit: c.hit, n: c.n, label: c.label }; }
+    const summary = { t: new Date().toISOString(), all: { hit: agg.allLocks.hit, n: agg.allLocks.n }, top: entries, cats: catsOut };
+    await fbWrite(FB_NS, 'allTime', summary);
+    const check = await fbRead(FB_NS, 'allTime');
+    if (!check || !check.all || check.all.n !== summary.all.n) throw new Error('summary verify failed — wrote n=' + summary.all.n + ' but read back ' + JSON.stringify(check && check.all));
+    /* SUPER LOCKS: publish the next race's qualifying locks for the Board. */
+    try {
+      await loadNextRace();
+      const up = projectUpcoming();
+      const tlocks = [];
+      if (up){
+        const P = up.proj, fav = P.favId && P.byId[P.favId];
+        if (fav && fav.pWin * 100 >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: 'Race winner — ' + fav.name, metric: Math.round(fav.pWin * 100) });
+        for (const id in P.byId){
+          const d = P.byId[id];
+          if (d.pTop5 * 100 >= lockTh('top5')) tlocks.push({ cat: 'top5', desc: d.name + ' — top 5', metric: Math.round(d.pTop5 * 100) });
+          if (d.pTop10 * 100 >= lockTh('top10')) tlocks.push({ cat: 'top10', desc: d.name + ' — top 10', metric: Math.round(d.pTop10 * 100) });
+          if (d.pTop15 * 100 >= lockTh('top15')) tlocks.push({ cat: 'top15', desc: d.name + ' — top 15', metric: Math.round(d.pTop15 * 100) });
+        }
+        for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) tlocks.push({ cat: 'h2h', desc: m.aName + ' beats ' + m.bName, metric: Math.round(m.p * 100) }); }
+      }
+      await fbWrite(FB_NS, 'today', { date: todayPT(), locks: tlocks });
+      clog('published ' + tlocks.length + ' lock(s) to nascar/today');
+    } catch (e){ clog('today-locks publish warn: ' + (e && e.message || e)); }
+    clog('done — ' + after + ' race dates, ' + g.unitCount + ' units, ' + pushed + ' unit docs, ' + mirrored + ' race docs, nascar/allTime verified (' + summary.all.hit + '/' + summary.all.n + ' locks)');
+  } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
+  window.__cronDone = true;
+}
+
+/* ═══ SECTION: BOOT ═══ */
+(function boot(){
+  $id('verBadge').textContent = 'v' + APP.version + ' · walk-forward';
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => switchTab(b.getAttribute('data-tab')));
+  if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
+  pullSharedLockCfg().then(got => { if (got) rerenderCurrent(); }).catch(() => {});
+  loadCatRecords();
+  loadNextRace().then(() => { if (state.tab === 'race') renderRace(); });
+  renderRace();
+  setTimeout(() => { buildFactsBackground(); }, 1000);
+})();
+</script>
+
+<script>window.__APPKEY='nascar';</script>
+<script>
+/* ═══ UNIFIED BOARD GATE ═══════════════════════════════════════════════════
+   Single source of truth for access: the Board's member list
+   (app_settings/board_access in mlb-bets-d196c). Admin PIN (2325) and any
+   ?cron= run always bypass. The free app (mlbfree) only needs a name. */
+(function(){
+  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
+  var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
+  var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';
+  var LS = 'board_member_v3';
+  var norm = function(v){ return String(v == null ? '' : v).trim().toLowerCase(); };
+  var pinOk = function(v){ try { return String(v).trim() === atob('MjMyNQ=='); } catch (e){ return false; } };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  function saved(){ try { return JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e){ return null; } }
+  function parseMembers(f){ if (f && f.members && f.members.stringValue){ try { return JSON.parse(f.members.stringValue) || []; } catch (e){ return []; } } return []; }
+  function grantOf(s, list){
+    if (!s) return { ok: false };
+    if (s.free) return { ok: true, apps: ['mlbfree'], dk: false, dkMode: 'off' };
+    if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true, dkMode: 'unlimited' };
+    for (var i = 0; i < list.length; i++){ var m = list[i];
+      if (norm(m.code) !== norm(s.code)) continue;              // must match THEIR personal code
+      if (m.name != null && norm(m.name) !== norm(s.name)) continue; // AND their name
+      return { ok: true, apps: Array.isArray(m.apps) ? m.apps : null, dk: m.dk !== false, dkMode: m.dkMode || (m.dk === false ? 'off' : 'unlimited') };
+    }
+    return { ok: false };
+  }
+  function okApp(g){ return g.ok && (APPKEY === 'mlbfree' || !g.apps || g.apps.indexOf(APPKEY) >= 0); } // free MLB never locked
+  var ov, dkVisG = true;
+  function setDk(v){ window.__DK_OK = v; if (!v) document.documentElement.classList.add('dk-off'); else document.documentElement.classList.remove('dk-off'); try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(v); } catch (e) {} }
+  function dkEff(g, dkVis, code){
+    var base = dkVis && g && (g.dk !== false);
+    if (!base) return false;
+    var mode = (g && g.dkMode) || 'unlimited';
+    if (mode === 'off') return false;
+    if (mode === 'limited') return (new Date()).getDate() <= 15;
+    return true;
+  }
+  function cover(html){
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#0a0d12;color:#e8edf4;display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif';
+    ov.innerHTML = html;
+    document.body.appendChild(ov);
+    document.documentElement.style.overflow = 'hidden';
+  }
+  function pass(){ if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
+  function inp(id, ph, cap){ return '<input id="' + id + '" placeholder="' + ph + '" autocomplete="off" autocapitalize="' + cap + '" style="width:100%;box-sizing:border-box;background:#182231;border:1px solid #243146;border-radius:9px;color:#e8edf4;padding:12px;font-size:16px;margin-bottom:10px">'; }
+  function logFree(name){
+    try {
+      fetch(DOC + 'app_settings/free_log?key=' + MK).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+        var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
+        if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now() });
+        arr = arr.slice(0, 200);
+        fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  function showGate(list){
+    var fields = FREE
+      ? inp('bg-name', 'Your name', 'words')
+      : inp('bg-name', 'Your name', 'words') + inp('bg-code', 'Access code', 'none');
+    cover('<div style="width:100%;max-width:340px;text-align:center">' +
+      '<div style="font-size:26px;font-weight:800;margin-bottom:6px">Members only</div>' +
+      '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your first and last name to use the free app.' : 'Enter your first and last name, and your access code.') + '</div>' +
+      fields +
+      '<div id="bg-err" style="color:#ff7a7a;font-size:12.5px;min-height:16px;margin:6px 0"></div>' +
+      '<button id="bg-go" style="width:100%;border:0;border-radius:9px;padding:13px;font-weight:800;background:#e8edf4;color:#0b0d12;font-size:15px">Enter</button></div>');
+    var err = function(t){ document.getElementById('bg-err').textContent = t; };
+    var twoNames = function(n){ return String(n||'').trim().split(/\s+/).filter(Boolean).length >= 2; };
+    var go = function(){
+      var name = ((document.getElementById('bg-name') || {}).value || '').trim();
+      var code = (document.getElementById('bg-code') || {}).value || '';
+      if (pinOk(code) || pinOk(name)){
+        try { localStorage.setItem(LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
+        pass(); return;
+      }
+      if (!twoNames(name)){ err('Enter your first and last name.'); return; }
+      if (FREE){
+        try { localStorage.setItem(LS, JSON.stringify({ free: true, name: name })); } catch (e) {}
+        logFree(name); pass(); return;
+      }
+      var g = grantOf({ name: name, code: code }, list);
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkEff(g, dkVisG, String(code).trim())); pass(); }
+      else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
+      else { err('No match — check your name and code, or your access was turned off.'); }
+    };
+    document.getElementById('bg-go').addEventListener('click', go);
+    ov.querySelectorAll('input').forEach(function(i){ i.addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); }); });
+    setTimeout(function(){ var i = document.getElementById('bg-name'); if (i) i.focus(); }, 200);
+  }
+  cover('<div style="color:#5c6b80;font:600 12px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase">Checking access…</div>');
+  (async function(){
+    var list = null, dkVis = true;
+    try { var r = await fetch(DOC + 'app_settings/board_access?key=' + MK, { cache: 'no-store' }); if (r.ok) list = parseMembers((await r.json()).fields || {}); } catch (e) {}
+    try { var r2 = await fetch(DOC + 'app_settings/dk_auto?key=' + MK, { cache: 'no-store' }); if (r2.ok){ var f = (await r2.json()).fields || {}; if (f.dkVisible && f.dkVisible.booleanValue === false) dkVis = false; } } catch (e) {}
+    dkVisG = dkVis;
+    var s = saved();
+    if (list === null){
+      if (s && (s.free || s.name || (s.code && pinOk(s.code)))){ setDk(dkVis); pass(); return; }
+      list = [];
+    }
+    var g = grantOf(s, list);
+    setDk(g.ok ? dkEff(g, dkVis, (s && s.code) || '') : dkVis);
+    if (okApp(g)){ pass(); return; }
+    showGate(list);
+  })();
+})();
+</script>
+</body>
+</html>
