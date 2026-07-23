@@ -1455,7 +1455,7 @@ async function openSettingsPanel(){
   };
   var knobHtml = function(id, label, val){
     return '<div class="row" style="margin:5px 0"><span class="hint" style="flex:1">' + esc(label) + '</span>' +
-      '<input type="text" id="' + id + '" inputmode="decimal" value="' + esc(val) + '" style="margin:0;width:72px;text-align:right"></div>';
+      '<input type="text" id="' + id + '" class="knob" inputmode="decimal" value="' + esc(val) + '" style="margin:0;width:72px;text-align:right"></div>';
   };
   var DAY_LETTERS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
   var dayChips = function(id, saved){
@@ -1705,6 +1705,23 @@ async function openSettingsPanel(){
       catch (e){ outEl.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
     });
   };
+  /* LIVE previews: typing a new number re-runs that section's preview
+     automatically (debounced), so the current \u2192 proposed readout always
+     matches what's in the boxes \u2014 no second tap needed. */
+  var PREVIEW_BTN_BY_PREFIX = { pk: 'p-preview', fk: 'f-preview', bk: 'b-preview', gk: 'g-preview', ik: 'i-preview', nc: 'nc-preview' };
+  var liveT = null;
+  box.addEventListener('input', function(e){
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('knob')) return;
+    var prefix = String(t.id).split('-')[0];
+    var btnId = PREVIEW_BTN_BY_PREFIX[prefix];
+    if (!btnId) return;
+    clearTimeout(liveT);
+    liveT = setTimeout(function(){
+      var btn = box.querySelector('#' + btnId);
+      if (btn) btn.click();
+    }, 600);
+  });
   hookPreview('p-preview', 'p-prevout', async function(){
     var prop = normPremProbs(readNums(PREM_KNOBS, 'pk-'));
     if (!prop) throw new Error('Every field needs a number \u2265 0.');
