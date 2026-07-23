@@ -111,7 +111,7 @@ const MIN_RACES = 3;        // driver needs this many prior finishes for a real 
 const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
 const state = {
   tab: 'bets', projections: {}, nextRace: null,
-  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false, betsOpen: {}
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false, betsOpen: {}, whyOpen: null
 };
 
 /* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
@@ -285,15 +285,20 @@ function driverRatings(prior, trackType){
   const lgAvg = nF ? sumF / nF : 20;
   const decay = 0.94;
   const wmean = arr => { if (!arr.length) return null; let s = 0, w = 0; const N = arr.length; for (let k = 0; k < N; k++){ const wt = Math.pow(decay, N - 1 - k); s += arr[k] * wt; w += wt; } return s / w; };
-  const rating = {}, count = {}, names = {};
+  const rating = {}, count = {}, names = {}, detail = {};
   for (const id in hist){
     const h = hist[id]; count[id] = h.finishes.length; names[id] = h.name;
-    if (h.finishes.length < MIN_RACES){ rating[id] = lgAvg + 2; continue; } // thin history → just below field average
+    if (h.finishes.length < MIN_RACES){
+      rating[id] = lgAvg + 2;
+      detail[id] = { n: h.finishes.length, overall: null, typeAvg: null, typeN: h.typeFin.length };
+      continue; // thin history → just below field average
+    }
     const overall = wmean(h.finishes);
     const typ = h.typeFin.length >= 2 ? wmean(h.typeFin) : null;
     rating[id] = typ != null ? 0.55 * typ + 0.45 * overall : overall; // track-type-weighted
+    detail[id] = { n: h.finishes.length, overall: overall, typeAvg: typ, typeN: h.typeFin.length };
   }
-  return { rating, lgAvg, count, names };
+  return { rating, lgAvg, count, names, detail };
 }
 function erf(x){
   const s = x < 0 ? -1 : 1; x = Math.abs(x);
@@ -336,9 +341,13 @@ function projectRace(fieldDrivers, prior, trackType){
   const byId = {}; let favId = null, favP = -1;
   ids.forEach((id, i) => {
     const pr = finishProbs(ratings, i, sigma);
-    byId[id] = { pWin: pr.pWin, pTop5: pr.pTop5, pTop10: pr.pTop10, pTop15: pr.pTop15, name: names[id], rating: ratings[i] };
+    byId[id] = { pWin: pr.pWin, pTop5: pr.pTop5, pTop10: pr.pTop10, pTop15: pr.pTop15, name: names[id], rating: ratings[i],
+      why: Object.assign({ rating: ratings[i], field: ids.length }, R.detail[id] || { n: 0, overall: null, typeAvg: null, typeN: 0 }) };
     if (pr.pWin > favP){ favP = pr.pWin; favId = id; }
   });
+  // Field rank for each driver (1 = strongest projected pace) — powers the why.
+  ids.map(function(id){ return [id, byId[id].rating]; }).sort(function(a, b){ return a[1] - b[1]; })
+    .forEach(function(pair, idx){ byId[pair[0]].why.rank = idx + 1; });
   // Head-to-head among the projected top 16 by rating (both tight + lopsided pairs).
   const ordered = ids.map((id, i) => [id, ratings[i]]).sort((a, b) => a[1] - b[1]).slice(0, 16);
   const sd = sigma * Math.SQRT2, h2h = [];
@@ -497,14 +506,14 @@ function bestBetsList(up, cap){
   // is a separate real bet, and Top 15 is our most accurate one.
   const P = up.proj, bets = [];
   const fav = P.favId && P.byId[P.favId];
-  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, drv: fav.name, txt: '<b>' + esc(fav.name) + '</b> wins the race', cat: 'Winner', catKey: 'winner' });
+  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, drv: fav.name, aId: P.favId, txt: '<b>' + esc(fav.name) + '</b> wins the race', cat: 'Winner', catKey: 'winner' });
   for (const id in P.byId){
     const d = P.byId[id];
-    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 5th or better', cat: 'Top 5', catKey: 'top5' });
-    if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 10th or better', cat: 'Top 10', catKey: 'top10' });
-    if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, drv: d.name, txt: '<b>' + esc(d.name) + '</b> finishes 15th or better', cat: 'Top 15', catKey: 'top15' });
+    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, drv: d.name, aId: id, txt: '<b>' + esc(d.name) + '</b> finishes 5th or better', cat: 'Top 5', catKey: 'top5' });
+    if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, drv: d.name, aId: id, txt: '<b>' + esc(d.name) + '</b> finishes 10th or better', cat: 'Top 10', catKey: 'top10' });
+    if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, drv: d.name, aId: id, txt: '<b>' + esc(d.name) + '</b> finishes 15th or better', cat: 'Top 15', catKey: 'top15' });
   }
-  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, drv: m.aName, txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), cat: 'Matchup', catKey: 'h2h' }); }
+  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, drv: m.aName, aId: m.aId, bId: m.bId, txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), cat: 'Matchup', catKey: 'h2h' }); }
   // Rank by what has actually CASHED: the bet type's all-time success rate
   // leads, the pick's own confidence breaks ties within a type.
   bets.forEach(function(b){ const r = catRate(b.catKey); b.catPct = r ? r.pct : 0; });
@@ -515,9 +524,48 @@ function bestBetsList(up, cap){
   for (const b of bets){ if (seen[b.drv]) continue; seen[b.drv] = 1; out.push(b); if (out.length >= cap) break; }
   return out;
 }
+// ── WHY a grade is what it is — shown when a driver row is tapped ──────────
+function whyHtml(up, key, aId, bId){
+  const P = up.proj, tl = trackLabel(up.trackType).toLowerCase();
+  const d = P.byId[aId];
+  if (!d || !d.why) return '';
+  const w = d.why, parts = [];
+  if (bId && P.byId[bId] && P.byId[bId].why){
+    const e = P.byId[bId];
+    parts.push('<b>' + esc(d.name) + '</b> projects a P' + w.rating.toFixed(1) + ' pace vs <b>' + esc(e.name) + '</b> at P' + e.why.rating.toFixed(1) +
+      ' — a ' + (e.why.rating - w.rating).toFixed(1) + '-position edge.');
+    parts.push('The grade is the model\u2019s odds the faster car actually finishes ahead, given how much finishing order swings at a ' + tl + '.');
+  } else {
+    if (!w.n || w.n < MIN_RACES){
+      parts.push('Only ' + (w.n || 0) + ' race' + ((w.n || 0) === 1 ? '' : 's') + ' on record — graded near the field average until more results land.');
+    } else {
+      let line = 'Averages a <b>P' + w.overall.toFixed(1) + '</b> finish over their last ' + w.n + ' races (recent races count more)';
+      if (w.typeN >= 2 && w.typeAvg != null) line += ' · <b>P' + w.typeAvg.toFixed(1) + '</b> at ' + tl + 's (' + w.typeN + ' races, weighted heavier)';
+      parts.push(line + '.');
+    }
+    parts.push('That makes them the <b>#' + (w.rank || '?') + '</b> projected car of ' + w.field + ' in this field.');
+    const goal = { winner: 'beat every other car', top5: 'finish 5th or better', top10: 'finish 10th or better', top15: 'finish 15th or better' }[key];
+    if (goal) parts.push('The grade = the model\u2019s odds they ' + goal + ', given every rating in the field and how chaotic ' + tl + 's run.');
+  }
+  return '<div class="small" style="padding:8px 10px;background:var(--face);border-radius:9px;margin:3px 0 7px;color:var(--mt);line-height:1.5">' + parts.join('<br>') + '</div>';
+}
+function whyToken(key, aId, bId){ return key + '|' + aId + '|' + (bId || ''); }
 // Confidence grade: a plain number (no % sign) — higher = stronger pick.
-function betRow(b){
-  return '<div class="drow"><span class="tag">' + CAT_PLAIN[b.catKey].tag + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>';
+// Rows are tappable: tap a driver to see WHY they have that grade.
+function betRow(b, up){
+  const tok = whyToken(b.catKey, b.aId, b.bId);
+  const open = state.whyOpen === tok;
+  return '<div class="drow whyrow" data-tok="' + tok + '" style="cursor:pointer"><span class="tag">' + CAT_PLAIN[b.catKey].tag + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>' +
+    (open && up ? whyHtml(up, b.catKey, b.aId, b.bId) : '');
+}
+function wireWhyRows(el, up){
+  el.querySelectorAll('.whyrow').forEach(function(r){
+    r.addEventListener('click', function(){
+      const tok = r.getAttribute('data-tok');
+      state.whyOpen = state.whyOpen === tok ? null : tok;
+      rerenderCurrent();
+    });
+  });
 }
 function renderRace(){
   const el = $id('tab-race');
@@ -535,8 +583,8 @@ function renderRace(){
   // Best bets FIRST — the reason anyone opens the app.
   const top = bestBetsList(up, 8);
   const best = top.length
-    ? '<div class="card"><h2>Best bets · this race</h2>' + top.map(betRow).join('') +
-      '<div class="small dim" style="margin-top:8px">Ordered by each bet type\u2019s real all-time success rate (most proven first). The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. Full list on the <b>Bets</b> tab.</div></div>'
+    ? '<div class="card"><h2>Best bets · this race</h2>' + top.map(function(b){ return betRow(b, up); }).join('') +
+      '<div class="small dim" style="margin-top:8px">Ordered by each bet type\u2019s real all-time success rate (most proven first). The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade — <b>tap any driver to see why</b>.</div></div>'
     : '<div class="card"><h2>Best bets · this race</h2><div class="muted small">Nothing clears the lock thresholds yet for this race.</div></div>';
   // Driver board: just the projected finishing order — P1 at the top.
   const rows = state.fieldExpanded ? up.rows : up.rows.slice(0, 20);
@@ -552,9 +600,11 @@ function renderRace(){
       '</table><div class="small dim" style="margin-top:8px">Each column = the chance that driver finishes at or better than that spot. 🔒 = strong enough to bet.</div>';
   } else {
     boardBody = rows.map(function(d, i){
-      return '<div class="drow"><span class="rk" style="width:34px;font-weight:800;color:var(--speed)">P' + (i + 1) + '</span><span class="grow"><b>' + esc(d.name) + '</b></span></div>';
+      const tok = whyToken('board', d.id);
+      return '<div class="drow whyrow" data-tok="' + tok + '" style="cursor:pointer"><span class="rk" style="width:34px;font-weight:800;color:var(--speed)">P' + (i + 1) + '</span><span class="grow"><b>' + esc(d.name) + '</b></span></div>' +
+        (state.whyOpen === tok ? whyHtml(up, 'board', d.id) : '');
     }).join('') +
-    '<div class="small dim" style="margin-top:8px">Our projected finishing order for this race. Tap <b>Detailed view</b> for the full probability table.</div>';
+    '<div class="small dim" style="margin-top:8px">Our projected finishing order for this race — <b>tap a driver to see why</b>. Tap <b>Detailed view</b> for the full probability table.</div>';
   }
   const body = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><h2 style="margin:0">Driver board · ' + trackLabel(up.trackType) + '</h2>' +
     '<button class="btn ghost" id="fieldDetail" style="padding:5px 10px;font-size:11.5px">' + (state.fieldDetailed ? 'Simple view' : 'Detailed view') + '</button></div>' +
@@ -566,6 +616,7 @@ function renderRace(){
   if (fm) fm.addEventListener('click', function(){ state.fieldExpanded = !state.fieldExpanded; renderRace(); });
   const fd = $id('fieldDetail');
   if (fd) fd.addEventListener('click', function(){ state.fieldDetailed = !state.fieldDetailed; renderRace(); });
+  wireWhyRows(el, up);
 }
 function trackLabel(t){ return { super: 'Superspeedway', inter: 'Intermediate', short: 'Short track', road: 'Road course' }[t] || 'Intermediate'; }
 function renderBets(){
@@ -581,10 +632,10 @@ function renderBets(){
   const catAllRows = function(key){
     const P = up.proj, rows = [];
     if (key === 'h2h'){
-      for (const m of P.h2h) rows.push({ txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), conf: m.p * 100 });
+      for (const m of P.h2h) rows.push({ txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), conf: m.p * 100, aId: m.aId, bId: m.bId });
     } else {
       const pk = { winner: 'pWin', top5: 'pTop5', top10: 'pTop10', top15: 'pTop15' }[key];
-      for (const id in P.byId){ const d = P.byId[id]; rows.push({ txt: '<b>' + esc(d.name) + '</b>', conf: d[pk] * 100 }); }
+      for (const id in P.byId){ const d = P.byId[id]; rows.push({ txt: '<b>' + esc(d.name) + '</b>', conf: d[pk] * 100, aId: id }); }
     }
     rows.sort((a, b) => b.conf - a.conf);
     return rows;
@@ -595,7 +646,7 @@ function renderBets(){
   const bets = bestBetsList(up, 0);
   const byKey = {};
   bets.forEach(function(b){ (byKey[b.catKey] = byKey[b.catKey] || []).push(b); });
-  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — bet types ordered by their real success rate, most proven first. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. <b>Tap a card</b> to see every driver and the bet line.</div></div>';
+  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — bet types ordered by their real success rate, most proven first. The <b style="color:var(--lock)">red number</b> is the pick\u2019s confidence grade. <b>Tap a card</b> for every driver and the bet line · <b>tap a driver</b> to see why they have that grade.</div></div>';
   for (const key of order){
     const arr = byKey[key] || [];
     const r = catRate(key);
@@ -614,7 +665,9 @@ function renderBets(){
       if (arr.length){
         const capN = key === 'h2h' ? 10 : arr.length;
         html += arr.slice(0, capN).map(function(b){
-          return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>';
+          const tok = whyToken(key, b.aId, b.bId);
+          return '<div class="drow whyrow" data-tok="' + tok + '" style="cursor:pointer"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>' +
+            (state.whyOpen === tok ? whyHtml(up, key, b.aId, b.bId) : '');
         }).join('');
         if (arr.length > capN) html += '<div class="small dim" style="padding:4px 0 0">+' + (arr.length - capN) + ' more — tap the card to see them all.</div>';
       } else {
@@ -633,8 +686,10 @@ function renderBets(){
             '<span style="font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--speed);white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span>' +
             '<div style="flex:1;border-top:2px dashed var(--speed)"></div></div>';
         }
-        return pre + '<div class="drow"><span class="grow"' + (isBet ? '' : ' style="color:var(--mt2)"') + '>' + x.txt + '</span>' +
-          '<span class="pct ' + (isBet ? 'lock' : 'dim') + '">' + Math.round(x.conf) + '</span></div>';
+        const tok = whyToken(key + 'x', x.aId, x.bId);
+        return pre + '<div class="drow whyrow" data-tok="' + tok + '" style="cursor:pointer"><span class="grow"' + (isBet ? '' : ' style="color:var(--mt2)"') + '>' + x.txt + '</span>' +
+          '<span class="pct ' + (isBet ? 'lock' : 'dim') + '">' + Math.round(x.conf) + '</span></div>' +
+          (state.whyOpen === tok ? whyHtml(up, key, x.aId, x.bId) : '');
       }).join('');
       if (!lineDrawn && th > 0) html += '<div class="small dim" style="padding:4px 0 0">Everyone shown clears the bet line.</div>';
     }
@@ -648,6 +703,7 @@ function renderBets(){
       renderBets();
     });
   });
+  wireWhyRows(el, up);
 }
 function renderFacts(){
   const el = $id('tab-facts');
