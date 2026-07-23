@@ -111,7 +111,7 @@ const MIN_RACES = 3;        // driver needs this many prior finishes for a real 
 const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
 const state = {
   tab: 'race', projections: {}, nextRace: null,
-  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, h2hExpanded: false
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false
 };
 
 /* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
@@ -481,25 +481,33 @@ function projectUpcoming(){
   const rows = field.map(d => Object.assign({ id: d.id }, proj.byId[d.id])).sort((a, b) => a.rating - b.rating);
   return { proj, rows, trackType: tt, prior: prior.length };
 }
+/* Plain-English bet copy — one idea per row, ONE number per row (that pick's
+   own chance of hitting). Bet-type track records live in group headers and the
+   Results tab only, so the two kinds of percentages never sit side by side. */
+const CAT_PLAIN = {
+  winner: { tag: 'WINNER', what: 'wins the race' },
+  top5:   { tag: 'TOP 5',  what: 'finishes 5th or better' },
+  top10:  { tag: 'TOP 10', what: 'finishes 10th or better' },
+  top15:  { tag: 'TOP 15', what: 'finishes 15th or better' },
+  h2h:    { tag: 'MATCHUP', what: 'finishes ahead of the other driver' }
+};
 function bestBetsList(up, cap){
   // The money view: every qualifying lock across all bet types, strongest first.
   const P = up.proj, bets = [];
   const fav = P.favId && P.byId[P.favId];
-  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, txt: '<b>' + esc(fav.name) + '</b> to win the race', cat: 'Winner', catKey: 'winner' });
+  if (fav && fav.pWin * 100 >= lockTh('winner')) bets.push({ conf: fav.pWin * 100, txt: '<b>' + esc(fav.name) + '</b> wins the race', cat: 'Winner', catKey: 'winner' });
   for (const id in P.byId){
     const d = P.byId[id];
-    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 5 finish', cat: 'Top 5', catKey: 'top5' });
-    else if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 10 finish', cat: 'Top 10', catKey: 'top10' });
-    else if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, txt: '<b>' + esc(d.name) + '</b> — Top 15 finish', cat: 'Top 15', catKey: 'top15' });
+    if (d.pTop5 * 100 >= lockTh('top5')) bets.push({ conf: d.pTop5 * 100, txt: '<b>' + esc(d.name) + '</b> finishes 5th or better', cat: 'Top 5', catKey: 'top5' });
+    else if (d.pTop10 * 100 >= lockTh('top10')) bets.push({ conf: d.pTop10 * 100, txt: '<b>' + esc(d.name) + '</b> finishes 10th or better', cat: 'Top 10', catKey: 'top10' });
+    else if (d.pTop15 * 100 >= lockTh('top15')) bets.push({ conf: d.pTop15 * 100, txt: '<b>' + esc(d.name) + '</b> finishes 15th or better', cat: 'Top 15', catKey: 'top15' });
   }
-  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, txt: '<b>' + esc(m.aName) + '</b> beats ' + esc(m.bName), cat: 'H2H', catKey: 'h2h' }); }
+  for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) bets.push({ conf: m.p * 100, txt: '<b>' + esc(m.aName) + '</b> finishes ahead of ' + esc(m.bName), cat: 'Matchup', catKey: 'h2h' }); }
   bets.sort((a, b) => b.conf - a.conf);
   return cap ? bets.slice(0, cap) : bets;
 }
 function betRow(b){
-  const r = catRate(b.catKey);
-  const hist = r ? '<span class="dim" style="font-size:11px;margin-left:5px">' + r.pct + '% all-time</span>' : '';
-  return '<div class="drow"><span class="tag">' + b.cat + '</span><span class="grow">' + b.txt + hist + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
+  return '<div class="drow"><span class="tag">' + CAT_PLAIN[b.catKey].tag + '</span><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
 }
 function renderRace(){
   const el = $id('tab-race');
@@ -518,54 +526,85 @@ function renderRace(){
   const top = bestBetsList(up, 8);
   const best = top.length
     ? '<div class="card"><h2>Best bets · this race</h2>' + top.map(betRow).join('') +
-      '<div class="small dim" style="margin-top:8px">Strongest locks across every bet type — the full list is on the <b>Bets</b> tab.</div></div>'
+      '<div class="small dim" style="margin-top:8px">The <b style="color:var(--lock)">red %</b> is that pick\u2019s chance of hitting. Full list on the <b>Bets</b> tab · each bet type\u2019s track record on <b>Results</b>.</div></div>'
     : '<div class="card"><h2>Best bets · this race</h2><div class="muted small">Nothing clears the lock thresholds yet for this race.</div></div>';
-  const th5 = lockTh('top5'), th10 = lockTh('top10'), th15 = lockTh('top15'), thW = lockTh('winner');
-  const cell = (v, t) => { const on = v * 100 >= t; return '<td' + (on ? ' style="color:var(--speed);font-weight:800"' : '') + '>' + pct(v) + (on ? ' 🔒' : '') + '</td>'; };
+  // Driver board: ONE line per driver — their single best bet. The 4-column
+  // probability grid confused people; it lives behind a "detailed view" toggle.
+  const bestOf = function(d){
+    if (d.pTop5 * 100 >= lockTh('top5')) return { what: 'finishes 5th or better', p: d.pTop5, lock: true };
+    if (d.pTop10 * 100 >= lockTh('top10')) return { what: 'finishes 10th or better', p: d.pTop10, lock: true };
+    if (d.pTop15 * 100 >= lockTh('top15')) return { what: 'finishes 15th or better', p: d.pTop15, lock: true };
+    return { what: 'finishes 15th or better', p: d.pTop15, lock: false }; // reference odds, not a lock
+  };
   const rows = state.fieldExpanded ? up.rows : up.rows.slice(0, 20);
-  const body = '<div class="card"><h2>Field projection · ' + trackLabel(up.trackType) + '</h2>' +
-    '<table class="grid"><tr><th>#</th><th>Driver</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 15</th></tr>' +
-    rows.map(function(d, i){
-      return '<tr><td class="dim">' + (i + 1) + '</td><td>' + esc(d.name) + '</td>' +
-        cell(d.pWin, thW) + cell(d.pTop5, th5) + cell(d.pTop10, th10) + cell(d.pTop15, th15) + '</tr>';
-    }).join('') + '</table>' +
+  let boardBody;
+  if (state.fieldDetailed){
+    const th5 = lockTh('top5'), th10 = lockTh('top10'), th15 = lockTh('top15'), thW = lockTh('winner');
+    const cell = (v, t) => { const on = v * 100 >= t; return '<td' + (on ? ' style="color:var(--speed);font-weight:800"' : '') + '>' + pct(v) + (on ? ' 🔒' : '') + '</td>'; };
+    boardBody = '<table class="grid"><tr><th>#</th><th>Driver</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 15</th></tr>' +
+      rows.map(function(d, i){
+        return '<tr><td class="dim">' + (i + 1) + '</td><td>' + esc(d.name) + '</td>' +
+          cell(d.pWin, thW) + cell(d.pTop5, th5) + cell(d.pTop10, th10) + cell(d.pTop15, th15) + '</tr>';
+      }).join('') +
+      '</table><div class="small dim" style="margin-top:8px">Each column = the chance that driver finishes at or better than that spot. 🔒 = strong enough to bet.</div>';
+  } else {
+    boardBody = rows.map(function(d, i){
+      const b = bestOf(d);
+      const right = b.lock
+        ? '<span class="pct lock">' + pct(b.p) + ' 🔒</span>'
+        : '<span class="pct dim">' + pct(b.p) + '</span>';
+      return '<div class="drow"><span class="rk">' + (i + 1) + '</span><span class="grow"><b>' + esc(d.name) + '</b> <span class="dim small">' + b.what + '</span></span>' + right + '</div>';
+    }).join('') +
+    '<div class="small dim" style="margin-top:8px">One line per driver — their strongest bet this race. 🔒 = strong enough to bet; grey = the odds aren\u2019t there.</div>';
+  }
+  const body = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><h2 style="margin:0">Driver board · ' + trackLabel(up.trackType) + '</h2>' +
+    '<button class="btn ghost" id="fieldDetail" style="padding:5px 10px;font-size:11.5px">' + (state.fieldDetailed ? 'Simple view' : 'Detailed view') + '</button></div>' +
+    boardBody +
     (up.rows.length > 20 ? '<button class="btn ghost" id="fieldMore" style="width:100%;margin-top:9px">' + (state.fieldExpanded ? 'Show top 20 only' : 'Show the full field (' + up.rows.length + ' drivers)') + '</button>' : '') +
-    '<div class="small dim" style="margin-top:8px">🔒 = clears that bet type\u2019s lock threshold. Sorted by projected strength.</div></div>';
+    '</div>';
   el.innerHTML = head + best + body;
   const fm = $id('fieldMore');
   if (fm) fm.addEventListener('click', function(){ state.fieldExpanded = !state.fieldExpanded; renderRace(); });
+  const fd = $id('fieldDetail');
+  if (fd) fd.addEventListener('click', function(){ state.fieldDetailed = !state.fieldDetailed; renderRace(); });
 }
 function trackLabel(t){ return { super: 'Superspeedway', inter: 'Intermediate', short: 'Short track', road: 'Road course' }[t] || 'Intermediate'; }
 function renderBets(){
   const el = $id('tab-bets');
   const up = projectUpcoming();
-  if (!up){ el.innerHTML = catStripHtml() + '<div class="card muted small">No projected locks yet — needs race history. Check the Results tab as the season builds.</div>'; return; }
+  if (!up){ el.innerHTML = '<div class="card muted small">No projected locks yet — needs race history. Check the Results tab as the season builds.</div>'; return; }
   const bets = bestBetsList(up, 0);
   if (!bets.length){
-    el.innerHTML = catStripHtml() + '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
+    el.innerHTML = '<div class="card muted small">Nothing clears the current lock thresholds for this race — that is the model being honest, not broken.</div>';
     return;
   }
-  // Grouped by bet type, each group led by its all-time success rate.
-  const order = ['Winner', 'Top 5', 'Top 10', 'Top 15', 'H2H'];
-  const byCat = {};
-  bets.forEach(function(b){ (byCat[b.cat] = byCat[b.cat] || []).push(b); });
-  let html = '<div class="card"><h2>Locks · ' + esc((state.nextRace && state.nextRace.name) || 'next race') + '</h2>';
-  for (const cat of order){
-    const arr = byCat[cat];
+  // One card per bet type. The header says what the bet IS in plain words and
+  // shows that bet type's track record — clearly labeled so it can't be
+  // mistaken for a pick's own odds (which are the only numbers on the rows).
+  const order = ['winner', 'top5', 'top10', 'top15', 'h2h'];
+  const byKey = {};
+  bets.forEach(function(b){ (byKey[b.catKey] = byKey[b.catKey] || []).push(b); });
+  let html = '<div class="card" style="padding:10px 13px"><div class="small"><b>' + esc((state.nextRace && state.nextRace.name) || 'Next race') + '</b> — every bet below is strong enough to play. The <b style="color:var(--lock)">red %</b> is that pick\u2019s own chance of hitting.</div></div>';
+  for (const key of order){
+    const arr = byKey[key];
     if (!arr || !arr.length) continue;
-    const key = arr[0].catKey, r = catRate(key);
-    const rateTxt = r ? '<span class="dim" style="font-weight:600">' + r.pct + '% all-time · ' + r.hit + '/' + r.n + '</span>' : '';
-    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin:11px 0 2px"><span style="font-size:12px;font-weight:800;letter-spacing:.07em;color:var(--speed)">' + cat.toUpperCase() + '</span><span class="small">' + rateTxt + '</span></div>';
-    const cap = cat === 'H2H' && !state.h2hExpanded ? 10 : arr.length;
+    const r = catRate(key);
+    const meta = CAT_PLAIN[key];
+    html += '<div class="card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+        '<h2 style="margin:0;color:var(--speed)">' + meta.tag + '</h2>' +
+        (r ? '<span class="small dim">this bet type has hit <b style="color:var(--tx)">' + r.pct + '%</b> of the time (' + r.hit + '/' + r.n + ')</span>' : '') + '</div>' +
+      '<div class="small dim" style="margin:2px 0 6px">Bet = the driver ' + meta.what + '.</div>';
+    const cap = key === 'h2h' && !state.h2hExpanded ? 10 : arr.length;
     html += arr.slice(0, cap).map(function(b){
       return '<div class="drow"><span class="grow">' + b.txt + '</span><span class="pct lock">' + Math.round(b.conf) + '%</span></div>';
     }).join('');
-    if (cat === 'H2H' && arr.length > 10 && !state.h2hExpanded){
-      html += '<button class="btn ghost" id="h2hMore" style="width:100%;margin-top:7px">Show all ' + arr.length + ' head-to-heads</button>';
+    if (key === 'h2h' && arr.length > 10 && !state.h2hExpanded){
+      html += '<button class="btn ghost" id="h2hMore" style="width:100%;margin-top:7px">Show all ' + arr.length + ' matchups</button>';
     }
+    html += '</div>';
   }
-  html += '<div class="small dim" style="margin-top:10px">Only bets clearing the lock thresholds appear, strongest first. Each heading shows that bet type\u2019s real graded record.</div></div>';
-  el.innerHTML = catStripHtml() + html;
+  el.innerHTML = html;
   const hm = $id('h2hMore');
   if (hm) hm.addEventListener('click', function(){ state.h2hExpanded = true; renderBets(); });
 }
@@ -687,14 +726,14 @@ async function runCronGrade(){
       const tlocks = [];
       if (up){
         const P = up.proj, fav = P.favId && P.byId[P.favId];
-        if (fav && fav.pWin * 100 >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: 'Race winner — ' + fav.name, metric: Math.round(fav.pWin * 100) });
+        if (fav && fav.pWin * 100 >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: fav.name + ' wins the race', metric: Math.round(fav.pWin * 100) });
         for (const id in P.byId){
           const d = P.byId[id];
-          if (d.pTop5 * 100 >= lockTh('top5')) tlocks.push({ cat: 'top5', desc: d.name + ' — top 5', metric: Math.round(d.pTop5 * 100) });
-          if (d.pTop10 * 100 >= lockTh('top10')) tlocks.push({ cat: 'top10', desc: d.name + ' — top 10', metric: Math.round(d.pTop10 * 100) });
-          if (d.pTop15 * 100 >= lockTh('top15')) tlocks.push({ cat: 'top15', desc: d.name + ' — top 15', metric: Math.round(d.pTop15 * 100) });
+          if (d.pTop5 * 100 >= lockTh('top5')) tlocks.push({ cat: 'top5', desc: d.name + ' finishes 5th or better', metric: Math.round(d.pTop5 * 100) });
+          if (d.pTop10 * 100 >= lockTh('top10')) tlocks.push({ cat: 'top10', desc: d.name + ' finishes 10th or better', metric: Math.round(d.pTop10 * 100) });
+          if (d.pTop15 * 100 >= lockTh('top15')) tlocks.push({ cat: 'top15', desc: d.name + ' finishes 15th or better', metric: Math.round(d.pTop15 * 100) });
         }
-        for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) tlocks.push({ cat: 'h2h', desc: m.aName + ' beats ' + m.bName, metric: Math.round(m.p * 100) }); }
+        for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) tlocks.push({ cat: 'h2h', desc: m.aName + ' finishes ahead of ' + m.bName, metric: Math.round(m.p * 100) }); }
       }
       await fbWrite(FB_NS, 'today', { date: todayPT(), locks: tlocks });
       clog('published ' + tlocks.length + ' lock(s) to nascar/today');
