@@ -285,6 +285,15 @@ const PIN='2325';
 const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kbLock:0.75,bbbLock:0.45,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gtEdge:0.6,gkEdge:1.5,hrlEdge:0.4};
 // P(1+) from an expected count (Poisson) — lets batter K/BB grade like hits, no DK line needed
 const p1of=r=>r&&r.prob!=null?r.prob:(r&&r.exp!=null?1-Math.exp(-r.exp):null);window.p1of=p1of;
+/* Flat 1-unit profit at an American price: -130 win pays +0.769u, +120 pays
+   +1.2u, any loss is -1u. Units are only tracked where a REAL book price is
+   stored (or the standard -110 juice on O/U line bets) — never invented. */
+function unitsWon(price,won){
+  if(!won)return -1;
+  const p=+price;
+  if(!isFinite(p)||p===0)return 100/110;
+  return p>0?p/100:100/(-p);
+}
 try{
   const c=JSON.parse(localStorage.getItem('fablehits_cfg')||'null');
   if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
@@ -1523,7 +1532,7 @@ async function loadDay(){
         const tdk=propFor(j.name,'batter_total_bases');
         MK.tb.push({id:j.pid,name:j.name,team:j.team,opp:j.opp,
           pit:j.oppPitName||'TBD',verified:j.verified,exp:Math.round(tbm.exp*100)/100,
-          line:tdk?.line??null,lean:leanFor(tbm.exp,tdk?.line,CONFIG.tbEdge??0.45),
+          line:tdk?.line??null,pOver:tdk?.over??null,pUnder:tdk?.under??null,lean:leanFor(tbm.exp,tdk?.line,CONFIG.tbEdge??0.45),
           edge:tdk?.line!=null?tbm.exp-tdk.line:null,reasons:tbm.reasons,
           math:'~'+s.ab.toFixed(1)+' AB \u00d7 '+tbm.slgAdj.toFixed(3)+' adj SLG \u00d7 pitcher \u00d7'+s.pitMult.toFixed(2)+' \u00d7 park'});
       }
@@ -1551,7 +1560,7 @@ async function loadDay(){
         const dk=propFor(pit.name,mkt);
         MK[mk].push({id:pj.pid,name:pit.name||('#'+pj.pid),team:pj.team,opp:pj.opp,
           pit:'',verified:pj.verified,exp:pl.exp,
-          line:dk?.line??null,lean:leanFor(pl.exp,dk?.line,th),
+          line:dk?.line??null,pOver:dk?.over??null,pUnder:dk?.under??null,lean:leanFor(pl.exp,dk?.line,th),
           edge:dk?.line!=null?pl.exp-dk.line:null,reasons:pl.reasons,
           math:'~'+pl.bfEst.toFixed(0)+' batters \u00d7 '+(pl.rate*100).toFixed(1)+'% \u00d7 lineup \u00d7'+pl.oMult.toFixed(2)});
       });
@@ -1574,8 +1583,10 @@ async function loadDay(){
       // DK join by full team names
       const od=GAMEODDS.find(o=>o.home_team===gj.hName&&o.away_team===gj.aName);
       let mlEdge=null,mlLean=null,totLine=null,totLean=null;
+      let mlPrice=null;
       if(od?.ml){
-        const imp=amerProb(pickHome?od.ml.home:od.ml.away);
+        mlPrice=pickHome?od.ml.home:od.ml.away;
+        const imp=amerProb(mlPrice);
         if(imp!=null){mlEdge=modelPickProb-imp;mlLean=mlEdge>=0.04?'VALUE':'—';}
       }
       if(od?.total?.point!=null){
@@ -1587,7 +1598,7 @@ async function loadDay(){
         pick:pickHome?gj.hAb:gj.aAb,hwp:Math.round(g.hWP*1000)/1000,
         conf:Math.round(modelPickProb*1000)/1000,
         eA:Math.round(g.eA*10)/10,eH:Math.round(g.eH*10)/10,total:g.total,
-        mlEdge:mlEdge!=null?Math.round(mlEdge*1000)/1000:null,mlLean,
+        mlEdge:mlEdge!=null?Math.round(mlEdge*1000)/1000:null,mlLean,mlPrice,
         totLine,totLean,verified:gj.verified,reasons:g.reasons,math:g.math});
       // GAME TOTALS — full model total vs the REAL DraftKings run line
       if(totLine!=null){
@@ -1740,7 +1751,9 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
     if(!g||g.hs==null||g.as==null||g.hs===g.as)return;
     const homeWon=g.hs>g.as;
     const pickedHome=r.pick===r.team;
-    if(homeWon===pickedHome)t.gm.w++;else t.gm.l++;
+    const won=homeWon===pickedHome;
+    if(won)t.gm.w++;else t.gm.l++;
+    if(r.mlPrice!=null){t.gm.u=(t.gm.u||0)+unitsWon(r.mlPrice,won);t.gm.un=(t.gm.un||0)+1;}
   });
   (rows||[]).forEach(r=>{
     if(!r.verified||r.gradeFlag||r.prob==null||calGrade('hits',(r.prob||0)*100)<CONFIG.lock*100)return;
@@ -1769,8 +1782,15 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
       if(!r.verified||r.gradeFlag)return;
       const gr=lineGrade(r,MK_ACTUAL[m](res[r.id]||res[String(r.id)]));
       if(gr==='W')t[m].w++;else if(gr==='L')t[m].l++;else if(gr==='P')t[m].p++;
+      if(gr==='W'||gr==='L'){
+        const pr=r.lean==='OVER'?(r.pOver??null):(r.pUnder??null);
+        t[m].u=(t[m].u||0)+unitsWon(pr==null?-110:pr,gr==='W');
+        t[m].un=(t[m].un||0)+1;
+        if(pr==null)t[m].est=(t[m].est||0)+1;
+      }
     });
   });
+  for(const m in t){if(t[m].u!=null)t[m].u=Math.round(t[m].u*100)/100;}
   if(!quiet)toast(`Tallies ${dbgDate||''}: hits ${t.hits.h}/${t.hits.n} · lock thr ${Math.round(CONFIG.lock*100)}%`, t.hits.n?null:'warn');
   return t;
 }
@@ -2313,6 +2333,7 @@ function renderBetsView(){
       <span>ranked by real success rate</span>
       <span>tap a <b style="color:var(--tx)">name</b> — why</span>
       <span>tap a <b style="color:var(--tx)">card</b> — bet line</span>
+      <span><b style="color:var(--gn,#39d98a)">+u</b> = real profit, flat 1-unit bets at DK prices (std -110 only where no price was stored)</span>
     </div>
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="pbnav" data-n="-1" style="flex:1;background:var(--card2,#182231);border:1px solid var(--bdr);color:var(--tx);border-radius:9px;padding:7px 0;font-size:.66rem;font-weight:700;cursor:pointer">‹ prev day</button>
@@ -2349,7 +2370,7 @@ function renderBetsView(){
       <div class="pbhead" data-mk="${m}" style="cursor:pointer">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
           <div style="font-size:.72rem;font-weight:800;letter-spacing:.08em;color:var(--rd,#ff5d5d)">${meta.tag} <span style="color:var(--mt2);font-weight:600;font-size:.62rem">${open?'▴':'▾'}</span></div>
-          ${r?`<span style="font-size:.62rem;color:var(--mt)">this bet type has hit <b style="color:var(--tx)">${r.pct}%</b> of the time (${r.h}/${r.n})</span>`:''}
+          ${r?`<span style="font-size:.62rem;color:var(--mt)">this bet type has hit <b style="color:var(--tx)">${r.pct}%</b> of the time (${r.h}/${r.n})${r.un?` · <b style="color:${r.u>=0?'var(--gn,#39d98a)':'var(--cold,#ff7a7a)'}">${r.u>=0?'+':''}${r.u}u</b> over ${r.un} priced bets`:''}</span>`:''}
         </div>
         <div style="font-size:.64rem;color:var(--mt2);margin:2px 0 5px">Bet = ${meta.what} · bet line: ${lineWord}</div>
       </div>`;
@@ -2402,7 +2423,7 @@ async function pbRecalcAll(force){
     const snap=await withTO(FBH.db.collection('fable_hits').get(),45000);
     const today=todayStr(),cutoff=addDays(today,-14);
     const cats={},cats14={};
-    const addTo=(tgt,m,o)=>{const g=tgt[m]||(tgt[m]={h:0,n:0});if(o.h!=null){g.h+=o.h;g.n+=o.n;}else{g.h+=o.w||0;g.n+=(o.w||0)+(o.l||0);}};
+    const addTo=(tgt,m,o)=>{const g=tgt[m]||(tgt[m]={h:0,n:0});if(o.h!=null){g.h+=o.h;g.n+=o.n;}else{g.h+=o.w||0;g.n+=(o.w||0)+(o.l||0);}if(o.u!=null){g.u=Math.round(((g.u||0)+o.u)*100)/100;g.un=(g.un||0)+(o.un||0);g.est=(g.est||0)+(o.est||0);}};
     snap.forEach(doc=>{
       const d=doc.id;
       if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||d>=today)return;
@@ -2424,14 +2445,15 @@ async function pbRecalcAll(force){
 // on every bet-type tab so the success rate is never more than a glance away.
 function mkAllTime(m){
   const at=window.__AT;
-  if(at&&at.cats&&at.cats[m]&&at.cats[m].n){const o=at.cats[m];return{h:o.h,n:o.n,pct:Math.round(100*o.h/o.n)};}
-  const s=statsCache();const days=s?.daysMap||{};let h=0,n=0;
+  if(at&&at.cats&&at.cats[m]&&at.cats[m].n){const o=at.cats[m];return{h:o.h,n:o.n,pct:Math.round(100*o.h/o.n),u:o.u,un:o.un,est:o.est};}
+  const s=statsCache();const days=s?.daysMap||{};let h=0,n=0,u=0,un=0,est=0;
   Object.keys(days).forEach(d=>{
     const o=days[d]?.[m];if(!o)return;
     if(o.h!=null&&o.n!=null){h+=o.h;n+=o.n;}
     else if(o.w!=null){h+=o.w;n+=o.w+(o.l||0);}
+    if(o.u!=null){u+=o.u;un+=o.un||0;est+=o.est||0;}
   });
-  return n?{h,n,pct:Math.round(100*h/n)}:null;
+  return n?{h,n,pct:Math.round(100*h/n),u:un?Math.round(u*100)/100:null,un,est}:null;
 }
 function rateChip(m){
   const r=mkAllTime(m);
