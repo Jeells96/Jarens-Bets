@@ -129,7 +129,7 @@ async function pullLabCfg(){
 }
 const state = {
   tab: 'bets', projections: {}, nextRace: null,
-  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false, betsOpen: {}, whyOpen: null, betsDate: null
+  seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false, betsOpen: {}, whyOpen: null, betsDate: null, mybOpen: false
 };
 
 /* ═══ SECTION: STORE (localStorage + Firestore mirror) ═══ */
@@ -726,19 +726,54 @@ function projectPastRace(dateStr){
   (race.drivers || []).forEach(d => { finish[d.id] = d.finish; });
   return { proj, rows, trackType: tt, prior: prior.length, race, finish };
 }
-function betsResultMark(up, key, aId, bId){
-  if (!up || !up.finish) return '';
+function betsResultOk(up, key, aId, bId){
+  if (!up || !up.finish) return null;
   const f = up.finish[aId];
-  if (f == null) return '';
-  let ok = null;
-  if (key === 'winner') ok = f === 1;
-  else if (key === 'top5') ok = f <= 5;
-  else if (key === 'top10') ok = f <= 10;
-  else if (key === 'top15') ok = f <= 15;
-  else if (key === 'h2h'){ const fb = up.finish[bId]; if (fb == null) return ''; ok = f < fb; }
+  if (f == null) return null;
+  if (key === 'winner') return f === 1;
+  if (key === 'top5') return f <= 5;
+  if (key === 'top10') return f <= 10;
+  if (key === 'top15') return f <= 15;
+  if (key === 'h2h'){ const fb = up.finish[bId]; if (fb == null) return null; return f < fb; }
+  return null;
+}
+function betsResultMark(up, key, aId, bId){
+  const ok = betsResultOk(up, key, aId, bId);
   if (ok == null) return '';
   return ok ? ' <span style="color:var(--green,#39d98a);font-weight:800">✓</span>' : ' <span style="color:#ff5d73;font-weight:800">✗</span>';
 }
+/* ═══ MY BETS — personal slip (device-local; grades sync from the same ✓/✗
+   the Bets page already computes for past races). ═══ */
+const MYB_KEY = 'nascar_mybets_v1';
+function mybAll(){ try { return JSON.parse(localStorage.getItem(MYB_KEY) || '[]'); } catch (e){ return []; } }
+function mybSave(a){ try { localStorage.setItem(MYB_KEY, JSON.stringify(a.slice(-400))); } catch (e) {} }
+function mybHas(key){ return mybAll().some(b => b.key === key); }
+function mybToggle(key, desc, d){ const a = mybAll(); const i = a.findIndex(b => b.key === key); if (i >= 0) a.splice(i, 1); else a.push({ key, desc, d, g: null }); mybSave(a); }
+function mybDel(key){ mybSave(mybAll().filter(b => b.key !== key)); }
+function mybGrade(key, ok){ if (ok !== true && ok !== false) return; const a = mybAll(); const b = a.find(x => x.key === key); if (b && b.g == null){ b.g = ok ? 1 : 0; mybSave(a); } }
+function mybBtn(key, desc, d){
+  const on = mybHas(key);
+  return '<span class="mybbtn" data-key="' + key + '" data-desc="' + esc(desc) + '" data-d="' + d + '" title="track in My Bets" style="cursor:pointer;min-width:16px;text-align:center;font-weight:800;color:' + (on ? 'var(--green,#39d98a)' : 'var(--mt2)') + '">' + (on ? '✓' : '+') + '</span>';
+}
+function mybStripHtml(){
+  const a = mybAll();
+  if (!a.length) return '';
+  const g = a.filter(b => b.g === 0 || b.g === 1), w = g.filter(b => b.g === 1).length;
+  let h = '<div class="card"><div class="mybhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+    '<span style="font-size:12px;font-weight:800;letter-spacing:.08em">MY BETS <span style="color:var(--mt2);font-weight:600;font-size:11px">' + (state.mybOpen ? '▴' : '▾') + '</span></span>' +
+    '<span class="small dim">' + a.length + ' tracked' + (g.length ? ' · your record <b style="color:var(--tx)">' + Math.round(100 * w / g.length) + '%</b> (' + w + '/' + g.length + ')' : '') + '</span></div>';
+  if (state.mybOpen){
+    h += a.slice().reverse().map(b => '<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--hair2);padding:5px 0;font-size:12px">' +
+      '<span style="min-width:14px;text-align:center">' + (b.g == null ? '<span class="dim">—</span>' : b.g ? '<span style="color:var(--green,#39d98a);font-weight:800">✓</span>' : '<span style="color:#ff5d73;font-weight:800">✗</span>') + '</span>' +
+      '<span style="flex:1;min-width:0" class="dim">' + b.desc + '</span>' +
+      '<span class="dim" style="font-size:10.5px;white-space:nowrap">' + b.d + '</span>' +
+      '<span class="mybdel" data-key="' + b.key + '" style="cursor:pointer;color:var(--mt2);padding:0 2px">✕</span></div>').join('');
+    h += '<div class="small dim" style="padding-top:5px">Grades fill in automatically when you view that race\u2019s result (— = not run yet).</div>';
+  }
+  h += '</div>';
+  return h;
+}
+function mybRaceDate(){ return state.betsDate || (state.nextRace && state.nextRace.date) || todayPT(); }
 function renderBets(){
   const el = $id('tab-bets');
   const up = state.betsDate ? projectPastRace(state.betsDate) : projectUpcoming();
@@ -792,7 +827,7 @@ function renderBets(){
       '<button class="betsnav" data-n="-1" style="' + navBtn + '">‹ prev race</button>' +
       (past ? '<button class="betsnav" data-n="0" style="' + navBtn + ';border-color:rgba(255,77,79,.5);color:var(--speed);font-weight:800">this week</button>' : '') +
       '<button class="betsnav" data-n="1" style="' + navBtn + (past ? '' : ';opacity:.4') + '">next race ›</button>' +
-    '</div></div>';
+    '</div></div><!--MYB-->';
   for (const key of order){
     const arr = byKey[key] || [];
     const r = catRate(key);
@@ -812,7 +847,9 @@ function renderBets(){
         const capN = key === 'h2h' ? 10 : arr.length;
         html += arr.slice(0, capN).map(function(b){
           const tok = whyToken(key, b.aId, b.bId);
-          return '<div class="drow"><span class="grow">' + b.txt + betsResultMark(up, key, b.aId, b.bId) + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>' +
+          const mkey = mybRaceDate() + '|' + key + '|' + b.aId + '|' + (b.bId || '');
+          if (past) mybGrade(mkey, betsResultOk(up, key, b.aId, b.bId));
+          return '<div class="drow">' + mybBtn(mkey, String(b.txt).replace(/<[^>]*>/g, '') + ' (' + CAT_PLAIN[key].tag + ')', mybRaceDate()) + '<span class="grow">' + b.txt + betsResultMark(up, key, b.aId, b.bId) + '</span><span class="pct lock">' + Math.round(b.conf) + '</span></div>' +
             (state.whyOpen === tok ? whyHtml(up, key, b.aId, b.bId) : '');
         }).join('');
         if (arr.length > capN) html += '<div class="small dim" style="padding:4px 0 0">+' + (arr.length - capN) + ' more — tap the card to see them all.</div>';
@@ -832,7 +869,9 @@ function renderBets(){
             '<span style="font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--speed);white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span>' +
             '<div style="flex:1;border-top:2px dashed var(--speed)"></div></div>';
         }
-        return pre + '<div class="drow"><span class="grow"' + (isBet ? '' : ' style="color:var(--mt2)"') + '>' + x.txt + betsResultMark(up, key, x.aId, x.bId) + '</span>' +
+        const mkey = mybRaceDate() + '|' + key + '|' + x.aId + '|' + (x.bId || '');
+        if (past) mybGrade(mkey, betsResultOk(up, key, x.aId, x.bId));
+        return pre + '<div class="drow">' + mybBtn(mkey, String(x.txt).replace(/<[^>]*>/g, '') + ' (' + CAT_PLAIN[key].tag + ')', mybRaceDate()) + '<span class="grow"' + (isBet ? '' : ' style="color:var(--mt2)"') + '>' + x.txt + betsResultMark(up, key, x.aId, x.bId) + '</span>' +
           '<span class="pct ' + (isBet ? 'lock' : 'dim') + '">' + Math.round(x.conf) + '</span></div>' +
           (state.whyOpen === x.tok ? whyHtml(up, key, x.aId, x.bId) : '');
       }).join('');
@@ -840,7 +879,11 @@ function renderBets(){
     }
     html += '</div>';
   }
-  el.innerHTML = html;
+  el.innerHTML = html.replace('<!--MYB-->', mybStripHtml());
+  el.querySelectorAll('.mybbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybToggle(b.getAttribute('data-key'), b.getAttribute('data-desc'), b.getAttribute('data-d')); renderBets(); }); });
+  const mh = el.querySelector('.mybhead');
+  if (mh) mh.addEventListener('click', function(){ state.mybOpen = !state.mybOpen; renderBets(); });
+  el.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); renderBets(); }); });
   el.querySelectorAll('.betsnav').forEach(function(b){ b.addEventListener('click', function(){ betsShiftRace(parseInt(b.getAttribute('data-n'), 10)); }); });
   el.querySelectorAll('.betshead').forEach(function(h){
     h.addEventListener('click', function(){

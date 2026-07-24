@@ -2212,7 +2212,49 @@ function curRows(){return MARKET==='hits'?ROWS:(MK[MARKET]||[]);}
    REAL all-time success rate. Collapsed card = the qualifying locks (the bet
    slip). Tap a card = every candidate with a hard BET LINE divider. Tap a
    NAME = why that pick has its grade. Red numbers are confidence grades. */
-const PB={open:{},why:null,date:null,cache:{}}; // date null = live today
+const PB={open:{},why:null,date:null,cache:{},mybOpen:false}; // date null = live today
+/* ═══ MY BETS — personal slip ════════════════════════════════════════════════
+   Tap + on any pick to track it. Grades fill in from the same ✓/✗ the Bets
+   page already computes when you view that day — no extra fetching, and your
+   personal record builds itself. Device-local (localStorage). */
+const MYB_KEY='fablehits_mybets_v1';
+const mybEsc=x=>String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function mybAll(){try{return JSON.parse(localStorage.getItem(MYB_KEY)||'[]');}catch(e){return [];}}
+function mybSave(a){try{localStorage.setItem(MYB_KEY,JSON.stringify(a.slice(-400)));}catch(e){}}
+function mybHas(key){return mybAll().some(b=>b.key===key);}
+function mybToggle(key,desc,d){const a=mybAll();const i=a.findIndex(b=>b.key===key);if(i>=0)a.splice(i,1);else a.push({key,desc,d,g:null});mybSave(a);}
+function mybDel(key){mybSave(mybAll().filter(b=>b.key!==key));}
+function mybGrade(key,ok){if(ok!==true&&ok!==false)return;const a=mybAll();const b=a.find(x=>x.key===key);if(b&&b.g==null){b.g=ok?1:0;mybSave(a);}}
+function mybBtn(key,desc,d){
+  const on=mybHas(key);
+  return `<span class="mybbtn" data-key="${key}" data-desc="${mybEsc(desc)}" data-d="${d}" title="track in My Bets" style="cursor:pointer;min-width:16px;text-align:center;font-weight:800;font-size:.8rem;color:${on?'var(--gn,#39d98a)':'var(--mt2)'}">${on?'✓':'+'}</span>`;
+}
+function mybStripHtml(){
+  const a=mybAll();
+  if(!a.length)return '';
+  const g=a.filter(b=>b.g===0||b.g===1),w=g.filter(b=>b.g===1).length;
+  let h=`<div style="background:var(--card,#141a24);border:1px solid var(--bdr);border-radius:13px;padding:10px 13px;margin:0 12px 11px">
+    <div class="mybhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <span style="font-size:.7rem;font-weight:800;letter-spacing:.08em;color:var(--tx)">MY BETS <span style="color:var(--mt2);font-weight:600;font-size:.62rem">${PB.mybOpen?'▴':'▾'}</span></span>
+      <span style="font-size:.62rem;color:var(--mt)">${a.length} tracked${g.length?` · your record <b style="color:var(--tx)">${Math.round(100*w/g.length)}%</b> (${w}/${g.length})`:''}</span>
+    </div>`;
+  if(PB.mybOpen){
+    h+=a.slice().reverse().map(b=>`<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--bdr);padding:5px 0;font-size:.68rem">
+      <span style="min-width:14px;text-align:center">${b.g==null?'<span style="color:var(--mt2)">—</span>':b.g?'<span style="color:var(--gn,#39d98a);font-weight:800">✓</span>':'<span style="color:var(--cold,#ff7a7a);font-weight:800">✗</span>'}</span>
+      <span style="flex:1;min-width:0;color:var(--mt)">${b.desc}</span>
+      <span style="color:var(--mt2);font-size:.58rem;white-space:nowrap">${b.d}</span>
+      <span class="mybdel" data-key="${b.key}" style="cursor:pointer;color:var(--mt2);padding:0 2px">✕</span></div>`).join('');
+    h+=`<div style="font-size:.56rem;color:var(--mt2);padding-top:5px">Grades fill in automatically when you view that day (— = not graded yet).</div>`;
+  }
+  h+='</div>';
+  return h;
+}
+function wireMyb(el){
+  el.querySelectorAll('.mybbtn').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();mybToggle(b.getAttribute('data-key'),b.getAttribute('data-desc'),b.getAttribute('data-d'));renderBetsView();}));
+  const h=el.querySelector('.mybhead');
+  if(h)h.addEventListener('click',()=>{PB.mybOpen=!PB.mybOpen;renderBetsView();});
+  el.querySelectorAll('.mybdel').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();mybDel(b.getAttribute('data-key'));renderBetsView();}));
+}
 function pbDate(){return PB.date||todayStr();}
 function pbShiftDay(n){
   const d=n===0?todayStr():addDays(pbDate(),n);
@@ -2232,8 +2274,8 @@ function pbData(){
   if(c===false)return {none:true};
   return {rows:c.rows||[],mk:c.mk||{},res:c.results||null,live:false};
 }
-function pbMark(m,row,res){
-  if(!res)return '';
+function pbMarkOk(m,row,res){
+  if(!res)return null;
   const meta=PB_META[m],r=row.r||{};
   let ok=null;
   if(meta.kind==='prob'){const o=res[r.id]||res[String(r.id)];if(playedBat(o))ok=((o[meta.stat]||0)>=1);}
@@ -2242,8 +2284,14 @@ function pbMark(m,row,res){
     const act=MK_ACTUAL[m]?MK_ACTUAL[m](res[r.id]||res[String(r.id)]):null;
     const g=lineGrade({...r,lean:row.lean},act);
     if(g==='W')ok=true;else if(g==='L')ok=false;
-    else if(g==='P')return '<span style="color:var(--mt2);font-weight:800">P</span>';
+    else if(g==='P')return 'P';
   }
+  return ok;
+}
+function pbMark(m,row,res){
+  if(!res)return '';
+  const ok=pbMarkOk(m,row,res);
+  if(ok==='P')return '<span style="color:var(--mt2);font-weight:800">P</span>';
   if(ok==null)return '<span style="color:var(--mt2)">—</span>';
   return ok?'<span style="color:var(--gn,#39d98a);font-weight:800">✓</span>':'<span style="color:var(--cold,#ff7a7a);font-weight:800">✗</span>';
 }
@@ -2304,13 +2352,17 @@ function pbWhyHtml(m,row){
   return `<div style="padding:8px 10px;background:var(--card2,#182231);border:1px solid var(--bdr);border-radius:9px;margin:3px 0 7px;font-size:.68rem;color:var(--mt);line-height:1.5">${bits.join('')}</div>`;
 }
 function pbName(name,tok){return `<b class="pbname" data-tok="${tok}" style="cursor:pointer;border-bottom:1px dotted var(--mt2)">${name}</b>`;}
-function pbRowHtml(m,row,grey,res){
+function pbRowHtml(m,row,grey,res,dShown){
   const tok=m+'|'+row.id;
   const meta=PB_META[m];
+  const key=(dShown||todayStr())+'|'+tok;
+  const plainDesc=(row.txt?row.name+' · '+row.txt.replace(/<[^>]*>/g,''):row.name+' — '+meta.tag+(meta.kind==='edge'?' '+(row.lean||'')+' '+(row.r.line??''):''));
+  if(res)mybGrade(key,pbMarkOk(m,row,res)===true?true:pbMarkOk(m,row,res)===false?false:null);
   const warn=row.w?' <span style="color:var(--warm,#ffb454);font-size:.6rem;font-weight:700;white-space:nowrap">○ lineup not confirmed</span>':'';
   const label=row.txt||(pbName(row.name,tok)+(meta.kind==='edge'?' — <b>'+row.lean+'</b> '+(row.r.line??'')+'':'')+` <span style="color:var(--mt2);font-size:.62rem">${row.sub||''}</span>`+warn);
   const mark=(typeof todayMark==='function'&&meta.kind!=='edge')?'':'';
   return `<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid var(--bdr);font-size:.74rem">
+      ${mybBtn(key,plainDesc,dShown||todayStr())}
       <span style="flex:1;min-width:0;${grey?'color:var(--mt2)':''}">${row.txt?pbName(row.name,tok)+' · '+row.txt+(row.w?' <span style="color:var(--warm,#ffb454);font-size:.6rem;font-weight:700;white-space:nowrap">○ lineup not confirmed</span>':''):label}</span>
       ${res?`<span style="min-width:14px;text-align:center">${pbMark(m,row,res)}</span>`:''}
       <span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:.74rem;color:${grey?'var(--mt2)':'var(--rd,#ff5d5d)'}">${row.grade}${PB_META[m].kind==='edge'?'':''}</span>
@@ -2352,6 +2404,7 @@ function renderBetsView(){
     html+=`<div class="empty"><b>Building today’s bet slip…</b>The board loads itself in the background — this fills in the moment it’s ready. The Today tab shows the full detail view.</div>`;
     el.innerHTML=html;wirePbNav(el);return;
   }
+  html+='<!--MYB-->';
   const anyUnconf=Object.keys(PB_META).some(m=>pbRows(m,Dt).some(x=>x.w));
   if(anyUnconf){
     html+=`<div style="margin:0 12px 11px;padding:10px 12px;border:1px solid rgba(255,180,84,.5);border-radius:11px;background:rgba(255,180,84,.08);color:var(--warm,#ffb454);font-size:.66rem;line-height:1.55"><b>⚠ Some lineups aren’t confirmed yet.</b> Picks marked “○ lineup not confirmed” are projected from each team’s most recent lineup — <b>recommended to wait until the lineup is confirmed before placing those bets</b>. The board re-checks for confirmations every hour and locks picks in as they confirm.</div>`;
@@ -2375,7 +2428,7 @@ function renderBetsView(){
         <div style="font-size:.64rem;color:var(--mt2);margin:2px 0 5px">Bet = ${meta.what} · bet line: ${lineWord}</div>
       </div>`;
     if(!open){
-      if(locks.length){html+=locks.map(x=>pbRowHtml(m,x,false,Dt.res)).join('');}
+      if(locks.length){html+=locks.map(x=>pbRowHtml(m,x,false,Dt.res,dShown)).join('');}
       else html+=`<div style="font-size:.66rem;color:var(--mt2);padding:3px 0">No picks clear the bet line today — tap to see every candidate.</div>`;
     }else{
       let lineDrawn=false;
@@ -2384,14 +2437,15 @@ function renderBetsView(){
         let pre='';
         if(!q&&!lineDrawn){lineDrawn=true;
           pre=`<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed var(--rd,#ff5d5d)"></div><span style="font-size:.56rem;font-weight:800;letter-spacing:.08em;color:var(--rd,#ff5d5d);white-space:nowrap">BET LINE · ${th}${meta.kind==='edge'?' edge':''} — bet above, skip below</span><div style="flex:1;border-top:2px dashed var(--rd,#ff5d5d)"></div></div>`;}
-        return pre+pbRowHtml(m,x,!q,Dt.res);
+        return pre+pbRowHtml(m,x,!q,Dt.res,dShown);
       }).join('');
       if(!lineDrawn)html+=`<div style="font-size:.64rem;color:var(--mt2);padding:3px 0 0">Everyone shown clears the bet line.</div>`;
     }
     html+=`</div>`;
   }
-  el.innerHTML=html;
+  el.innerHTML=html.replace('<!--MYB-->',mybStripHtml());
   wirePbNav(el);
+  wireMyb(el);
   el.querySelectorAll('.pbhead').forEach(h=>h.addEventListener('click',()=>{const m=h.getAttribute('data-mk');PB.open[m]=!PB.open[m];renderBetsView();}));
   el.querySelectorAll('.pbname').forEach(nm=>nm.addEventListener('click',e=>{e.stopPropagation();const tok=nm.getAttribute('data-tok');PB.why=PB.why===tok?null:tok;renderBetsView();}));
 }

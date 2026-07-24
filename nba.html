@@ -2361,7 +2361,39 @@ function renderGameDetail(id, summary){
    success rate (the cron re-grades those records at the current thresholds).
    Collapsed card = qualifying locks; tap a card = every candidate with a hard
    BET LINE divider. Tap a NAME = why. Red numbers are confidence grades. */
-const NB = { open: {}, why: null, loading: false, tried: {} };
+const NB = { open: {}, why: null, loading: false, tried: {}, mybOpen: false };
+/* ═══ MY BETS — personal slip (device-local; grades sync from the same marks
+   the Bets page already computes). ═══ */
+const MYB_KEY = 'nba_mybets_v1';
+function mybAll(){ try { return JSON.parse(localStorage.getItem(MYB_KEY) || '[]'); } catch (e){ return []; } }
+function mybSave(a){ try { localStorage.setItem(MYB_KEY, JSON.stringify(a.slice(-400))); } catch (e) {} }
+function mybHas(key){ return mybAll().some(b => b.key === key); }
+function mybToggle(key, desc, d){ const a = mybAll(); const i = a.findIndex(b => b.key === key); if (i >= 0) a.splice(i, 1); else a.push({ key, desc, d, g: null }); mybSave(a); }
+function mybDel(key){ mybSave(mybAll().filter(b => b.key !== key)); }
+function mybGrade(key, ok){ if (ok !== true && ok !== false) return; const a = mybAll(); const b = a.find(x => x.key === key); if (b && b.g == null){ b.g = ok ? 1 : 0; mybSave(a); } }
+function mybBtn(key, desc, d){
+  const on = mybHas(key);
+  return '<span class="mybbtn" data-key="' + key + '" data-desc="' + esc(desc) + '" data-d="' + d + '" title="track in My Bets" style="cursor:pointer;min-width:16px;text-align:center;font-weight:800;color:' + (on ? 'var(--green,#39d98a)' : 'rgba(255,255,255,.35)') + '">' + (on ? '✓' : '+') + '</span>';
+}
+function mybStripHtml(){
+  const a = mybAll();
+  if (!a.length) return '';
+  const g = a.filter(b => b.g === 0 || b.g === 1), w = g.filter(b => b.g === 1).length;
+  let h = '<div class="card" style="margin-bottom:11px"><div class="mybhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+    '<span style="font-size:.74rem;font-weight:800;letter-spacing:.08em">MY BETS <span style="opacity:.5;font-weight:600;font-size:.64rem">' + (NB.mybOpen ? '▴' : '▾') + '</span></span>' +
+    '<span class="small" style="opacity:.7">' + a.length + ' tracked' + (g.length ? ' · your record <b>' + Math.round(100 * w / g.length) + '%</b> (' + w + '/' + g.length + ')' : '') + '</span></div>';
+  if (NB.mybOpen){
+    h += a.slice().reverse().map(b => '<div style="display:flex;gap:8px;align-items:center;border-top:1px solid rgba(255,255,255,.08);padding:5px 0;font-size:.72rem">' +
+      '<span style="min-width:14px;text-align:center">' + (b.g == null ? '<span style="opacity:.4">—</span>' : b.g ? '<span style="color:var(--green,#39d98a);font-weight:800">✓</span>' : '<span style="color:#ff5d73;font-weight:800">✗</span>') + '</span>' +
+      '<span style="flex:1;min-width:0;opacity:.75">' + b.desc + '</span>' +
+      '<span style="opacity:.45;font-size:.6rem;white-space:nowrap">' + b.d + '</span>' +
+      '<span class="mybdel" data-key="' + b.key + '" style="cursor:pointer;opacity:.5;padding:0 2px">✕</span></div>').join('');
+    h += '<div class="small" style="opacity:.5;padding-top:5px">Grades fill in automatically when that slate is graded (— = not final yet).</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
 const NB_META = {
   winner:    { tag: 'WINNER',           what: 'our pick wins the game', th: 'winner', mkt: 'winner' },
   total:     { tag: 'GAME TOTAL',       what: 'the combined score lands within the tolerance of our number', th: 'lines', mkt: 'total' },
@@ -2450,7 +2482,10 @@ function nbRows(k){
   return rows;
 }
 function nbRowHtml(row, grey){
-  return '<div class="row small" style="padding:6px 0;border-top:1px solid rgba(255,255,255,.06)"><div class="grow"' + (grey ? ' style="color:var(--muted)"' : '') + '>' + row.html + (row.sub ? ' <span class="muted" style="font-size:.85em">' + esc(row.sub) + '</span>' : '') + '</div>' +
+  const mkey = state.slateDate + '|' + row.tok;
+  const ok = /rate-good/.test(row.html) ? true : /rate-bad/.test(row.html) ? false : null;
+  if (ok != null) mybGrade(mkey, ok);
+  return '<div class="row small" style="padding:6px 0;border-top:1px solid rgba(255,255,255,.06)">' + mybBtn(mkey, String(row.html).replace(/<[^>]*>/g, ''), state.slateDate) + '<div class="grow"' + (grey ? ' style="color:var(--muted)"' : '') + '>' + row.html + (row.sub ? ' <span class="muted" style="font-size:.85em">' + esc(row.sub) + '</span>' : '') + '</div>' +
     '<div style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'var(--muted)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</div></div>' +
     (NB.why === row.tok ? '<div class="small" style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;color:var(--muted);line-height:1.5">' + row.why + '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
 }
@@ -2493,8 +2528,13 @@ function renderBets(){
       '<button class="nbnav" data-n="-1" style="' + btn + '">‹ prev day</button>' +
       (ds !== today ? '<button class="nbnav" data-n="0" style="' + btn + ';border-color:rgba(255,93,93,.5);color:#ff5d5d;font-weight:800">today</button>' : '') +
       '<button class="nbnav" data-n="1" style="' + btn + '">next day ›</button>' +
-    '</div></div>';
+    '</div></div><!--MYB-->';
   const wire = function(){
+    el.querySelectorAll('.mybbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybToggle(b.getAttribute('data-key'), b.getAttribute('data-desc'), b.getAttribute('data-d')); renderBets(); }); });
+    const mh = el.querySelector('.mybhead');
+    if (mh) mh.addEventListener('click', function(){ NB.mybOpen = !NB.mybOpen; renderBets(); });
+    el.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); renderBets(); }); });
+
     Array.prototype.forEach.call(el.querySelectorAll('.nbnav'), function(b){ b.addEventListener('click', function(){ nbShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
     Array.prototype.forEach.call(el.querySelectorAll('.nbhead'), function(h){ h.addEventListener('click', function(){ const k = h.getAttribute('data-k'); NB.open[k] = !NB.open[k]; renderBets(); }); });
     Array.prototype.forEach.call(el.querySelectorAll('.nbname'), function(nm){ nm.addEventListener('click', function(e){ e.stopPropagation(); const tok = nm.getAttribute('data-tok'); NB.why = NB.why === tok ? null : tok; renderBets(); }); });
@@ -2503,13 +2543,13 @@ function renderBets(){
   const notProjected = !notLoaded && state.slate.games.length && !state.slate.games.some(function(g){ return state.projections[g.id]; });
   if (notLoaded || notProjected){
     if (!NB.tried[ds]){ nbEnsure(); }
-    el.innerHTML = html + (NB.loading
+    el.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + (NB.loading
       ? '<div class="card muted small">Loading the slate and projections…</div>'
       : '<div class="card muted small">' + (notLoaded ? 'No slate loaded for this date — use the arrows above or Load Slate on Today.' : 'No projections for this date. The model needs built history — the grading autopilot fills it, or run Facts → Update.') + '</div>');
     wire(); return;
   }
   if (!state.slate.games.length){
-    el.innerHTML = html + '<div class="card muted small">No NBA games on this date.</div>';
+    el.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + '<div class="card muted small">No NBA games on this date.</div>';
     wire(); return;
   }
   const s = state.settings;
@@ -2555,7 +2595,7 @@ function renderBets(){
     html += '</div>';
   }
   if (!any) html += '<div class="card muted small">Projections ran but produced no bet candidates for this date.</div>';
-  el.innerHTML = html;
+  el.innerHTML = html.replace('<!--MYB-->', mybStripHtml());
   wire();
 }
 

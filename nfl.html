@@ -4983,7 +4983,39 @@ function gatherAllProps() {
    One card per bet type, ordered by its REAL all-time success rate. Collapsed
    card = qualifying locks; tap the card = every candidate with a hard BET
    LINE divider. Tap a NAME = why. Red numbers are confidence grades. */
-const GB = { open: {}, why: null };
+const GB = { open: {}, why: null, mybOpen: false };
+/* ═══ MY BETS — personal slip (device-local; grades sync from the same marks
+   the Bets page already computes). ═══ */
+const MYB_KEY = 'nfl_mybets_v1';
+function mybAll(){ try { return JSON.parse(localStorage.getItem(MYB_KEY) || '[]'); } catch (e){ return []; } }
+function mybSave(a){ try { localStorage.setItem(MYB_KEY, JSON.stringify(a.slice(-400))); } catch (e) {} }
+function mybHas(key){ return mybAll().some(b => b.key === key); }
+function mybToggle(key, desc, d){ const a = mybAll(); const i = a.findIndex(b => b.key === key); if (i >= 0) a.splice(i, 1); else a.push({ key, desc, d, g: null }); mybSave(a); }
+function mybDel(key){ mybSave(mybAll().filter(b => b.key !== key)); }
+function mybGrade(key, ok){ if (ok !== true && ok !== false) return; const a = mybAll(); const b = a.find(x => x.key === key); if (b && b.g == null){ b.g = ok ? 1 : 0; mybSave(a); } }
+function mybBtn(key, desc, d){
+  const on = mybHas(key);
+  return '<span class="mybbtn" data-key="' + key + '" data-desc="' + escapeHtml(desc) + '" data-d="' + d + '" title="track in My Bets" style="cursor:pointer;min-width:16px;text-align:center;font-weight:800;color:' + (on ? 'var(--green,#39d98a)' : 'rgba(255,255,255,.35)') + '">' + (on ? '✓' : '+') + '</span>';
+}
+function mybStripHtml(){
+  const a = mybAll();
+  if (!a.length) return '';
+  const g = a.filter(b => b.g === 0 || b.g === 1), w = g.filter(b => b.g === 1).length;
+  let h = '<div class="card" style="margin-bottom:11px"><div class="mybhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+    '<span style="font-size:.74rem;font-weight:800;letter-spacing:.08em">MY BETS <span style="opacity:.5;font-weight:600;font-size:.64rem">' + (GB.mybOpen ? '▴' : '▾') + '</span></span>' +
+    '<span class="small" style="opacity:.7">' + a.length + ' tracked' + (g.length ? ' · your record <b>' + Math.round(100 * w / g.length) + '%</b> (' + w + '/' + g.length + ')' : '') + '</span></div>';
+  if (GB.mybOpen){
+    h += a.slice().reverse().map(b => '<div style="display:flex;gap:8px;align-items:center;border-top:1px solid rgba(255,255,255,.08);padding:5px 0;font-size:.72rem">' +
+      '<span style="min-width:14px;text-align:center">' + (b.g == null ? '<span style="opacity:.4">—</span>' : b.g ? '<span style="color:var(--green,#39d98a);font-weight:800">✓</span>' : '<span style="color:#ff5d73;font-weight:800">✗</span>') + '</span>' +
+      '<span style="flex:1;min-width:0;opacity:.75">' + b.desc + '</span>' +
+      '<span style="opacity:.45;font-size:.6rem;white-space:nowrap">' + b.d + '</span>' +
+      '<span class="mybdel" data-key="' + b.key + '" style="cursor:pointer;opacity:.5;padding:0 2px">✕</span></div>').join('');
+    h += '<div class="small" style="opacity:.5;padding-top:5px">Grades fill in automatically when that slate is graded (— = not final yet).</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
 const GB_META = {
   winner:   { tag: 'WINNER',      what: 'our pick wins the game', th: 'winner', rateKeys: ['winner'] },
   total:    { tag: 'GAME TOTAL',  what: 'the combined score lands within the tolerance of our number', th: 'lines', rateKeys: ['total'] },
@@ -5078,7 +5110,10 @@ function gbRows(key) {
   return rows;
 }
 function gbRowHtml(row, grey) {
+  const mkey = state.season + '-W' + state.week + '|' + row.tok;
+  if (row.mark === true || row.mark === false) mybGrade(mkey, row.mark);
   return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.82rem">' +
+    mybBtn(mkey, String(row.html).replace(/<[^>]*>/g, '') + (row.sub ? ' (' + row.sub + ')' : ''), state.season + ' W' + state.week) +
     '<span style="flex:1;min-width:0;' + (grey ? 'color:rgba(255,255,255,.35)' : '') + '">' + row.html + (row.sub ? ' <span style="color:rgba(255,255,255,.35);font-size:.7rem">' + escapeHtml(row.sub) + '</span>' : '') + gbMark(row.mark) + '</span>' +
     '<span style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'rgba(255,255,255,.35)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</span></div>' +
     (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.74rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why + '</div>' : '');
@@ -5111,9 +5146,9 @@ function renderGameBets(main) {
       '<span>ranked by real success rate</span>' +
       '<span>tap a <b style="color:#fff">name</b> — why</span>' +
       '<span>tap a <b style="color:#fff">card</b> — bet line</span>' +
-    '</div>' + gbNavHtml() + '</div>';
+    '</div>' + gbNavHtml() + '</div><!--MYB-->';
   if (!state.games.length) {
-    main.innerHTML = html + '<div class="hint"><div class="title">No games loaded for this week</div>Use the arrows above (or Load Week in the header) to pull a slate.</div>';
+    main.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + '<div class="hint"><div class="title">No games loaded for this week</div>Use the arrows above (or Load Week in the header) to pull a slate.</div>';
     gbWireNav(main);
     return;
   }
@@ -5151,7 +5186,11 @@ function renderGameBets(main) {
     }
     html += '</div>';
   }
-  main.innerHTML = html;
+  main.innerHTML = html.replace('<!--MYB-->', mybStripHtml());
+    main.querySelectorAll('.mybbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybToggle(b.getAttribute('data-key'), b.getAttribute('data-desc'), b.getAttribute('data-d')); render(); }); });
+    const mh = main.querySelector('.mybhead');
+    if (mh) mh.addEventListener('click', function(){ GB.mybOpen = !GB.mybOpen; render(); });
+    main.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); render(); }); });
   gbWireNav(main);
   main.querySelectorAll('.gbhead').forEach(h => h.addEventListener('click', () => { const k = h.getAttribute('data-k'); GB.open[k] = !GB.open[k]; render(); }));
   main.querySelectorAll('.gbname').forEach(nm => nm.addEventListener('click', e => { e.stopPropagation(); const tok = nm.getAttribute('data-tok'); GB.why = GB.why === tok ? null : tok; render(); }));
