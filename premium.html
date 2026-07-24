@@ -1281,10 +1281,10 @@ const $=id=>document.getElementById(id);
 const prog=t=>{$('prog').textContent=t;};
 
 function todayStr(){
-  const now=new Date();
-  // PT-anchored so late-night still shows the current slate
-  const pt=new Date(now.toLocaleString('en-US',{timeZone:'America/Los_Angeles'}));
-  return pt.toISOString().slice(0,10);
+  // PT-anchored so late-night still shows the current slate. en-CA formats
+  // YYYY-MM-DD directly in PT — never bounced through UTC (which rolled the
+  // date to tomorrow every evening).
+  return new Date().toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});
 }
 
 // If yesterday was never loaded by anyone (no predictions stored anywhere),
@@ -1376,6 +1376,7 @@ async function loadDay(){
 
     prog('Fetching batter pitch-type profiles…');
     await cfgPull(); // league lock threshold
+    pbRecalcAll(); // re-sync success rates to the (possibly new) thresholds
     await fetchLeagueProps(date); // DK lines pulled by Diamond IQ main
     prog('Team pitching + defense + game odds…');
     await fetchTeamPitching(GAMEJOBS.flatMap(g=>[g.hId,g.aId]));
@@ -1659,7 +1660,7 @@ function showCached(){
 // somehow got missed). "graded" is only marked permanent once every scheduled
 // game that day went Final — partial days regrade on the next Load.
 
-function dayTallies(rows,mk,res,dbgDate){
+function dayTallies(rows,mk,res,dbgDate,quiet){
   const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
     if(!r.verified||(r.conf||0)<(CONFIG.gmLock||0))return;
@@ -1698,7 +1699,7 @@ function dayTallies(rows,mk,res,dbgDate){
       if(gr==='W')t[m].w++;else if(gr==='L')t[m].l++;else if(gr==='P')t[m].p++;
     });
   });
-  toast(`Tallies ${dbgDate||''}: hits ${t.hits.h}/${t.hits.n} · lock thr ${Math.round(CONFIG.lock*100)}%`, t.hits.n?null:'warn');
+  if(!quiet)toast(`Tallies ${dbgDate||''}: hits ${t.hits.h}/${t.hits.n} · lock thr ${Math.round(CONFIG.lock*100)}%`, t.hits.n?null:'warn');
   return t;
 }
 function localMergeSummary(date,tallies){
@@ -2033,6 +2034,14 @@ async function computeSuccessStats(){
   return stats;
 }
 function renderHeaderStats(){
+  const at=window.__AT;
+  if(at&&at.cats&&at.cats.hits&&at.cats.hits.n){
+    const a=at.cats.hits,d=at.cats14&&at.cats14.hits;
+    $('hsAll').textContent=Math.round(a.h/a.n*100)+'%';$('hsAllN').textContent=a.h+'/'+a.n;
+    if(d&&d.n){$('hs14').textContent=Math.round(d.h/d.n*100)+'%';$('hs14N').textContent=d.h+'/'+d.n;}
+    else{$('hs14').textContent='—';$('hs14N').textContent='no graded picks';}
+    return;
+  }
   let s=null;
   try{s=JSON.parse(localStorage.getItem('fablehits_stats')||'null');}catch(e){}
   const put=(o,v,n)=>{
@@ -2111,7 +2120,41 @@ function curRows(){return MARKET==='hits'?ROWS:(MK[MARKET]||[]);}
    REAL all-time success rate. Collapsed card = the qualifying locks (the bet
    slip). Tap a card = every candidate with a hard BET LINE divider. Tap a
    NAME = why that pick has its grade. Red numbers are confidence grades. */
-const PB={open:{},why:null};
+const PB={open:{},why:null,date:null,cache:{}}; // date null = live today
+function pbDate(){return PB.date||todayStr();}
+function pbShiftDay(n){
+  const d=n===0?todayStr():addDays(pbDate(),n);
+  PB.date=(d===todayStr())?null:d;
+  PB.open={};PB.why=null;
+  renderBetsView();
+}
+function pbData(){
+  if(!PB.date)return {rows:ROWS,mk:MK,res:DAY_RESULTS,live:true};
+  const c=PB.cache[PB.date];
+  if(c===undefined){
+    const d=PB.date;PB.cache[d]=null;
+    loadStoredDay(d).then(D=>{PB.cache[d]=D||false;renderBetsView();}).catch(()=>{PB.cache[d]=false;renderBetsView();});
+    return {loading:true};
+  }
+  if(c===null)return {loading:true};
+  if(c===false)return {none:true};
+  return {rows:c.rows||[],mk:c.mk||{},res:c.results||null,live:false};
+}
+function pbMark(m,row,res){
+  if(!res)return '';
+  const meta=PB_META[m],r=row.r||{};
+  let ok=null;
+  if(meta.kind==='prob'){const o=res[r.id]||res[String(r.id)];if(playedBat(o))ok=((o[meta.stat]||0)>=1);}
+  else if(meta.kind==='conf'){const g=res['g'+r.id];if(g&&g.hs!=null&&g.as!=null&&g.hs!==g.as)ok=((g.hs>g.as)===(r.pick===r.team));}
+  else{
+    const act=MK_ACTUAL[m]?MK_ACTUAL[m](res[r.id]||res[String(r.id)]):null;
+    const g=lineGrade({...r,lean:row.lean},act);
+    if(g==='W')ok=true;else if(g==='L')ok=false;
+    else if(g==='P')return '<span style="color:var(--mt2);font-weight:800">P</span>';
+  }
+  if(ok==null)return '<span style="color:var(--mt2)">—</span>';
+  return ok?'<span style="color:var(--gn,#39d98a);font-weight:800">✓</span>':'<span style="color:var(--cold,#ff7a7a);font-weight:800">✗</span>';
+}
 const PB_META={
   hits:{tag:'BATTER HITS',what:'the batter gets 1+ hit',kind:'prob',stat:'h'},
   hr:{tag:'HOME RUNS',what:'the batter homers',kind:'prob',stat:'hr'},
@@ -2132,17 +2175,18 @@ function pbLockOf(m){
   if(m==='gm')return Math.round((CONFIG.gmLock||0)*100);
   return CONFIG[PB_META[m].th]??0; // edge markets: edge threshold
 }
-function pbRows(m){
+function pbRows(m,Dt){
   const meta=PB_META[m];
+  const rows=(Dt&&Dt.rows)||ROWS,mk=(Dt&&Dt.mk)||MK;
   const out=[];
   if(m==='hits'){
-    ROWS.forEach(r=>{if(r.verified&&!r.gradeFlag&&r.prob!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(r.prob*100),r:r,txt:''});});
+    rows.forEach(r=>{if(r.verified&&!r.gradeFlag&&r.prob!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(r.prob*100),r:r,txt:''});});
   }else if(m==='hr'||m==='kB'||m==='bbB'){
-    (MK[m]||[]).forEach(r=>{const p=m==='hr'?r.prob:p1of(r);if(r.verified&&!r.gradeFlag&&p!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(p*100),r:r,txt:''});});
+    (mk[m]||[]).forEach(r=>{const p=m==='hr'?r.prob:p1of(r);if(r.verified&&!r.gradeFlag&&p!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(p*100),r:r,txt:''});});
   }else if(m==='gm'){
-    (MK.gm||[]).forEach(r=>{if(r.verified&&r.conf!=null)out.push({id:r.id,name:r.name,sub:'pick '+r.pick,grade:Math.round(r.conf*100),r:r,txt:'<b>'+r.pick+'</b> wins · '+r.name});});
+    ((mk.gm)||[]).forEach(r=>{if(r.verified&&r.conf!=null)out.push({id:r.id,name:r.name,sub:'pick '+r.pick,grade:Math.round(r.conf*100),r:r,txt:'<b>'+r.pick+'</b> wins · '+r.name});});
   }else{
-    (MK[m]||[]).forEach(r=>{
+    (mk[m]||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag||r.line==null||r.exp==null)return;
       const d=r.exp-r.line;
       out.push({id:r.id,name:r.name,sub:(STD_LINE_MK[m]?'std':'DK')+' line '+r.line+' · exp '+r.exp,grade:Math.round(Math.abs(d)*10)/10,lean:d>=0?'OVER':'UNDER',r:r,txt:''});
@@ -2169,23 +2213,27 @@ function pbWhyHtml(m,row){
   return `<div style="padding:8px 10px;background:var(--card2,#182231);border:1px solid var(--bdr);border-radius:9px;margin:3px 0 7px;font-size:.68rem;color:var(--mt);line-height:1.5">${bits.join('')}</div>`;
 }
 function pbName(name,tok){return `<b class="pbname" data-tok="${tok}" style="cursor:pointer;border-bottom:1px dotted var(--mt2)">${name}</b>`;}
-function pbRowHtml(m,row,grey){
+function pbRowHtml(m,row,grey,res){
   const tok=m+'|'+row.id;
   const meta=PB_META[m];
   const label=row.txt||(pbName(row.name,tok)+(meta.kind==='edge'?' — <b>'+row.lean+'</b> '+(row.r.line??'')+'':'')+` <span style="color:var(--mt2);font-size:.62rem">${row.sub||''}</span>`);
   const mark=(typeof todayMark==='function'&&meta.kind!=='edge')?'':'';
   return `<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid var(--bdr);font-size:.74rem">
       <span style="flex:1;min-width:0;${grey?'color:var(--mt2)':''}">${row.txt?pbName(row.name,tok)+' · '+row.txt:label}</span>
+      ${res?`<span style="min-width:14px;text-align:center">${pbMark(m,row,res)}</span>`:''}
       <span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:.74rem;color:${grey?'var(--mt2)':'var(--rd,#ff5d5d)'}">${row.grade}${PB_META[m].kind==='edge'?'':''}</span>
     </div>`+(PB.why===tok?pbWhyHtml(m,row):'');
 }
 function renderBetsView(){
   const el=document.getElementById('betsOut');
   if(!el)return;
-  const haveAny=ROWS.length||Object.values(MK||{}).some(a=>a&&a.length);
-  const pretty=(ds=>{try{const d=new Date(ds+'T12:00:00Z');return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'UTC'});}catch(e){return ds||'';}})(CUR_DATE||todayStr());
+  const Dt=pbData();
+  const haveAny=!Dt.loading&&!Dt.none&&((Dt.rows||[]).length||Object.values(Dt.mk||{}).some(a=>a&&a.length));
+  const dShown=pbDate();
+  const kick=!PB.date?'Today’s slate · MLB':(PB.date<todayStr()?'Earlier slate · MLB':'Upcoming slate · MLB');
+  const pretty=(ds=>{try{const d=new Date(ds+'T12:00:00Z');return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'UTC'});}catch(e){return ds||'';}})(dShown);
   let html=`<div style="background:var(--card,#141a24);border:1px solid rgba(255,93,93,.35);border-radius:13px;padding:15px 16px 12px;margin:0 12px 11px">
-    <div style="font-size:.6rem;font-weight:800;letter-spacing:.2em;color:var(--rd,#ff5d5d);text-transform:uppercase">Today’s slate · MLB</div>
+    <div style="font-size:.6rem;font-weight:800;letter-spacing:.2em;color:var(--rd,#ff5d5d);text-transform:uppercase">${kick}</div>
     <div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">${pretty}</div>
     <div style="font-size:.68rem;color:var(--mt)">Diamond IQ Premium · every pick graded walk-forward</div>
     <div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid var(--bdr);padding-top:9px;font-size:.66rem;color:var(--mt)">
@@ -2193,15 +2241,28 @@ function renderBetsView(){
       <span>ranked by real success rate</span>
       <span>tap a <b style="color:var(--tx)">name</b> — why</span>
       <span>tap a <b style="color:var(--tx)">card</b> — bet line</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="pbnav" data-n="-1" style="flex:1;background:var(--card2,#182231);border:1px solid var(--bdr);color:var(--tx);border-radius:9px;padding:7px 0;font-size:.66rem;font-weight:700;cursor:pointer">‹ prev day</button>
+      ${PB.date?'<button class="pbnav" data-n="0" style="flex:1;background:var(--card2,#182231);border:1px solid rgba(255,93,93,.5);color:var(--rd,#ff5d5d);border-radius:9px;padding:7px 0;font-size:.66rem;font-weight:800;cursor:pointer">today</button>':''}
+      <button class="pbnav" data-n="1" style="flex:1;background:var(--card2,#182231);border:1px solid var(--bdr);color:var(--tx);border-radius:9px;padding:7px 0;font-size:.66rem;font-weight:700;cursor:pointer">next day ›</button>
     </div></div>`;
+  if(Dt.loading){
+    html+=`<div class="empty"><b>Loading ${pretty}…</b>Pulling that day’s stored slate.</div>`;
+    el.innerHTML=html;wirePbNav(el);return;
+  }
+  if(Dt.none){
+    html+=`<div class="empty"><b>No slate stored for ${pretty}.</b>${dShown>todayStr()?'Future slates are built the morning of the games.':'That day was never generated.'}</div>`;
+    el.innerHTML=html;wirePbNav(el);return;
+  }
   if(!haveAny){
     html+=`<div class="empty"><b>Building today’s bet slip…</b>The board loads itself in the background — this fills in the moment it’s ready. The Today tab shows the full detail view.</div>`;
-    el.innerHTML=html;return;
+    el.innerHTML=html;wirePbNav(el);return;
   }
   const order=Object.keys(PB_META).map(m=>({m,pct:(mkAllTime(m)||{}).pct??-1})).sort((a,b)=>b.pct-a.pct);
   for(const {m} of order){
     const meta=PB_META[m];
-    const all=pbRows(m);
+    const all=pbRows(m,Dt);
     if(!all.length)continue;
     const locks=all.filter(x=>pbQualifies(m,x));
     const r=mkAllTime(m);
@@ -2217,7 +2278,7 @@ function renderBetsView(){
         <div style="font-size:.64rem;color:var(--mt2);margin:2px 0 5px">Bet = ${meta.what} · bet line: ${lineWord}</div>
       </div>`;
     if(!open){
-      if(locks.length){html+=locks.map(x=>pbRowHtml(m,x,false)).join('');}
+      if(locks.length){html+=locks.map(x=>pbRowHtml(m,x,false,Dt.res)).join('');}
       else html+=`<div style="font-size:.66rem;color:var(--mt2);padding:3px 0">No picks clear the bet line today — tap to see every candidate.</div>`;
     }else{
       let lineDrawn=false;
@@ -2226,19 +2287,68 @@ function renderBetsView(){
         let pre='';
         if(!q&&!lineDrawn){lineDrawn=true;
           pre=`<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed var(--rd,#ff5d5d)"></div><span style="font-size:.56rem;font-weight:800;letter-spacing:.08em;color:var(--rd,#ff5d5d);white-space:nowrap">BET LINE · ${th}${meta.kind==='edge'?' edge':''} — bet above, skip below</span><div style="flex:1;border-top:2px dashed var(--rd,#ff5d5d)"></div></div>`;}
-        return pre+pbRowHtml(m,x,!q);
+        return pre+pbRowHtml(m,x,!q,Dt.res);
       }).join('');
       if(!lineDrawn)html+=`<div style="font-size:.64rem;color:var(--mt2);padding:3px 0 0">Everyone shown clears the bet line.</div>`;
     }
     html+=`</div>`;
   }
   el.innerHTML=html;
+  wirePbNav(el);
   el.querySelectorAll('.pbhead').forEach(h=>h.addEventListener('click',()=>{const m=h.getAttribute('data-mk');PB.open[m]=!PB.open[m];renderBetsView();}));
   el.querySelectorAll('.pbname').forEach(nm=>nm.addEventListener('click',e=>{e.stopPropagation();const tok=nm.getAttribute('data-tok');PB.why=PB.why===tok?null:tok;renderBetsView();}));
+}
+function wirePbNav(el){
+  el.querySelectorAll('.pbnav').forEach(b=>b.addEventListener('click',()=>pbShiftDay(parseInt(b.getAttribute('data-n'),10))));
+}
+/* ── THRESHOLD-SYNCED RECORDS ──
+   Regrades every stored day at the CURRENT lock/edge thresholds, so the
+   success rates shown in the header, the chips, and the Bets cards are all
+   the same number — and they move the moment a threshold changes. */
+window.__AT=null;
+try{window.__AT=JSON.parse(localStorage.getItem('fablehits_at')||'null');}catch(e){}
+function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].map(k=>CONFIG[k]));}
+function atTalliesFor(D){
+  const mk=D.mk||{},fm={...mk};
+  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge'],['gmK','gkEdge'],['hrL','hrlEdge']].forEach(([m,k])=>{
+    const th=CONFIG[k]??0;
+    fm[m]=(mk[m]||[]).filter(r=>r.line!=null&&r.exp!=null&&Math.abs(r.exp-r.line)>=th)
+      .map(r=>({...r,lean:(r.exp-r.line)>=0?'OVER':'UNDER'}));
+  });
+  return dayTallies(D.rows||[],fm,D.results||{},null,true);
+}
+async function pbRecalcAll(force){
+  const sig=atSig();
+  if(!force&&window.__AT&&window.__AT.sig===sig&&(Date.now()-(window.__AT.ts||0))<6*3600e3)return window.__AT;
+  if(!FBH.ready||pbRecalcAll._busy)return null;
+  pbRecalcAll._busy=true;
+  try{
+    const snap=await withTO(FBH.db.collection('fable_hits').get(),45000);
+    const today=todayStr(),cutoff=addDays(today,-14);
+    const cats={},cats14={};
+    const addTo=(tgt,m,o)=>{const g=tgt[m]||(tgt[m]={h:0,n:0});if(o.h!=null){g.h+=o.h;g.n+=o.n;}else{g.h+=o.w||0;g.n+=(o.w||0)+(o.l||0);}};
+    snap.forEach(doc=>{
+      const d=doc.id;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||d>=today)return;
+      const D=doc.data()||{};
+      if(!D.results||!Object.keys(D.results).length)return;
+      const t=atTalliesFor(D);
+      Object.keys(t).forEach(m=>{addTo(cats,m,t[m]);if(d>=cutoff)addTo(cats14,m,t[m]);});
+    });
+    window.__AT={sig,ts:Date.now(),cats,cats14};
+    try{localStorage.setItem('fablehits_at',JSON.stringify(window.__AT));}catch(e){}
+    try{renderHeaderStats();}catch(e){}
+    try{if($('mkhead')&&!loadDay._running)drawCurrent();}catch(e){}
+    try{if(!loadDay._running)renderBetsView();}catch(e){}
+  }catch(e){console.warn('[FH] threshold-synced recalc failed',e.message);}
+  pbRecalcAll._busy=false;
+  return window.__AT;
 }
 // This market's ALL-TIME graded record (from the synced league summary) — shown
 // on every bet-type tab so the success rate is never more than a glance away.
 function mkAllTime(m){
+  const at=window.__AT;
+  if(at&&at.cats&&at.cats[m]&&at.cats[m].n){const o=at.cats[m];return{h:o.h,n:o.n,pct:Math.round(100*o.h/o.n)};}
   const s=statsCache();const days=s?.daysMap||{};let h=0,n=0;
   Object.keys(days).forEach(d=>{
     const o=days[d]?.[m];if(!o)return;
@@ -2440,6 +2550,7 @@ async function bootLeagueLoad(){
   // the header + Results list once they land — even with no save happening.
   await computeSuccessStats();
   renderHeaderStats();
+  pbRecalcAll();
   if(document.getElementById('vRes')&&document.getElementById('vRes').style.display!=='none')drawResultsList();
   maybeAutoPullDK();
 }
@@ -2600,6 +2711,10 @@ async function bootLeagueLoad(){
     const cut=(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);})();
     return {all:keys, d14:keys.filter(k=>k>=cut)};
   }
+  function mergeLocalDays(remote){
+    let loc={};try{loc=(JSON.parse(localStorage.getItem('fablehits_stats')||'null')||{}).daysMap||{};}catch(e){}
+    return Object.assign({},loc,remote||{});
+  }
   function aggHits(keys){
     let h=0,n=0;
     keys.forEach(k=>{const o=SUMMARY[k]&&SUMMARY[k].hits;if(o){h+=o.h||0;n+=o.n||0;}});
@@ -2608,6 +2723,14 @@ async function bootLeagueLoad(){
   function setTxt(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
 
   function paintHeader(){
+    const at=window.__AT;
+    if(at&&at.cats&&at.cats.hits&&at.cats.hits.n){
+      const a=at.cats.hits,d=at.cats14&&at.cats14.hits;
+      setTxt('hsAll',Math.round(a.h/a.n*100)+'%');setTxt('hsAllN',a.h+'/'+a.n);
+      if(d&&d.n){setTxt('hs14',Math.round(d.h/d.n*100)+'%');setTxt('hs14N',d.h+'/'+d.n);}
+      else{setTxt('hs14','—');setTxt('hs14N','no graded picks');}
+      return;
+    }
     if(!SUMMARY)return;
     const w=daysWindow(SUMMARY);
     const a=aggHits(w.all), d=aggHits(w.d14);
@@ -2731,7 +2854,7 @@ async function bootLeagueLoad(){
       if(!fb||!fb.ready||!fb.db)return;
       const doc=await fb.db.collection('fable_settings').doc('summary').get();
       if(doc.exists){
-        SUMMARY=doc.data().days||{};
+        SUMMARY=mergeLocalDays(doc.data().days||{});
         try{localStorage.setItem('fablehits_summary_cache',JSON.stringify(SUMMARY));}catch(e){}
       }
     }catch(e){}
