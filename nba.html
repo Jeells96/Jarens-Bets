@@ -430,13 +430,20 @@ const CAT_META = {
   playerPts: { label: 'Player Points \u00b1T',   th: 'props', short: 'Points' },
   playerReb: { label: 'Player Rebounds \u00b1T', th: 'props', short: 'Rebounds' },
   playerAst: { label: 'Player Assists \u00b1T',  th: 'props', short: 'Assists' },
+  playerThr: { label: 'Player Threes \u00b1T',   th: 'props', short: 'Threes' },
+  playerStl: { label: 'Player Steals \u00b1T',   th: 'props', short: 'Steals' },
+  playerBlk: { label: 'Player Blocks \u00b1T',   th: 'props', short: 'Blocks' },
   dkML:      { label: 'vs DK \u00b7 ML value',   th: 'dk', short: 'DK ML' },
   dkTotal:   { label: 'vs DK \u00b7 Total O/U',  th: 'dk', short: 'DK Tot' },
   dkSpread:  { label: 'vs DK \u00b7 Spread ATS', th: 'dk', short: 'DK ATS' }
 };
-const TOL_KEY_BY_CAT = { total: 'pts', teamPts: 'pts', playerPts: 'stat', playerReb: 'stat', playerAst: 'stat' };
+const TOL_KEY_BY_CAT = { total: 'pts', teamPts: 'pts', playerPts: 'stat', playerReb: 'stat', playerAst: 'stat', playerThr: 'cnt', playerStl: 'cnt', playerBlk: 'cnt' };
 const LOCK_DEFAULTS = { winner: 60, lines: 0, props: 0, dk: 0 };
-const TOL_DEFAULTS = { pts: 4, stat: 3 };
+const TOL_DEFAULTS = { pts: 4, stat: 3, cnt: 1 };
+// Count stats (threes / steals / blocks) grade at the tighter ±cnt tolerance —
+// ±3 on a 1.2-block projection would be false accuracy.
+const CNT_STATS = { tpm: 1, stl: 1, blk: 1 };
+function statTol(stat){ return CNT_STATS[stat] ? hitTol('cnt') : hitTol('stat'); }
 
 function lockTh(key){
   const lt = (state.settings && state.settings.lockThresholds) || {};
@@ -513,9 +520,9 @@ function sortedCatEntries(cats){
 // League-typical per-game sigma priors by position/stat — starting estimates;
 // TUNE from our own accumulated box scores once the data layer runs.
 const SIGMA_PRIOR = {
-  G: { pts: 9, reb: 3, ast: 4 },
-  F: { pts: 8, reb: 4, ast: 3 },
-  C: { pts: 7, reb: 5, ast: 2 }
+  G: { pts: 9, reb: 3, ast: 4, tpm: 1.4, stl: 1.1, blk: 0.7 },
+  F: { pts: 8, reb: 4, ast: 3, tpm: 1.2, stl: 1.0, blk: 0.9 },
+  C: { pts: 7, reb: 5, ast: 2, tpm: 0.8, stl: 0.8, blk: 1.2 }
 };
 const PLAYER_RECENCY_DECAY = 0.94; // weight decay per game back
 const TEAM_RECENCY_DECAY = 0.97;   // gentler — 82-game season
@@ -535,7 +542,7 @@ const B2B_OPP = 1.0;               // pts its opponent gains (TUNE)
 const MODEL_DEFAULTS = { teamDecay: TEAM_RECENCY_DECAY, playerDecay: PLAYER_RECENCY_DECAY, sigmaMargin: SIGMA_MARGIN, b2bSelf: B2B_SELF, b2bOpp: B2B_OPP };
 let MODEL_W = Object.assign({}, MODEL_DEFAULTS);
 let LAB_CFG = null;
-const LAB_CATS = ['winner', 'total', 'teamPts', 'playerPts', 'playerReb', 'playerAst'];
+const LAB_CATS = ['winner', 'total', 'teamPts', 'playerPts', 'playerReb', 'playerAst', 'playerThr', 'playerStl', 'playerBlk'];
 async function pullLabCfg(){
   try { const d = await fbRead(FB_NS, 'lab_cfg'); LAB_CFG = d || null; return !!(LAB_CFG && LAB_CFG.cats && Object.keys(LAB_CFG.cats).length); }
   catch (e){ return false; }
@@ -543,9 +550,9 @@ async function pullLabCfg(){
 const MIN_AVG_MIN = 15;            // props only for real rotation players
 // League-typical per-game MEANS small samples shrink toward (rotation players)
 const MEAN_PRIOR = {
-  G: { pts: 12, reb: 3.5, ast: 4.5 },
-  F: { pts: 12, reb: 5.5, ast: 2.5 },
-  C: { pts: 11, reb: 8,   ast: 2 }
+  G: { pts: 12, reb: 3.5, ast: 4.5, tpm: 1.6, stl: 1.0, blk: 0.3 },
+  F: { pts: 12, reb: 5.5, ast: 2.5, tpm: 1.2, stl: 0.8, blk: 0.6 },
+  C: { pts: 11, reb: 8,   ast: 2,   tpm: 0.5, stl: 0.7, blk: 1.2 }
 };
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
 
@@ -563,7 +570,7 @@ function normCdf(x){
 function playerStatSigma(p, stat, pos, beforeDate){
   const prior = (SIGMA_PRIOR[pos] || SIGMA_PRIOR.F)[stat] || 8;
   const cur = state.priorPlayer[p.id];
-  const rows = cur && cur.rows ? cur.rows.filter(function(r){ return r.date < beforeDate; }) : [];
+  const rows = cur && cur.rows ? cur.rows.filter(function(r){ return r.date < beforeDate && r[stat] != null; }) : [];
   if (rows.length < 2) return { sigma: prior, n: rows.length, playerSigma: null };
   let sumW = 0, mean = 0;
   const w = rows.map(function(r, i){ return Math.pow(MODEL_W.playerDecay, rows.length - 1 - i); });
@@ -573,14 +580,14 @@ function playerStatSigma(p, stat, pos, beforeDate){
   rows.forEach(function(r, i){ varSum += w[i] * Math.pow(r[stat] - mean, 2); });
   const playerSigma = Math.sqrt(sumW ? varSum / sumW : 0);
   const shrink = rows.length / (rows.length + 3);
-  const sigma = Math.max(2, shrink * playerSigma + (1 - shrink) * prior);
+  const sigma = Math.max(CNT_STATS[stat] ? 0.5 : 2, shrink * playerSigma + (1 - shrink) * prior);
   return { sigma: sigma, n: rows.length, playerSigma: playerSigma };
 }
 
 // BUG-4 fix: per-prop confidence = P(|actual - proj| <= tol) = 2*Phi(tol/sigma) - 1,
 // from that player's own sigma. Kills the "every prop says 51%" failure mode.
 function propConfidence(p, stat, pos, injuryStatus, beforeDate){
-  const tol = hitTol('stat');
+  const tol = statTol(stat);
   const sg = playerStatSigma(p, stat, pos, beforeDate);
   let conf = (2 * normCdf(tol / sg.sigma) - 1) * 100;
   if (injuryStatus === 'questionable') conf *= 0.75;
@@ -701,6 +708,11 @@ function attemptsOf(v){ // "41-88" -> 88
   const n = +parts[parts.length - 1];
   return isFinite(n) ? n : null;
 }
+function madeOf(v){ // "2-6" -> 2
+  if (v == null) return null;
+  const n = +String(v).split('-')[0];
+  return isFinite(n) ? n : null;
+}
 function numOf(v){ const n = parseFloat(v); return isFinite(n) ? n : null; }
 
 function parseTeamBlock(summary, teamId){
@@ -733,6 +745,9 @@ function parsePlayers(summary){
     const iPts = idx(['points'], ['pts']);
     const iReb = idx(['totalrebounds', 'rebounds'], ['reb']);
     const iAst = idx(['assists'], ['ast']);
+    const iTpm = idx(['threepointfieldgoalsmade-threepointfieldgoalsattempted', '3pointfieldgoalsmade-3pointfieldgoalsattempted'], ['3pt']);
+    const iStl = idx(['steals'], ['stl']);
+    const iBlk = idx(['blocks'], ['blk']);
     for (const row of (grp.athletes || [])){
       const a = row.athlete || {};
       if (a.id == null || row.didNotPlay) continue;
@@ -746,6 +761,9 @@ function parsePlayers(summary){
         pts: iPts !== -1 ? (numOf(s[iPts]) || 0) : 0,
         reb: iReb !== -1 ? (numOf(s[iReb]) || 0) : 0,
         ast: iAst !== -1 ? (numOf(s[iAst]) || 0) : 0,
+        tpm: iTpm !== -1 ? (madeOf(s[iTpm]) || 0) : null,
+        stl: iStl !== -1 ? (numOf(s[iStl]) || 0) : null,
+        blk: iBlk !== -1 ? (numOf(s[iBlk]) || 0) : null,
         st: !!row.starter
       });
     }
@@ -829,7 +847,7 @@ function hydrateFromList(records){
       pp[p.id].pos = (live && live.p) || p.p;
       if (rec.date >= pp[p.id].tmD){ pp[p.id].tm = p.tm; pp[p.id].tmD = rec.date; }
       const home = p.tm === rec.home.id;
-      pp[p.id].rows.push({ date: rec.date, min: p.min, pts: p.pts, reb: p.reb, ast: p.ast, home: home, opp: home ? rec.away.ab : rec.home.ab });
+      pp[p.id].rows.push({ date: rec.date, min: p.min, pts: p.pts, reb: p.reb, ast: p.ast, tpm: p.tpm != null ? p.tpm : null, stl: p.stl != null ? p.stl : null, blk: p.blk != null ? p.blk : null, home: home, opp: home ? rec.away.ab : rec.home.ab });
     }
   }
   const byDate = function(x, y){ return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; };
@@ -1068,7 +1086,7 @@ function currentTeamOf(pid){
 // opponent-vs-position factor. Returns null under 2 prior games.
 function projectPlayerStat(pid, stat, pos, oppAb, beforeDate){
   const cur = state.priorPlayer[pid];
-  const rows = cur && cur.rows ? cur.rows.filter(function(r){ return r.date < beforeDate; }) : [];
+  const rows = cur && cur.rows ? cur.rows.filter(function(r){ return r.date < beforeDate && r[stat] != null; }) : [];
   if (rows.length < 2) return null;
   let sw = 0, mean = 0, mins = 0;
   rows.forEach(function(r, i){
@@ -1101,7 +1119,7 @@ function buildProps(g, injuries, beforeDate, isPost){
     }
     cands.sort(function(a, b){ return b.wMin - a.wMin; });
     for (const c of cands.slice(0, 9)){
-      for (const stat of ['pts', 'reb', 'ast']){
+      for (const stat of ['pts', 'reb', 'ast', 'tpm', 'stl', 'blk']){
         const proj = projectPlayerStat(c.pid, stat, c.pl.pos, opp.ab, beforeDate);
         if (!proj) continue;
         const pc = propConfidence({ id: c.pid }, stat, c.pl.pos, c.injStatus, beforeDate);
@@ -1109,7 +1127,7 @@ function buildProps(g, injuries, beforeDate, isPost){
           pid: c.pid, name: c.pl.name, team: me.ab, pos: c.pl.pos, stat: stat,
           proj: proj.value, n: proj.n, fac: proj.fac, conf: pc.conf, sigma: pc.sigma,
           inj: c.injStatus,
-          cat: stat === 'pts' ? 'playerPts' : stat === 'reb' ? 'playerReb' : 'playerAst'
+          cat: stat === 'pts' ? 'playerPts' : stat === 'reb' ? 'playerReb' : stat === 'ast' ? 'playerAst' : stat === 'tpm' ? 'playerThr' : stat === 'stl' ? 'playerStl' : 'playerBlk'
         });
       }
     }
@@ -1262,19 +1280,19 @@ function propsHtml(proj, recData){
   if (!proj.props.length){
     return '<div class="card"><h2>Player props</h2><div class="muted small">No eligible players \u2014 needs \u22652 prior games and \u2265' + MIN_AVG_MIN + ' avg minutes; OUT players are excluded pre-game.</div></div>';
   }
-  const secs = [['pts', 'Points'], ['reb', 'Rebounds'], ['ast', 'Assists']];
+  const secs = [['pts', 'Points'], ['reb', 'Rebounds'], ['ast', 'Assists'], ['tpm', 'Threes'], ['stl', 'Steals'], ['blk', 'Blocks']];
   let html = '';
   for (const s of secs){
     const stat = s[0];
     const rows = proj.props.filter(function(p){ return p.stat === stat; }).sort(function(a, b){ return b.conf - a.conf; });
     if (!rows.length) continue;
-    const secCat = { pts: 'playerPts', reb: 'playerReb', ast: 'playerAst' }[stat];
-    html += '<div class="card"><h2>' + s[1] + ' \u00b1' + hitTol('stat') + rateBadge(secCat) + '</h2>';
+    const secCat = { pts: 'playerPts', reb: 'playerReb', ast: 'playerAst', tpm: 'playerThr', stl: 'playerStl', blk: 'playerBlk' }[stat];
+    html += '<div class="card"><h2>' + s[1] + ' \u00b1' + statTol(stat) + rateBadge(secCat) + '</h2>';
     for (const p of rows){
       const lock = p.conf >= lockTh('props');
       const act = actualFor(recData, p.pid, stat);
       const delta = act != null ? act - p.proj : null;
-      const hitCls = delta != null ? (Math.abs(delta) <= hitTol('stat') ? 'rate-good' : 'rate-bad') : '';
+      const hitCls = delta != null ? (Math.abs(delta) <= statTol(stat) ? 'rate-good' : 'rate-bad') : '';
       html += '<div class="prow" style="padding:7px 0;border-bottom:1px solid var(--line)">' +
         '<div class="row"><div class="grow">' + esc(p.name) +
         ' <span class="muted small">' + esc(p.team) + ' \u00b7 ' + esc(p.pos) +
@@ -1284,7 +1302,7 @@ function propsHtml(proj, recData){
         '</div></div>' +
         '<div class="pdetail hidden small muted" style="margin-top:4px">\u03c3 ' + p.sigma.toFixed(1) + ' \u00b7 n=' + p.n +
         ' \u00b7 opp-vs-' + esc(p.pos) + ' factor ' + p.fac.toFixed(2) +
-        ' \u00b7 P(\u00b1' + hitTol('stat') + ') = 2\u03a6(' + hitTol('stat') + '/' + p.sigma.toFixed(1) + ')\u22121 = ' + p.conf + '%' +
+        ' \u00b7 P(\u00b1' + statTol(stat) + ') = 2\u03a6(' + statTol(stat) + '/' + p.sigma.toFixed(1) + ')\u22121 = ' + p.conf + '%' +
         (p.inj === 'questionable' ? ' \u00b7 damped \u00d70.75 (Q)' : '') + '</div></div>';
     }
     html += '</div>';
@@ -1318,7 +1336,7 @@ function betRowsForSearch(q){
       if (!teamHit && (p.name + ' ' + p.team).toLowerCase().indexOf(q) === -1) continue;
       out.push({
         gid: gid, inj: p.inj,
-        txt: label + ' \u2014 ' + p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + hitTol('stat'),
+        txt: label + ' \u2014 ' + p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + statTol(p.stat),
         conf: p.conf, lock: p.conf >= lockTh('props')
       });
     }
@@ -1678,7 +1696,7 @@ async function runCronGrade(){
           tlocks.push({ cat: 'teamPts', desc: g.home.abbr + ' points ' + proj.homePts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
         }
         for (const p of (proj.props || [])){
-          if (p.conf >= lockTh('props')) tlocks.push({ cat: p.cat, desc: p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + hitTol('stat'), metric: p.conf });
+          if (p.conf >= lockTh('props')) tlocks.push({ cat: p.cat, desc: p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + statTol(p.stat), metric: p.conf });
         }
         await sleep(60);
       }
@@ -2406,6 +2424,9 @@ const NB_META = {
   playerPts: { tag: 'PLAYER POINTS',    what: 'the player’s points land within the tolerance of our projection', th: 'props', mkt: 'playerPts' },
   playerReb: { tag: 'PLAYER REBOUNDS',  what: 'the player’s rebounds land within the tolerance of our projection', th: 'props', mkt: 'playerReb' },
   playerAst: { tag: 'PLAYER ASSISTS',   what: 'the player’s assists land within the tolerance of our projection', th: 'props', mkt: 'playerAst' },
+  playerThr: { tag: 'PLAYER THREES',    what: 'the player’s made threes land within the tolerance of our projection', th: 'props', mkt: 'playerThr' },
+  playerStl: { tag: 'PLAYER STEALS',    what: 'the player’s steals land within the tolerance of our projection', th: 'props', mkt: 'playerStl' },
+  playerBlk: { tag: 'PLAYER BLOCKS',    what: 'the player’s blocks land within the tolerance of our projection', th: 'props', mkt: 'playerBlk' },
   dkML:      { tag: 'DK MONEYLINE VALUE', what: 'our pick wins where our odds beat DraftKings’ implied price', th: 'dk', dk: true },
   dkTotal:   { tag: 'DK TOTAL O/U',     what: 'our OVER/UNDER lean beats DraftKings’ posted total', th: 'dk', dk: true },
   dkSpread:  { tag: 'DK SPREAD ATS',    what: 'our side covers DraftKings’ posted spread', th: 'dk', dk: true }
@@ -2441,14 +2462,16 @@ function nbRows(k){
         rows.push({ tok: tok, html: nbName(sd[0], tok) + ' — team points ' + sd[1] + ' ±' + hitTol('pts') + nbMark(mark, sd[2]), sub: gm, grade: proj.confTeam,
           why: 'Projected <b>' + sd[1] + '</b> points for ' + esc(sd[0]) + ' from the same walk-forward game script as the total.' });
       }
-    } else if (k === 'playerPts' || k === 'playerReb' || k === 'playerAst'){
+    } else if (k === 'playerPts' || k === 'playerReb' || k === 'playerAst' || k === 'playerThr' || k === 'playerStl' || k === 'playerBlk'){
+      const statName = { pts: 'pts', reb: 'reb', ast: 'ast', tpm: 'threes', stl: 'steals', blk: 'blocks' };
       for (const p of proj.props){
         if (p.cat !== k) continue;
+        const tol = statTol(p.stat);
         const tok = k + '|' + g.id + '|' + p.pid + '|' + p.stat;
         const act = actualFor(recD, p.pid, p.stat);
-        const mark = act != null ? Math.abs(act - p.proj) <= hitTol('stat') : null;
-        rows.push({ tok: tok, html: nbName(p.name, tok) + ' — ' + esc(p.stat) + ' ' + p.proj + ' ±' + hitTol('stat') + (p.inj === 'questionable' ? ' <span style="color:var(--amber)">Q</span>' : '') + nbMark(mark, act), sub: gm, grade: p.conf,
-          why: 'Projected <b>' + p.proj + ' ' + esc(p.stat) + '</b> from recent usage, minutes and this matchup’s defense' + (p.inj === 'questionable' ? ' (damped — listed questionable)' : '') + '. Hits within ±' + hitTol('stat') + '.' });
+        const mark = act != null ? Math.abs(act - p.proj) <= tol : null;
+        rows.push({ tok: tok, html: nbName(p.name, tok) + ' — ' + esc(statName[p.stat] || p.stat) + ' ' + p.proj + ' ±' + tol + (p.inj === 'questionable' ? ' <span style="color:var(--amber)">Q</span>' : '') + nbMark(mark, act), sub: gm, grade: p.conf,
+          why: 'Projected <b>' + p.proj + ' ' + esc(statName[p.stat] || p.stat) + '</b> from recent usage, minutes and this matchup’s defense' + (p.inj === 'questionable' ? ' (damped — listed questionable)' : '') + '. Hits within ±' + tol + '.' });
       }
     } else {
       const snap = state.dkOdds;
@@ -2826,6 +2849,7 @@ function renderSettings(){
           '<option value="th:winner">Winner lock threshold</option>' +
           '<option value="th:lines">Lines lock threshold</option>' +
           '<option value="tol:stat">Player stat tolerance (\u00b1)</option>' +
+          '<option value="tol:cnt">Count stat tolerance (threes/steals/blocks \u00b1)</option>' +
           '<option value="tol:pts">Points tolerance (\u00b1)</option>' +
         '</select>' +
         '<input type="number" id="tuneTarget" inputmode="numeric" min="30" max="99" value="85" style="width:74px">' +
