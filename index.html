@@ -2619,16 +2619,26 @@ async function refreshSuperLocks(force){
         '<button class="slnav" data-n="1" style="' + navBtn + (past ? '' : ';opacity:.35') + '">next day ›</button>' +
       '</div></div>';
 
-    /* ── lane chips: jump-free at-a-glance counts ── */
-    if (!past){
-      html += '<div style="display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px">' + lanes.map(function(a){
-        var on = a.locks.length > 0, col = LANE_COL[a.key] || 'var(--dim)';
-        return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (on ? col : 'var(--hair2)') + ';border-radius:999px;padding:5px 11px;font:600 11.5px/1 inherit;color:' + (on ? 'var(--bone)' : 'var(--dim2)') + '">' +
-          '<span style="width:6px;height:6px;border-radius:999px;background:' + (on ? col : 'var(--hair)') + '"></span>' + esc(a.name) + ' <b style="color:' + (on ? col : 'var(--dim2)') + '">' + a.locks.length + '</b></span>';
+    /* ── lane chips: at-a-glance counts for the apps that have something ── */
+    var live = lanes.filter(function(a){ return a.locks.length > 0; });
+    var quiet = lanes.filter(function(a){ return a.locks.length === 0; });
+    if (!past && live.length){
+      html += '<div style="display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px">' + live.map(function(a){
+        var col = LANE_COL[a.key] || 'var(--dim)';
+        return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid ' + col + ';border-radius:999px;padding:5px 11px;font:600 11.5px/1 inherit;color:var(--bone)">' +
+          '<span style="width:6px;height:6px;border-radius:999px;background:' + col + '"></span>' + esc(a.name) + ' <b style="color:' + col + '">' + a.locks.length + '</b></span>';
       }).join('') + '</div>';
     }
+    if (!live.length){
+      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:14px;padding:16px;text-align:center">' +
+        '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Nothing clears the bar ' + (past ? 'for this day' : 'right now') + '</div>' +
+        '<div class="statusline" style="margin:0">That\u2019s the system working \u2014 no filler.</div></div>';
+    }
 
-    lanes.forEach(function(a){
+    /* Full cards ONLY for lanes with picks. Apps that are out of season or
+       simply have nothing today collapse into one quiet line — no empty cards
+       taking up the screen. */
+    live.forEach(function(a){
       var col = LANE_COL[a.key] || 'var(--dim)';
       var laneHits = 0, laneGraded = 0;
       a.locks.forEach(function(l){ if (l.hit === true || l.hit === false){ laneGraded++; if (l.hit) laneHits++; } });
@@ -2659,11 +2669,18 @@ async function refreshSuperLocks(force){
               '<span style="flex:0 0 auto;font:800 13px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span></div>';
           });
         });
-      } else {
-        html += '<div class="statusline" style="margin:8px 0 0">' + esc(a.note || 'Nothing today.') + '</div>';
       }
       html += '</div>';
     });
+    if (quiet.length){
+      html += '<div style="border:1px solid var(--hair2);border-radius:12px;padding:10px 13px;margin-top:2px">' +
+        '<div style="font:800 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin-bottom:6px">Not in play</div>' +
+        quiet.map(function(a){
+          return '<div style="display:flex;gap:10px;align-items:baseline;padding:3px 0">' +
+            '<span style="flex:0 0 auto;font-size:12.5px;color:var(--dim)">' + esc(a.name) + '</span>' +
+            '<span class="statusline" style="margin:0;flex:1;text-align:right">' + esc(a.note || 'Nothing today.') + '</span></div>';
+        }).join('') + '</div>';
+    }
     html += '<div class="statusline" style="margin-top:6px;line-height:1.6">Green pill = that bet type’s all-time graded hit rate (why it earned a spot). The coloured number = that pick’s own model odds. ' +
       (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') + '</div>';
     SL_CACHE = html;

@@ -1545,6 +1545,34 @@ async function runLab() {
   }
 }
 
+/* ═══ EARLY LOOK ══════════════════════════════════════════════════════════════
+   Injury reports and weather forecasts both come from ESPN's game summary, and
+   neither exists until game week — an ESPN scoreboard in July still returns
+   Week 1, so a projection made then is running blind on both. Any pick whose
+   inputs aren't posted yet is flagged "early look" in the app and is kept OUT
+   of Super Locks entirely: a bet nobody should place yet doesn't belong on the
+   quick-bet list. */
+const EARLY_LOOK_DAYS = 7;
+function daysToKick(g){
+  if (!g || !g.date) return null;
+  const ms = new Date(g.date).getTime() - Date.now();
+  return isFinite(ms) ? ms / 86400000 : null;
+}
+function gbEarly(g){
+  const d = daysToKick(g);
+  if (d != null && d > EARLY_LOOK_DAYS){
+    const n = Math.round(d);
+    return 'kickoff is ' + n + ' day' + (n === 1 ? '' : 's') + ' away — injury reports and weather forecasts aren’t posted yet';
+  }
+  const noInj = !g || !g.injuries || !Object.keys(g.injuries).length;
+  const w = g && g.weather;
+  const noWx = !!state.settings.weatherEnabled && !(w && (w.dome || w.available));
+  if (noInj && noWx) return 'the injury report and weather forecast for this game aren’t posted yet';
+  if (noInj) return 'the injury report for this game isn’t posted yet';
+  if (noWx) return 'the weather forecast for this game isn’t posted yet';
+  return null;
+}
+
 const HIT_TOTAL_TOL = 3;     // game total / score: ±3
 const HIT_YDS_TOL   = 10;    // any yards prop: ±10
 const TD_LOCK_THRESHOLD = 50;
@@ -5036,9 +5064,11 @@ function gbMark(ok) { return ok == null ? '' : (ok ? ' <span style="color:var(--
 function gbName(name, tok) { return '<b class="gbname" data-tok="' + tok + '" style="cursor:pointer;border-bottom:1px dotted rgba(255,255,255,.35)">' + escapeHtml(name) + '</b>'; }
 function gbRows(key) {
   const rows = [];
-  const push = (tok, html, sub, grade, mark, why) => rows.push({ tok, html, sub, grade, mark, why });
+  let _early = null;
+  const push = (tok, html, sub, grade, mark, why) => rows.push({ tok, html, sub, grade, mark, why, early: _early });
   if (key === 'playerYds') {
     for (const r of gatherAllProps()) {
+      _early = gbEarly(state.games.find(x => String(x.id) === String(r.gameId)));
       const tok = 'playerYds|' + r.name + '|' + r.stat + '|' + r.gameId;
       push(tok, gbName(r.name, tok) + ' — ' + escapeHtml(r.statType) + ' ' + Math.round(r.projYds) + ' ±' + hitTol('yds'),
         r.abbr + ' vs ' + r.oppAbbr + (r.inj === 'questionable' ? ' · Q' : ''), calGrade('playerPass', r.conf),
@@ -5049,6 +5079,7 @@ function gbRows(key) {
     for (const g of state.games) {
       const proj = projectGame(g);
       if (!proj) continue;
+      _early = gbEarly(g);
       const gm = g.away.abbr + '@' + g.home.abbr;
       if (key === 'winner') {
         const pickProb = Math.round(calGrade('winner', Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100));
@@ -5114,7 +5145,7 @@ function gbRowHtml(row, grey) {
   if (row.mark === true || row.mark === false) mybGrade(mkey, row.mark);
   return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.82rem">' +
     mybBtn(mkey, String(row.html).replace(/<[^>]*>/g, '') + (row.sub ? ' (' + row.sub + ')' : ''), state.season + ' W' + state.week) +
-    '<span style="flex:1;min-width:0;' + (grey ? 'color:rgba(255,255,255,.35)' : '') + '">' + row.html + (row.sub ? ' <span style="color:rgba(255,255,255,.35);font-size:.7rem">' + escapeHtml(row.sub) + '</span>' : '') + gbMark(row.mark) + '</span>' +
+    '<span style="flex:1;min-width:0;' + (grey ? 'color:rgba(255,255,255,.35)' : '') + '">' + row.html + (row.sub ? ' <span style="color:rgba(255,255,255,.35);font-size:.7rem">' + escapeHtml(row.sub) + '</span>' : '') + gbMark(row.mark) + (row.early ? ' <span style="color:#ffb454;font-size:.66rem;font-weight:700;white-space:nowrap">○ early look</span>' : '') + '</span>' +
     '<span style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'rgba(255,255,255,.35)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</span></div>' +
     (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.74rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why + '</div>' : '');
 }
@@ -5151,6 +5182,15 @@ function renderGameBets(main) {
     main.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + '<div class="hint"><div class="title">No games loaded for this week</div>Use the arrows above (or Load Week in the header) to pull a slate.</div>';
     gbWireNav(main);
     return;
+  }
+  const earlyNote = (function(){
+    for (const g of state.games){ const e = gbEarly(g); if (e) return e; }
+    return null;
+  })();
+  if (earlyNote){
+    html += '<div style="margin-bottom:11px;padding:10px 12px;border:1px solid rgba(255,180,84,.5);border-radius:11px;background:rgba(255,180,84,.08);color:#ffb454;font-size:.74rem;line-height:1.55">' +
+      '<b>⚠ Early look — not final.</b> ' + escapeHtml(earlyNote.charAt(0).toUpperCase() + earlyNote.slice(1)) + '. Gridline factors <b>injuries and weather</b> into every projection, so these numbers will move once that information lands. ' +
+      '<b>Recommended to wait until game week — ideally the day of — before placing NFL bets.</b> Picks marked “○ early look” are kept out of ⚡ Super Locks until their data is in.</div>';
   }
   const order = Object.keys(GB_META).map(k => ({ k, pct: (gbRate(GB_META[k].rateKeys) || {}).pct ?? -1 })).sort((a, b) => b.pct - a.pct);
   for (const { k } of order) {
@@ -5735,8 +5775,12 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
           state.season = sb.season.year;
           state.week = sb.week.number;
           await loadWeek(); // builds state.games with full projections context
+          let skippedEarly = 0;
           for (const g of state.games){
             if (g.completed) continue;
+            /* Never publish a bet whose injury/weather inputs aren't posted yet
+               — that's how Week 1 picks leaked into Super Locks in July. */
+            if (gbEarly(g)){ skippedEarly++; continue; }
             const dayTag = g.date ? ' (' + new Date(g.date).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' }) + ')' : '';
             const proj = projectGame(g);
             if (!proj) continue;
@@ -5752,7 +5796,8 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
           }
         }
         await fsSetDoc('gridline/todayLocks', { date: ptToday, locks: JSON.stringify(tlocks), t: Date.now() });
-        console.log('[nfl] published ' + tlocks.length + ' lock(s) to gridline/todayLocks');
+        console.log('[nfl] published ' + tlocks.length + ' lock(s) to gridline/todayLocks' +
+          (skippedEarly ? ' (' + skippedEarly + ' game(s) held back — injuries/weather not posted yet)' : ''));
       } catch (e) { console.log('[nfl] today-locks publish warn: ' + (e && e.message || e)); }
       try { await nflShadowUpdate(); } catch (e) {}
       console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
