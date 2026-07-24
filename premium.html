@@ -282,12 +282,12 @@ function showView(v){
 
 /* ── config (lock threshold), PIN, and access gate ── */
 const PIN='2325';
-const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kbLock:0.75,bbbLock:0.45,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gkEdge:1.5,hrlEdge:0.4};
+const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kbLock:0.75,bbbLock:0.45,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gtEdge:0.6,gkEdge:1.5,hrlEdge:0.4};
 // P(1+) from an expected count (Poisson) — lets batter K/BB grade like hits, no DK line needed
 const p1of=r=>r&&r.prob!=null?r.prob:(r&&r.exp!=null?1-Math.exp(-r.exp):null);window.p1of=p1of;
 try{
   const c=JSON.parse(localStorage.getItem('fablehits_cfg')||'null');
-  if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
+  if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
 }catch(e){}
 window.CONFIG=CONFIG; // shared with the standalone stats engine
 /* ═══ MODEL LAB — grade calibration ══════════════════════════════════════════
@@ -337,14 +337,14 @@ async function cfgPull(){
     const doc=await withTO(FBH.db.collection('fable_settings').doc('config').get(),6000);
     if(doc.exists){
       const d=doc.data();
-      ['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
+      ['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
     }
     cfgSave();
   }catch(e){}
 }
 async function cfgPush(){
   if(!FBH.ready)return;
-  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
+  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gtEdge:CONFIG.gtEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
 }
 
 const nameKey=n=>n.trim().toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,'_');
@@ -451,7 +451,7 @@ async function saveThresholds(){
   cfgSave();
   await cfgPush();
   // re-lean already-computed K/BB rows against the new edges (no refetch needed)
-  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge]].forEach(([m,th])=>{
+  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge],['gmT',CONFIG.gtEdge]].forEach(([m,th])=>{
     (MK[m]||[]).forEach(r=>{if(r.line!=null){r.lean=leanFor(r.exp,r.line,th);}});
   });
   if(ROWS.length)render(null);
@@ -519,14 +519,60 @@ const PARK_RUNS={
  'Dodger Stadium':0.98,'Busch Stadium':0.96,'Oracle Park':0.94,'Petco Park':0.93,
  'T-Mobile Park':0.92,'Tropicana Field':0.95,'Comerica Park':0.96
 };
+/* ── WEATHER (advanced stat for game totals) ─────────────────────────────────
+   Temperature is one of the best-documented run-total drivers in MLB (~1 run
+   of swing between a 45°F night and a 95°F day). Open-Meteo is free — we read
+   the forecast temp at each park for the game hour and nudge run scoring
+   0.95×–1.05×. Roofed/dome parks are exempt. Wind is deliberately NOT used:
+   without reliable per-park orientation data, a wind adjustment would be
+   false precision — the same lie as a fabricated bet line. */
+const PARK_GEO={
+ 'Coors Field':[39.756,-104.994],'Great American Ball Park':[39.097,-84.507],'Fenway Park':[42.346,-71.097],
+ 'Kauffman Stadium':[39.051,-94.480],'Yankee Stadium':[40.829,-73.926],'Citizens Bank Park':[39.906,-75.166],
+ 'Wrigley Field':[41.948,-87.655],'Dodger Stadium':[34.074,-118.240],'Busch Stadium':[38.622,-90.193],
+ 'Oracle Park':[37.778,-122.389],'Petco Park':[32.707,-117.157],'Oriole Park at Camden Yards':[39.284,-76.622],
+ 'Nationals Park':[38.873,-77.007],'Citi Field':[40.757,-73.846],'PNC Park':[40.447,-80.006],
+ 'Progressive Field':[41.496,-81.685],'Guaranteed Rate Field':[41.830,-87.634],'Rate Field':[41.830,-87.634],
+ 'Target Field':[44.982,-93.278],'Angel Stadium':[33.800,-117.883],'Comerica Park':[42.339,-83.049],
+ 'Truist Park':[33.891,-84.468],'Sutter Health Park':[38.580,-121.513]
+};
+const PARK_ROOFED={'Tropicana Field':1,'Rogers Centre':1,'Minute Maid Park':1,'Daikin Park':1,'Chase Field':1,'T-Mobile Park':1,'loanDepot park':1,'American Family Field':1,'Globe Life Field':1};
+let WEATHER={}; // park -> {tempF} at first pitch (today/tomorrow only)
+async function fetchParkWeather(jobs){
+  const wants={};
+  for(const gj of jobs){
+    if(!gj.park||PARK_ROOFED[gj.park]||!PARK_GEO[gj.park]||WEATHER[gj.park])continue;
+    wants[gj.park]=gj.iso||null;
+  }
+  await Promise.all(Object.keys(wants).map(async park=>{
+    try{
+      const [lat,lon]=PARK_GEO[park];
+      const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m&temperature_unit=fahrenheit&forecast_days=3`);
+      if(!r.ok)return;
+      const j=await r.json();
+      const hrs=j?.hourly?.time||[],temps=j?.hourly?.temperature_2m||[];
+      if(!hrs.length)return;
+      const target=wants[park]?new Date(wants[park]).getTime():Date.now();
+      let best=0,bd=Infinity;
+      hrs.forEach((h,i)=>{const d=Math.abs(new Date(h).getTime()-target);if(d<bd){bd=d;best=i;}});
+      const t=temps[best];
+      if(t!=null&&isFinite(t))WEATHER[park]={tempF:Math.round(t)};
+    }catch(e){}
+  }));
+}
+function wxRunMult(park){
+  const w=WEATHER[park];
+  if(!w||w.tempF==null)return 1;
+  return clampN(1+0.0035*(w.tempF-70),0.95,1.05);
+}
 let TEAM_PITCH={};   // teamId -> {k,bb,hr,ip} season aggregate (bullpen proxy)
 let TEAM_OAA={};     // team full name -> outs above average (Savant, advanced defense)
 let OAA_OK=null;
 let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
-let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gmK:[],hrL:[]};
+let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gmT:[],gmK:[],hrL:[]};
 let MARKET='hits'; // first tab you see = Hits
 let AUTO_REFRESH=false; // true while the on-open background reload is running
-const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+const MK_LABEL={gm:'GAME PREDICTIONS',gmT:'GAME TOTALS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
 // Every remaining O/U market grades vs a REAL DraftKings line — never
 // DraftKings. Label their lines honestly so nobody thinks DK posted them.
 const STD_LINE_MK={}; // (empty — fabricated 'standard line' markets were removed)
@@ -1255,7 +1301,7 @@ function gameModel(ctx){
     if(OAA_OK&&oaa!=null){
       defMult=clampN(1-(oaa*0.8/92)/LG_RPG,0.93,1.07); // 0.8 runs/out over ~92 team games
     }
-    let runs=LG_RPG*Math.pow(offIdx,1.85)*arsMult*pitchIdx*defMult*(PARK_RUNS[ctx.park]||1);
+    let runs=LG_RPG*Math.pow(offIdx,1.85)*arsMult*pitchIdx*defMult*(PARK_RUNS[ctx.park]||1)*wxRunMult(ctx.park);
     if(isHome)runs+=0.10;
     return {runs:clampN(runs,2.2,7.5),offIdx,arsMult,spIdx,bpIdx,share,defMult};
   };
@@ -1281,13 +1327,17 @@ function gameModel(ctx){
     if(aO!=null&&aO<=-15)push(ctx.aAb+' leaky defense ('+aO+' OAA)','bad');
   }
   if((PARK_RUNS[ctx.park]||1)>=1.08)push(ctx.park+' inflates scoring ('+(PARK_RUNS[ctx.park]).toFixed(2)+'\u00d7)','info');
+  const wxm=wxRunMult(ctx.park);
+  if(wxm>=1.02)push('Hot night ('+WEATHER[ctx.park].tempF+'\u00b0F) \u2014 ball carries, scoring up \u00d7'+wxm.toFixed(2),'good');
+  else if(wxm<=0.98)push('Cold ('+WEATHER[ctx.park].tempF+'\u00b0F) \u2014 scoring damped \u00d7'+wxm.toFixed(2),'bad');
   const math='proj '+ctx.aAb+' '+A.runs.toFixed(1)+' @ '+ctx.hAb+' '+Hm.runs.toFixed(1)
     +' \u00b7 off '+A.offIdx.toFixed(2)+'/'+Hm.offIdx.toFixed(2)
     +' \u00b7 SP idx '+Hm.spIdx.toFixed(2)+'/'+A.spIdx.toFixed(2)
     +' \u00b7 pen '+Hm.bpIdx.toFixed(2)+'/'+A.bpIdx.toFixed(2)
     +' \u00b7 ars '+A.arsMult.toFixed(2)+'/'+Hm.arsMult.toFixed(2)
     +' \u00b7 def \u00d7'+A.defMult.toFixed(2)+'/'+Hm.defMult.toFixed(2)
-    +' \u00b7 park \u00d7'+(PARK_RUNS[ctx.park]||1).toFixed(2);
+    +' \u00b7 park \u00d7'+(PARK_RUNS[ctx.park]||1).toFixed(2)
+    +(wxRunMult(ctx.park)!==1?' \u00b7 wx \u00d7'+wxRunMult(ctx.park).toFixed(2)+' ('+WEATHER[ctx.park].tempF+'\u00b0F)':'');
   return {hWP,eA:A.runs,eH:Hm.runs,total,reasons,math};
 }
 
@@ -1353,7 +1403,7 @@ async function loadDay(){
   CUR_DATE=date;
   const btn=$('loadBtn');btn.disabled=true;btn.textContent='Loading…';
   const prevBoard={rows:ROWS,mk:MK,pending:PENDING}; // restore point for a failed background refresh
-  ROWS=[];PENDING=[];MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmK:[],hrL:[]};const PITJOBS=[];const GAMEJOBS=[];
+  ROWS=[];PENDING=[];MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmT:[],gmK:[],hrL:[]};const PITJOBS=[];const GAMEJOBS=[];
   const EXPHR={},SPKEXP={}; // per-batter expected HR count / per-starter expected K — feed the game-level markets
   try{
     prog('Fetching schedule…');
@@ -1402,7 +1452,7 @@ async function loadDay(){
       // pitcher jobs for K/BB markets — verified when the OPPOSING lineup is posted
       if(hSP)PITJOBS.push({pid:hSP.id,team:hAb,opp:aAb,oppIds:aL.map(p=>p.id),park,verified:aPosted});
       if(aSP)PITJOBS.push({pid:aSP.id,team:aAb,opp:hAb,oppIds:hL.map(p=>p.id),park,verified:hPosted});
-      GAMEJOBS.push({gamePk:g.gamePk,hAb,aAb,hId,aId,
+      GAMEJOBS.push({gamePk:g.gamePk,hAb,aAb,hId,aId,iso:g.gameDate||null,
         hName:home?.team?.name||hAb,aName:away?.team?.name||aAb,
         hSPid:hSP?.id||null,aSPid:aSP?.id||null,
         hLids:hL.map(p=>p.id),aLids:aL.map(p=>p.id),park,
@@ -1423,6 +1473,8 @@ async function loadDay(){
     await fetchTeamPitching(GAMEJOBS.flatMap(g=>[g.hId,g.aId]));
     await fetchTeamOAA();
     await fetchLeagueGameOdds(date);
+    prog('Ballpark weather (run-total factor)…');
+    try{await fetchParkWeather(GAMEJOBS);}catch(e){}
     await fetchBatterPitchTypes(); // one Savant CSV for everyone; degrades gracefully
 
     prog('Getting handedness…');
@@ -1537,6 +1589,13 @@ async function loadDay(){
         eA:Math.round(g.eA*10)/10,eH:Math.round(g.eH*10)/10,total:g.total,
         mlEdge:mlEdge!=null?Math.round(mlEdge*1000)/1000:null,mlLean,
         totLine,totLean,verified:gj.verified,reasons:g.reasons,math:g.math});
+      // GAME TOTALS — full model total vs the REAL DraftKings run line
+      if(totLine!=null){
+        MK.gmT.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
+          verified:gj.verified,exp:g.total,line:totLine,
+          lean:leanFor(g.total,totLine,CONFIG.gtEdge??0.6),
+          edge:Math.round((g.total-totLine)*100)/100,reasons:g.reasons,math:g.math});
+      }
       /* GAME K TOTAL and GAME HR LINE were removed: they graded against
          fabricated "standard" lines (16.5 K / 2.5 HR) that no sportsbook
          actually posts — accuracy against a bet nobody can place is false
@@ -1545,7 +1604,7 @@ async function loadDay(){
     });
     MK.gm.sort((a,b)=>(b.conf||0)-(a.conf||0));
     ['hr'].forEach(m=>MK[m].sort((a,b)=>b.prob-a.prob));
-    ['kP','kB','bbP','bbB','tb'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
+    ['kP','kB','bbP','bbB','tb','gmT'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
     // LOCK RULE: any row that was VERIFIED in an earlier run (local or league Firebase)
     // keeps its original score — refresh only overrides unverified/projected rows.
     prog('Checking earlier runs…');
@@ -1674,7 +1733,7 @@ function showCached(){
 // game that day went Final — partial days regrade on the next Load.
 
 function dayTallies(rows,mk,res,dbgDate,quiet){
-  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0}};
+  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmT:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
     if(!r.verified||calGrade('gm',(r.conf||0)*100)<(CONFIG.gmLock||0)*100)return;
     const g=res['g'+r.id];
@@ -1705,7 +1764,7 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
       t[m].n++;if((o[stat]||0)>=1)t[m].h++;
     });
   });
-  ['kP','bbP','tb'].forEach(m=>{
+  ['kP','bbP','tb','gmT'].forEach(m=>{
     ((mk&&mk[m])||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag)return;
       const gr=lineGrade(r,MK_ACTUAL[m](res[r.id]||res[String(r.id)]));
@@ -1848,7 +1907,7 @@ function lineGrade(r,actual){
   if(actual<r.line)return r.lean==='UNDER'?'W':'L';
   return 'P';
 }
-const MK_ACTUAL={kB:o=>o?.so??null,bbB:o=>o?.bb??null,kP:o=>o?.pk??null,bbP:o=>o?.pbb??null,tb:o=>o?.tb??null,gmK:o=>o?.tk??null,hrL:o=>o?.thr??null};
+const MK_ACTUAL={kB:o=>o?.so??null,bbB:o=>o?.bb??null,kP:o=>o?.pk??null,bbP:o=>o?.pbb??null,tb:o=>o?.tb??null,gmT:o=>(o&&o.hs!=null&&o.as!=null)?o.hs+o.as:null,gmK:o=>o?.tk??null,hrL:o=>o?.thr??null};
 window.MK_ACTUAL=MK_ACTUAL;window.playedBat=playedBat;
 
 async function loadStoredDay(date){
@@ -2176,7 +2235,8 @@ const PB_META={
   gm:{tag:'GAME PREDICTIONS',what:'our pick wins the game',kind:'conf'},
   kP:{tag:'PITCHER K',what:'the pitcher goes OVER/UNDER his DraftKings strikeout line',kind:'edge',th:'kEdge'},
   bbP:{tag:'PITCHER BB',what:'the pitcher goes OVER/UNDER his DraftKings walk line',kind:'edge',th:'bbEdge'},
-  tb:{tag:'TOTAL BASES',what:'the batter goes OVER/UNDER his DraftKings total-bases line',kind:'edge',th:'tbEdge'}
+  tb:{tag:'TOTAL BASES',what:'the batter goes OVER/UNDER his DraftKings total-bases line',kind:'edge',th:'tbEdge'},
+  gmT:{tag:'GAME TOTALS',what:'combined runs go OVER/UNDER the DraftKings total',kind:'edge',th:'gtEdge'}
 };
 function pbLockOf(m){
   if(m==='hits')return Math.round(CONFIG.lock*100);
@@ -2323,10 +2383,10 @@ function wirePbNav(el){
    the same number — and they move the moment a threshold changes. */
 window.__AT=null;
 try{window.__AT=JSON.parse(localStorage.getItem('fablehits_at')||'null');}catch(e){}
-function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge'].map(k=>CONFIG[k]));}
+function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].map(k=>CONFIG[k]));}
 function atTalliesFor(D){
   const mk=D.mk||{},fm={...mk};
-  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge']].forEach(([m,k])=>{
+  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge'],['gmT','gtEdge']].forEach(([m,k])=>{
     const th=CONFIG[k]??0;
     fm[m]=(mk[m]||[]).filter(r=>r.line!=null&&r.exp!=null&&Math.abs(r.exp-r.line)>=th)
       .map(r=>({...r,lean:(r.exp-r.line)>=0?'OVER':'UNDER'}));
@@ -2405,8 +2465,8 @@ function drawCurrent(rowsOverride){
     drawGames(rows);
   }else{
     const withLine=rows.filter(r=>r.line!=null).length;
-    const unit=MARKET==='tb'?'total bases':MARKET==='gmK'?'combined strikeouts':MARKET==='hrL'?'combined home runs':MARKET.startsWith('k')?'strikeouts':'walks';
-    const who=(MARKET==='gmK'||MARKET==='hrL')?'games':MARKET.endsWith('P')?'pitchers':'batters';
+    const unit=MARKET==='tb'?'total bases':MARKET==='gmT'?'combined runs':MARKET==='gmK'?'combined strikeouts':MARKET==='hrL'?'combined home runs':MARKET.startsWith('k')?'strikeouts':'walks';
+    const who=(MARKET==='gmT'||MARKET==='gmK'||MARKET==='hrL')?'games':MARKET.endsWith('P')?'pitchers':'batters';
     const lineNote=(MARKET==='gmK'||MARKET==='hrL')?`<span class="chip">graded vs the standard ${MARKET==='gmK'?'16.5':'2.5'} line</span>`:`<span class="chip"><b>${withLine}</b> with DK lines${withLine?'':' — pull props on Diamond IQ main first'}</span>`;
     head.innerHTML=`<div class="chips">${rateChip(MARKET)}<span class="chip"><b>${rows.length}</b> ${who} · expected ${unit}</span>${lineNote}</div>`;
     drawLineList(rows);
@@ -2532,7 +2592,7 @@ function applyFilter(){
    only overrides unconfirmed matchups (confirmed ones are locked). */
 function hydrateCompact(remote){
   ROWS=(remote.rows||[]).map(r=>({...r,locked:!!r.verified,reasons:null,pAB:0,ab:0,splitMult:1,pitMult:1,ptMult:1,parkF:1}));
-  MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmK:[],hrL:[]};
+  MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmT:[],gmK:[],hrL:[]};
   if(remote.mk)Object.keys(MK).forEach(m=>{MK[m]=(remote.mk[m]||[]).map(r=>({...r,reasons:null}));});
   PENDING=[];
 }
@@ -2755,7 +2815,7 @@ async function runLabPrem(){
           await cfgPull();
           await pullLabCfgPrem();
           premShadowUpdate();
-          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge]);
+          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gtEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
           if(oldHash!==cfgHash){
@@ -2927,7 +2987,7 @@ async function runLabPrem(){
     else {setTxt('hs14','—');setTxt('hs14N','no graded picks');}
   }
 
-  const MKL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+  const MKL={gm:'GAME PREDICTIONS',gmT:'GAME TOTALS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
   let VIEW='14d', MKT='gm', EXP=null;
   const DAYC={};
   window.__stat={
