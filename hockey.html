@@ -99,7 +99,8 @@ const CAT_META = {
   goal:   { label: 'Goal Scorers',        th: 'props',  short: 'Goal' },
   point:  { label: 'Point Scorers',       th: 'props',  short: 'Point' },
   dkML:   { label: 'vs DK · ML value',    th: 'dk',     short: 'DK ML' },
-  dkTotal:{ label: 'vs DK · Total O/U',   th: 'dk',     short: 'DK Tot' }
+  dkTotal:{ label: 'vs DK · Total O/U',   th: 'dk',     short: 'DK Tot' },
+  dkPuck: { label: 'vs DK · Puck Line',   th: 'dk',     short: 'DK Puck' }
 };
 const TOL_KEY_BY_CAT = { total: 'goals', p1: 'p1' };
 const LOCK_DEFAULTS = { winner: 58, lines: 0, props: 40, dk: 0 };
@@ -136,7 +137,7 @@ const FB_ACC = 'nhl_accuracy';  // per-date raw graded units
 const FB_DK = 'nhl_dk';         // per-date DK line snapshots
 const ODDS_KEY_SHARED = '370bfb0e8958dcfc4e4880fedfb548b1'; // the-odds-api (shared)
 const MLBCFG = { p: 'mlb-bets-d196c', k: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' }; // Board settings project
-const DK_ODDS_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds/?regions=us&markets=h2h,totals&oddsFormat=american&bookmakers=draftkings&apiKey=';
+const DK_ODDS_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds/?regions=us&markets=h2h,totals,spreads&oddsFormat=american&bookmakers=draftkings&apiKey=';
 function fbReady(){ return FB.projectId.length > 0; }
 function fbDocUrl(col, doc){
   return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
@@ -479,6 +480,21 @@ function dkUnitsFromRecord(rec, proj, snap){
     units.push({ cat: 'dkTotal', metric: proj.winMetric, hit: hit, game: gm,
       desc: lean + ' ' + e.total + ' (proj ' + proj.total + ') → ' + aTot });
   }
+  // Puck line: projected home margin vs DK's spread (±1.5). Home covers when the
+  // actual margin beats −spreadHome; exact-line results push (no grade).
+  if (e.spreadHome != null){
+    const margin = rec.home.g - rec.away.g;
+    const projMargin = proj.eH - proj.eA;
+    const line = -e.spreadHome;
+    if (margin !== line){
+      const pickHome = projMargin > line;
+      const hit = pickHome ? margin > line : margin < line;
+      const side = pickHome ? rec.home.ab : rec.away.ab;
+      const sp = pickHome ? e.spreadHome : -e.spreadHome;
+      units.push({ cat: 'dkPuck', metric: proj.winMetric, hit: hit, game: gm,
+        desc: side + ' ' + (sp > 0 ? '+' : '') + sp + ' covers (proj margin ' + (Math.round(projMargin * 10) / 10) + ') → ' + margin });
+    }
+  }
   return units;
 }
 async function seedDkFromFB(){ try { state.dkByDate = await fbListCol(FB_DK); } catch (e) { state.dkByDate = state.dkByDate || {}; } return Object.keys(state.dkByDate || {}).length; }
@@ -734,7 +750,8 @@ const HB_META = {
   goal:   { tag: 'GOAL SCORERS',     what: 'the player scores a goal', th: 'props' },
   point:  { tag: 'POINT SCORERS',    what: 'the player records at least one point', th: 'props' },
   dkML:   { tag: 'DK MONEYLINE VALUE', what: 'our pick wins where our odds beat DraftKings’ implied price', th: 'dk', dk: true },
-  dkTotal:{ tag: 'DK TOTAL O/U',     what: 'our OVER/UNDER lean beats DraftKings’ posted total', th: 'dk', dk: true }
+  dkTotal:{ tag: 'DK TOTAL O/U',     what: 'our OVER/UNDER lean beats DraftKings’ posted total', th: 'dk', dk: true },
+  dkPuck: { tag: 'DK PUCK LINE',     what: 'our picked side covers the DraftKings puck line', th: 'dk', dk: true }
 };
 function hbName(n, tok){ return '<b class="hbname" data-tok="' + tok + '" style="cursor:pointer;border-bottom:1px dotted var(--dim,#8593a1)">' + esc(n) + '</b>'; }
 function hbMark(ok, extra){ if (ok == null) return ''; return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (extra != null ? esc(String(extra)) + ' ' : '') + (ok ? '✓' : '✗') + '</span>'; }
@@ -798,6 +815,17 @@ function hbRows(k){
         if (scored){ const aTot = rec.home.g + rec.away.g; if (aTot !== e.total){ mark = lean === 'OVER' ? aTot > e.total : aTot < e.total; extra = aTot; } }
         rows.push({ tok: tok, html: hbName(gm, tok) + ' — <b>' + lean + '</b> ' + e.total + hbMark(mark, extra), sub: 'proj ' + proj.total, grade: proj.winMetric,
           why: 'Our projected total is <b>' + proj.total + '</b> against DraftKings’ posted ' + e.total + ' — lean ' + lean + '.' });
+      } else if (k === 'dkPuck' && e.spreadHome != null){
+        const projMargin = proj.eH - proj.eA;
+        const line = -e.spreadHome;
+        const pickHome = projMargin > line;
+        const side = pickHome ? g.home.ab : g.away.ab;
+        const sp = pickHome ? e.spreadHome : -e.spreadHome;
+        const tok = 'dkPuck|' + g.id;
+        let mark = null, extra = null;
+        if (scored){ const m2 = rec.home.g - rec.away.g; if (m2 !== line){ mark = pickHome ? m2 > line : m2 < line; extra = (m2 > 0 ? '+' : '') + m2; } }
+        rows.push({ tok: tok, html: hbName(gm, tok) + ' — <b>' + esc(side) + ' ' + (sp > 0 ? '+' : '') + sp + '</b> covers' + hbMark(mark, extra), sub: 'proj margin ' + (Math.round(projMargin * 10) / 10), grade: proj.winMetric,
+          why: 'Projected home margin <b>' + (Math.round(projMargin * 10) / 10) + '</b> vs DraftKings’ puck line ' + (e.spreadHome > 0 ? '+' : '') + e.spreadHome + ' (home) — we take <b>' + esc(side) + '</b> to cover. Real DK line from the stored snapshot, never invented.' });
       }
     }
   }
@@ -1046,10 +1074,12 @@ async function runCronDkPull(){
       const bk = (ev.bookmakers || []).find(function(b){ return b.key === 'draftkings'; });
       if (!bk) continue;
       const mk = function(k){ return (bk.markets || []).find(function(m){ return m.key === k; }); };
-      const h2h = mk('h2h'), tot = mk('totals');
+      const h2h = mk('h2h'), tot = mk('totals'), spr = mk('spreads');
       const price = function(m, team){ const o = m && (m.outcomes || []).find(function(x){ return x.name === team; }); return o && o.price != null ? o.price : null; };
       const tO = tot && (tot.outcomes || []).find(function(x){ return x.name === 'Over'; });
-      games[gm] = { gm: gm, mlHome: price(h2h, ev.home_team), mlAway: price(h2h, ev.away_team), total: tO && tO.point != null ? tO.point : null };
+      const sH = spr && (spr.outcomes || []).find(function(x){ return x.name === ev.home_team; });
+      games[gm] = { gm: gm, mlHome: price(h2h, ev.home_team), mlAway: price(h2h, ev.away_team), total: tO && tO.point != null ? tO.point : null,
+        spreadHome: sH && sH.point != null ? sH.point : null, spHomeP: price(spr, ev.home_team), spAwayP: price(spr, ev.away_team) };
       n++;
     }
     await fbWrite(FB_DK, date, { date: date, fetched: new Date().toISOString(), games: games });
