@@ -5716,7 +5716,7 @@ function getRat(s,lockAt){
    RENDERING
    =================================================================== */
 function setMain(h){document.getElementById('main').innerHTML=h;}
-function todayStr(){return new Date().toISOString().split('T')[0];}
+function todayStr(){return new Date().toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}
 
 /* ============ DIAMOND IQ PREMIUM TAB ============ */
 // Reads the Premium app's graded results straight from the shared Firebase
@@ -8116,95 +8116,109 @@ function renderLocksCategory(catKey,catLabel,subsections){
 
 // Builds the locks section HTML for embedding into renderDashboard.
 // Returns '' when no slate is loaded.
+/* ═══ BETS FRONT — Pete's Picks format ════════════════════════════════════
+   Official header card + one card per bet type ordered by its REAL 14-day
+   success rate. Collapsed card = the qualifying locks; tap the card header =
+   every candidate with a hard BET LINE divider (red above, grey below).
+   Tap any row for the full why (the existing matchup breakdown modal).
+   The history badge + per-day drill from v6 lives on inside each card. */
+window.FL_OPEN=window.FL_OPEN||{};
+function flAddDays(dstr,n){
+  const d=new Date(dstr+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function flShiftDay(n){
+  const cur=STATE.date||document.getElementById('dp').value||todayStr();
+  const next=n===0?todayStr():flAddDays(cur,n);
+  const dp=document.getElementById('dp');
+  if(dp)dp.value=next;
+  window.FL_OPEN={};
+  loadAll();
+}
+function flDivider(th){
+  return `<tr><td colspan="6" style="padding:8px 4px"><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;border-top:2px dashed var(--rd)"></div><span style="font-size:.52rem;font-weight:800;letter-spacing:.08em;color:var(--rd);white-space:nowrap">BET LINE · ${th} — bet above, skip below</span><div style="flex:1;border-top:2px dashed var(--rd)"></div></div></td></tr>`;
+}
 function buildLocksSection(){
   if(!STATE.ready||!STATE.matchups.length)return '';
   // Background pull of past-date DK data so success rates can populate
   setTimeout(()=>pullDKHistoryWindow(),50);
-  
+
   const batterMatchups=STATE.matchups.filter(m=>m.kind==='batter');
-  const pitcherMatchups=STATE.matchups.filter(m=>m.kind==='pitcher');
   const totals=STATE.totals||[];
-  // DK odds/lines are a PREMIUM-ONLY feature — the free app never surfaces them.
-  const dkPropsLoaded=false;
-  const dkOddsLoaded=false;
-  
-  // ── BATTER ──
-  const batterSubsections=[];
-  // Hits — score only (no DK market)
-  const hitsScore=batterMatchups.filter(m=>m.hitScore>=LOCKS.hits).sort((a,b)=>b.hitScore-a.hitScore);
-  batterSubsections.push({label:'🎯 Hits',rateProp:'hits',preferDK:false,
-    rows:hitsScore.map(m=>batterScoreLockRow(m,m.hitScore,'hit'))});
-  // HR (1+) — score only (no DK 1+HR market)
-  const hrScore=batterMatchups.filter(m=>m.hrScore>=LOCKS.hr).sort((a,b)=>b.hrScore-a.hrScore);
-  batterSubsections.push({label:'💥 Home Runs',rateProp:'hr',preferDK:false,
-    rows:hrScore.map(m=>batterScoreLockRow(m,m.hrScore,'hr'))});
-  // TB — DK ONLY. If DK props not loaded, skip entirely (per user spec).
-  if(dkPropsLoaded){
-    const tbDK=collectDKLocks(batterMatchups,'batter_total_bases','expectedTB',DK_LOCKS.tb,'batterName');
-    batterSubsections.push({label:'🏟️ Total Bases · DK',rateProp:'tb',preferDK:true,rows:tbDK.map(dkPickRow)});
-  }
-  // Walks — DK ONLY
-  if(dkPropsLoaded){
-    const bbDK=collectDKLocks(batterMatchups,'batter_walks','expectedBB',DK_LOCKS.bb,'batterName');
-    batterSubsections.push({label:'🚶 Walks · DK',rateProp:'bb',preferDK:true,rows:bbDK.map(dkPickRow)});
-  }
-  // Batter Ks — DK ONLY
-  if(dkPropsLoaded){
-    const bbatDK=collectDKLocks(batterMatchups,'batter_strikeouts','batterExpectedK',DK_LOCKS.bbat,'batterName');
-    batterSubsections.push({label:'⚡ Strikeouts · DK',rateProp:'bbat',preferDK:true,rows:bbatDK.map(dkPickRow)});
-  }
-  
-  // ── PITCHER — DK ONLY ──
-  const pitcherSubsections=[];
-  if(dkPropsLoaded){
-    const pKDK=collectDKLocks(pitcherMatchups,'pitcher_strikeouts','expectedK',DK_LOCKS.k,'pitcherName');
-    pitcherSubsections.push({label:'⚡ Strikeouts · DK',rateProp:'k',preferDK:true,rows:pKDK.map(dkPickRow)});
-    const pBBDK=collectDKLocks(pitcherMatchups,'pitcher_walks','expectedBB',DK_LOCKS.pbb,'pitcherName');
-    pitcherSubsections.push({label:'🚶 Walks Allowed · DK',rateProp:'pbb',preferDK:true,rows:pBBDK.map(dkPickRow)});
-  }
-  
-  // ── GAME ──
-  const gameSubsections=[];
-  // Run Totals — DK only
-  if(dkOddsLoaded){
-    const runTotalDKLocks=[];
-    totals.forEach(t=>{
-      if(t.total==null||!isFinite(t.total))return; // skip games missing a projection
-      const odds=getOddsForGame(STATE.date,t.game.home.name,t.game.away.name);
-      if(!odds?.total?.point)return;
-      const edge=t.total-odds.total.point;
-      if(Math.abs(edge)<DK_LOCKS.tot)return;
-      runTotalDKLocks.push({t,dkLine:odds.total.point,edge,pick:edge>0?'OVER':'UNDER'});
-    });
-    runTotalDKLocks.sort((a,b)=>Math.abs(b.edge)-Math.abs(a.edge));
-    gameSubsections.push({label:'🎯 Run Totals · DK',rateProp:'tot',preferDK:true,rows:runTotalDKLocks.map(gameTotalRow)});
-  }
-  // HR O/U 1.5 — SCORE lock split into two separate bets so success rates track independently
-  const hrLineLocks=totals.filter(t=>t.hrLineScore!=null&&t.hrLineScore>=LOCKS.hrLine);
-  const hrOverLocks=hrLineLocks.filter(t=>t.hrLinePick==='Over').sort((a,b)=>b.hrLineScore-a.hrLineScore);
-  const hrUnderLocks=hrLineLocks.filter(t=>t.hrLinePick==='Under').sort((a,b)=>b.hrLineScore-a.hrLineScore);
-  gameSubsections.push({label:'💥 HR Over 1.5',rateProp:'hrOver',preferDK:false,
-    rows:hrOverLocks.map(hrScoreLockRow)});
-  gameSubsections.push({label:'💥 HR Under 1.5',rateProp:'hrUnder',preferDK:false,
-    rows:hrUnderLocks.map(hrScoreLockRow)});
-  
-  // Banner when DK not loaded explaining why most categories are sparse
-  const dkBanner=(!dkPropsLoaded||!dkOddsLoaded)?
-    `<div style="padding:8px 12px;background:rgba(255,184,0,.08);border-bottom:1px solid var(--bdr2);font-size:.55rem;color:var(--gd);line-height:1.4">
-      ⚠ DK ${!dkPropsLoaded&&!dkOddsLoaded?'odds and props':!dkPropsLoaded?'player props':'game odds'} not loaded
-    </div>`:'';
-  
-  return `
-    <div class="locks-section">
-      <div class="locks-header">
-        <span style="font-family:'Bebas Neue',sans-serif;font-size:1.05rem;letter-spacing:1.5px">🔒 TODAY'S LOCKS</span>
+
+  // Every active (free-tier) bet type: candidates + lock threshold + row builder
+  const cats={
+    hits:{tag:'🎯 HITS',what:'the batter gets 1+ hit',th:LOCKS.hits,
+      all:batterMatchups.filter(m=>m.hitScore!=null).sort((a,b)=>b.hitScore-a.hitScore).slice(0,20),
+      score:m=>m.hitScore,row:m=>batterScoreLockRow(m,m.hitScore,'hit')},
+    hr:{tag:'💥 HOME RUNS',what:'the batter homers',th:LOCKS.hr,
+      all:batterMatchups.filter(m=>m.hrScore!=null).sort((a,b)=>b.hrScore-a.hrScore).slice(0,20),
+      score:m=>m.hrScore,row:m=>batterScoreLockRow(m,m.hrScore,'hr')},
+    hrOver:{tag:'💥 HR OVER 1.5',what:'the game clears 2+ combined homers',th:LOCKS.hrLine,
+      all:totals.filter(t=>t.hrLineScore!=null&&t.hrLinePick==='Over').sort((a,b)=>b.hrLineScore-a.hrLineScore),
+      score:t=>t.hrLineScore,row:t=>hrScoreLockRow(t)},
+    hrUnder:{tag:'💥 HR UNDER 1.5',what:'the game stays under 1.5 combined homers',th:LOCKS.hrLine,
+      all:totals.filter(t=>t.hrLineScore!=null&&t.hrLinePick==='Under').sort((a,b)=>b.hrLineScore-a.hrLineScore),
+      score:t=>t.hrLineScore,row:t=>hrScoreLockRow(t)}
+  };
+
+  const ds=STATE.date||todayStr();
+  const today=todayStr();
+  const kick=ds===today?'Today’s slate · MLB · Free':(ds<today?'Earlier slate · MLB · Free':'Upcoming slate · MLB · Free');
+  const pretty=(()=>{try{return new Date(ds+'T12:00:00Z').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'UTC'});}catch(e){return ds;}})();
+  const navBtn='flex:1;background:rgba(255,255,255,.05);border:1px solid var(--bdr2);color:var(--tx);border-radius:9px;padding:7px 0;font-size:.6rem;font-weight:700;cursor:pointer';
+  let html=`
+    <div style="background:var(--card,#10151f);border:1px solid rgba(248,113,113,.35);border-radius:13px;padding:15px 16px 12px;margin-bottom:11px">
+      <div style="font-size:.58rem;font-weight:800;letter-spacing:.2em;color:var(--rd);text-transform:uppercase">${kick}</div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:1px;margin:3px 0 1px">${pretty}</div>
+      <div style="font-size:.6rem;color:var(--mt)">Diamond IQ Free · every pick graded against the box score</div>
+      <div style="display:flex;gap:6px 14px;flex-wrap:wrap;margin-top:10px;border-top:1px solid var(--bdr2);padding-top:8px;font-size:.56rem;color:var(--mt)">
+        <span><b style="color:var(--rd)">##</b> = confidence grade</span>
+        <span>ranked by real success rate</span>
+        <span>tap a <b style="color:var(--tx)">row</b> — why</span>
+        <span>tap a <b style="color:var(--tx)">card</b> — bet line</span>
       </div>
-      ${dkBanner}
-      ${renderLocksCategory('batter','⚾ Batter',batterSubsections)}
-      ${renderLocksCategory('pitcher','🎯 Pitcher',pitcherSubsections)}
-      ${renderLocksCategory('game','🎲 Game',gameSubsections)}
-    </div>
-  `;
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button style="${navBtn}" onclick="flShiftDay(-1)">‹ prev day</button>
+        ${ds!==today?`<button style="${navBtn};border-color:rgba(248,113,113,.5);color:var(--rd);font-weight:800" onclick="flShiftDay(0)">today</button>`:''}
+        <button style="${navBtn}" onclick="flShiftDay(1)">next day ›</button>
+      </div>
+    </div>`;
+
+  const order=Object.keys(cats).map(k=>{
+    const st=historicalLockStats(k);
+    return {k,pct:st&&st.totalN?st.totalRate:-1,st};
+  }).sort((a,b)=>b.pct-a.pct);
+
+  for(const {k,st} of order){
+    const c=cats[k];
+    if(!c.all.length)continue;
+    const locks=c.all.filter(x=>c.score(x)>=c.th);
+    const open=!!window.FL_OPEN[k];
+    const rateTxt=(st&&st.totalN)?`this bet type has hit <b style="color:var(--tx)">${st.totalRate}%</b> of the time (${st.totalHits}/${st.totalN} · 14d)`:'';
+    html+=`
+    <div style="background:var(--card,#10151f);border:1px solid var(--bdr2);border-radius:13px;padding:11px 12px;margin-bottom:11px">
+      <div style="cursor:pointer" onclick="FL_OPEN['${k}']=!FL_OPEN['${k}'];renderTab()">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <div style="font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--rd)">${c.tag} <span style="color:var(--mt);font-weight:600;font-size:.6rem">${open?'▴':'▾'}</span></div>
+          ${rateTxt?`<span style="font-size:.56rem;color:var(--mt)">${rateTxt}</span>`:''}
+        </div>
+        <div style="font-size:.56rem;color:var(--mt2);margin:2px 0 4px">Bet = ${c.what} · bet line: score <b style="color:var(--tx)">${c.th}+</b></div>
+      </div>
+      <div style="margin:2px 0 6px">${renderHistoryBadge(k)}</div>`;
+    if(!open){
+      html+=locks.length
+        ?`<table style="width:100%;font-size:.6rem;border-collapse:collapse">${locks.map(c.row).join('')}</table>`
+        :`<div style="font-size:.58rem;color:var(--mt);padding:3px 0">No picks clear the bet line today — tap the card to see every candidate.</div>`;
+    }else{
+      const above=c.all.filter(x=>c.score(x)>=c.th).map(c.row).join('');
+      const below=c.all.filter(x=>c.score(x)<c.th).map(c.row).join('');
+      html+=`<table style="width:100%;font-size:.6rem;border-collapse:collapse">${above}${below?flDivider(c.th)+`<tbody style="opacity:.45">${below}</tbody>`:''}</table>`;
+      if(!below)html+=`<div style="font-size:.56rem;color:var(--mt2);padding:3px 0 0">Everyone shown clears the bet line.</div>`;
+    }
+    html+=`</div>`;
+  }
+  return html;
 }
 
 function renderResults(){
