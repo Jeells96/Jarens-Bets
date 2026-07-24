@@ -3173,6 +3173,7 @@ async function runLabPrem(){
     for (var i = 0; i < list.length; i++){ var m = list[i];
       if (norm(m.code) !== norm(s.code)) continue;              // must match THEIR personal code
       if (m.name != null && norm(m.name) !== norm(s.name)) continue; // AND their name
+      if (m.paidUntil && String(m.paidUntil) < new Date().toLocaleDateString('en-CA')) continue; // membership expired — locked out until renewed
       return { ok: true, apps: Array.isArray(m.apps) ? m.apps : null, dk: m.dk !== false, dkMode: m.dkMode || (m.dk === false ? 'off' : 'unlimited') };
     }
     return { ok: false };

@@ -1054,6 +1054,7 @@ function memberMatch(name, code, list){
     var m = list[i];
     if (norm(m.code) !== norm(code)) continue;              // must match THEIR personal code
     if (m.name != null && norm(m.name) !== norm(name)) continue; // AND their name
+    if (m.paidUntil && String(m.paidUntil) < new Date().toLocaleDateString('en-CA')) continue; // membership expired — locked out until renewed
     return { ok: true, apps: Array.isArray(m.apps) ? m.apps : null, dk: m.dk !== false, member: m };
   }
   return { ok: false };
@@ -1688,6 +1689,10 @@ async function openSettingsPanel(){
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">' +
         '<input type="text" class="m-name" value="' + esc(m.name || '') + '" placeholder="first & last name" autocapitalize="words" style="margin:0;flex:1;min-width:60px">' +
         '<input type="text" class="m-code" value="' + esc(m.code || '') + '" placeholder="their code" autocapitalize="none" style="margin:0;flex:1;min-width:60px">' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="hint" style="white-space:nowrap">paid until</span>' +
+        '<input type="date" class="m-paid" value="' + esc(m.paidUntil || '') + '" style="margin:0;flex:1">' +
+        '<span class="hint" style="white-space:nowrap;color:' + (function(pu){ if (!pu) return 'var(--dim2)'; var t = new Date().toLocaleDateString('en-CA'); if (pu < t) return '#ff7a7a'; var soon = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA'); return pu <= soon ? '#ffb454' : '#7fd99a'; })(m.paidUntil) + '">' + (function(pu){ if (!pu) return 'no expiry'; var t = new Date().toLocaleDateString('en-CA'); return pu < t ? 'EXPIRED' : 'active'; })(m.paidUntil) + '</span>' +
         '<button class="close m-del" style="width:auto;margin:0;padding:4px 6px;color:#ff7a7a">\u2715</button></div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px">' +
         '<select class="m-tier" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' +
@@ -1772,6 +1777,16 @@ async function openSettingsPanel(){
     '<div id="stab-members">' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + DK odds the 1st–15th; <b>$20</b> = all sports + ⚡ Super Locks + DK the 1st–15th; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
+    (function(){
+      var t = new Date().toLocaleDateString('en-CA');
+      var soon = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA');
+      var expired = members.filter(function(m){ return m.paidUntil && m.paidUntil < t; }).map(function(m){ return m.name; });
+      var expiring = members.filter(function(m){ return m.paidUntil && m.paidUntil >= t && m.paidUntil <= soon; }).map(function(m){ return m.name + ' (' + m.paidUntil + ')'; });
+      var bits = [];
+      if (expired.length) bits.push('<div class="hint" style="color:#ff7a7a;margin:2px 0"><b>EXPIRED (locked out):</b> ' + esc(expired.join(', ')) + '</div>');
+      if (expiring.length) bits.push('<div class="hint" style="color:#ffb454;margin:2px 0"><b>Expiring within 7 days:</b> ' + esc(expiring.join(', ')) + '</div>');
+      return bits.length ? '<div style="border:1px solid var(--hair2);border-radius:9px;padding:8px 10px;margin-bottom:10px">' + bits.join('') + '</div>' : '';
+    })() +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
@@ -1909,9 +1924,11 @@ async function openSettingsPanel(){
       var apps = [];
       row.querySelectorAll('.m-app').forEach(function(cb){ if (cb.checked) apps.push(cb.getAttribute('data-app')); });
       var dkMode = row.querySelector('.m-dkmode').value;
+      var paidEl = row.querySelector('.m-paid');
       out.push({ name: name, code: code,
         apps: apps.length === APP_KEYS.length ? null : apps,
         dk: dkMode !== 'off', dkMode: dkMode,
+        paidUntil: paidEl && paidEl.value ? paidEl.value : null,
         tier: row.querySelector('.m-tier').value, sport: row.querySelector('.m-sport').value });
     });
     return out;
