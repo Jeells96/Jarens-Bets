@@ -1162,6 +1162,8 @@ body{font-size:16px}
             <label class="market-toggle"><input type="checkbox" data-market="player_pass_yds"><span>Player pass yds</span></label>
             <label class="market-toggle"><input type="checkbox" data-market="player_rush_yds"><span>Player rush yds</span></label>
             <label class="market-toggle"><input type="checkbox" data-market="player_reception_yds"><span>Player rec yds</span></label>
+            <label class="market-toggle"><input type="checkbox" data-market="player_receptions"><span>Player receptions</span></label>
+            <label class="market-toggle"><input type="checkbox" data-market="player_pass_tds"><span>Player pass TDs</span></label>
             <label class="market-toggle"><input type="checkbox" data-market="player_anytime_td"><span>Anytime TD</span></label>
           </div>
           <div class="setting-note" id="dk-quota-est"></div>
@@ -1206,11 +1208,13 @@ body{font-size:16px}
           <label class="lock-th-row"><span>First TD · min P(first) %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="firstTd"></label>
           <label class="lock-th-row"><span>Player yards · min model conf %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="yards"></label>
           <label class="lock-th-row"><span>Game lines · min model conf %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="lines"></label>
+          <label class="lock-th-row"><span>ATS (DK spread) · min cover prob %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="dk"></label>
         </div>
         <div class="setting-note" style="margin-top:12px">Hit tolerances — how close a projection must land to count as correct. Applies to scores/totals (pts) and every yardage prop (yds). Changing these re-grades all records instantly.</div>
         <div class="lock-th-grid">
           <label class="lock-th-row"><span>Scores &amp; totals · ± points</span><input type="number" min="0.5" max="50" step="0.5" inputmode="decimal" data-hittol="pts"></label>
           <label class="lock-th-row"><span>Yardage props · ± yards</span><input type="number" min="1" max="50" inputmode="numeric" data-hittol="yds"></label>
+          <label class="lock-th-row"><span>Count props (receptions / pass TDs) · ± count</span><input type="number" min="0.5" max="6" step="0.5" inputmode="decimal" data-hittol="cnt"></label>
         </div>
         <div class="setting-note" id="lock-th-note"></div>
         <div class="lock-tune">
@@ -1222,8 +1226,10 @@ body{font-size:16px}
               <option value="firstTd">First TD</option>
               <option value="yards">Player yards</option>
               <option value="lines">Game lines</option>
+              <option value="dk">ATS (DK spread)</option>
               <option value="tolPts">± points (scores/totals)</option>
               <option value="tolYds">± yards (yardage props)</option>
+              <option value="tolCnt">± count (receptions / pass TDs)</option>
             </select>
             <input type="number" id="tune-target" min="1" max="99" inputmode="numeric" placeholder="target %">
             <button class="chip" id="tune-find">Find</button>
@@ -1291,7 +1297,7 @@ const ODDS_API = {
   bookmaker: 'draftkings',
   cacheMs: 1000 * 60 * 60 * 12, // 12h cache for odds responses (matches main cache)
 };
-const ALL_MARKETS = ['h2h','spreads','totals','player_pass_yds','player_rush_yds','player_reception_yds','player_anytime_td'];
+const ALL_MARKETS = ['h2h','spreads','totals','player_pass_yds','player_rush_yds','player_reception_yds','player_anytime_td','player_receptions','player_pass_tds'];
 const SETTINGS_PIN = '2325';          // admin PIN — settings + master key for the paywall
 const SETTINGS_LS_KEY = 'gl_settings_v1';
 const EVENT_LOG_MAX = 200;
@@ -1377,10 +1383,10 @@ async function fsListDocs(collectionPath, pageSize) {
    real numbers. Applied per bet category from the Board (accuracy/lab_cfg —
    one tiny doc read on open); the threshold itself never changes. */
 let LAB_CFG = null;
-const LAB_CATS = ['winner', 'total', 'teamPts', 'teamYds', 'playerYds', 'anytimeTd', 'firstTd'];
+const LAB_CATS = ['winner', 'total', 'teamPts', 'teamYds', 'playerYds', 'anytimeTd', 'firstTd', 'dkSpread', 'playerRecCnt', 'playerPassTd'];
 const FINE2LAB = { winner: 'winner', total: 'total', awayPts: 'teamPts', homePts: 'teamPts',
   teamPass: 'teamYds', teamRush: 'teamYds', playerPass: 'playerYds', playerRush: 'playerYds', playerRec: 'playerYds',
-  anytimeTd: 'anytimeTd', firstTd: 'firstTd' };
+  anytimeTd: 'anytimeTd', firstTd: 'firstTd', dkSpread: 'dkSpread', playerRecCnt: 'playerRecCnt', playerPassTd: 'playerPassTd' };
 function calApply(map, g) { if (!map || !map.bins) return g; for (const b of map.bins) { if (g >= b.lo && g < b.hi) return b.rate; } return g; }
 function calGrade(fineCat, g) {
   const lab = FINE2LAB[fineCat] || fineCat;
@@ -1585,11 +1591,12 @@ const LOCK_DEFAULTS = {
   firstTd: 0,      // min P(first TD) %
   yards: 0,        // min model confidence % for player yard props
   lines: 0,        // min model confidence % for totals / scores / team yards
+  dk: 55,          // min cover probability % for ATS (DK spread) picks
 };
 // Hit tolerances — what counts as "correct" for score/yardage projections.
 // Editable in Settings and tunable to a target success rate, exactly like
 // lock thresholds. pts: game totals & team scores. yds: every yardage prop.
-const TOL_DEFAULTS = { pts: HIT_TOTAL_TOL, yds: HIT_YDS_TOL };
+const TOL_DEFAULTS = { pts: HIT_TOTAL_TOL, yds: HIT_YDS_TOL, cnt: 1 };
 function hitTol(key) {
   const ht = (state.settings && state.settings.hitTol) || {};
   const v = +ht[key];
@@ -2271,6 +2278,7 @@ function extractPlayersFromSummary(summary) {
       const labels = grp.labels || [];
       const ydsIdx = labels.findIndex(l => l === 'YDS');
       const tdIdx = labels.findIndex(l => l === 'TD');
+      const recIdx = cat === 'receiving' ? labels.findIndex(l => l === 'REC') : -1;
       const athletes = grp.athletes || [];
       athletes.forEach((ath, athIdx) => {
         const a = ath.athlete || {};
@@ -2287,6 +2295,7 @@ function extractPlayersFromSummary(summary) {
             position: posMap[String(a.id)] || resolvePosition(a),
             passYds: 0, rushYds: 0, recYds: 0,
             passTds: 0, rushTds: 0, recTds: 0,
+            receptions: 0,
           };
           players.push(p);
         }
@@ -2295,7 +2304,7 @@ function extractPlayersFromSummary(summary) {
         }
         if (cat === 'passing')   { p.passYds += yds; p.passTds += tds; }
         else if (cat === 'rushing')   { p.rushYds += yds; p.rushTds += tds; }
-        else if (cat === 'receiving') { p.recYds += yds; p.recTds += tds; }
+        else if (cat === 'receiving') { p.recYds += yds; p.recTds += tds; if (recIdx >= 0) p.receptions += +stats[recIdx] || 0; }
       });
     }
   }
@@ -2375,6 +2384,7 @@ async function loadPriorSeasonAggregate(season, progressFn) {
           name: p.name, team: p.team, abbr: p.abbr, position: p.position,
           passYds: 0, rushYds: 0, recYds: 0,
           passTds: 0, rushTds: 0, recTds: 0,
+          receptions: 0,
           games: 0,
         };
       }
@@ -2386,6 +2396,7 @@ async function loadPriorSeasonAggregate(season, progressFn) {
         playerAgg[p.id].passTds += p.passTds;
         playerAgg[p.id].rushTds += p.rushTds;
         playerAgg[p.id].recTds += p.recTds;
+        playerAgg[p.id].receptions += p.receptions || 0;
         playerAgg[p.id].games++;
       }
     }
@@ -2418,6 +2429,7 @@ async function loadPriorSeasonAggregate(season, progressFn) {
         passTds: p.passTds / p.games,
         rushTds: p.rushTds / p.games,
         recTds:  p.recTds  / p.games,
+        receptions: (p.receptions || 0) / p.games,
       },
       games: p.games,
     };
@@ -2593,6 +2605,7 @@ async function loadWeek() {
               week: w,
               passYds: p.passYds, rushYds: p.rushYds, recYds: p.recYds,
               passTds: p.passTds, rushTds: p.rushTds, recTds: p.recTds,
+              receptions: p.receptions || 0,
             });
           }
         }
@@ -3038,17 +3051,17 @@ function projectPlayer(p) {
     if (usedRows.length) {
       // Exponential recency weighting: latest games count most
       let sumW = 0;
-      const acc = { passYds: 0, rushYds: 0, recYds: 0, passTds: 0, rushTds: 0, recTds: 0 };
+      const acc = { passYds: 0, rushYds: 0, recYds: 0, passTds: 0, rushTds: 0, recTds: 0, receptions: 0 };
       for (const r of usedRows) {
         const wt = Math.pow(PLAYER_RECENCY_DECAY, Math.max(0, (state.week - 1) - r.week));
         sumW += wt;
-        for (const k in acc) acc[k] += wt * r[k];
+        for (const k in acc) acc[k] += wt * (r[k] || 0);
       }
       curAvg = { games: usedRows.length };
       for (const k in acc) curAvg[k] = sumW ? acc[k] / sumW : 0;
       // Shrink toward zero-usage baseline for tiny samples (1-game wonders)
       const shrink = usedRows.length / (usedRows.length + SHRINK_K_PLAYER);
-      for (const k of ['passYds','rushYds','recYds','passTds','rushTds','recTds']) curAvg[k] *= (0.5 + 0.5 * shrink);
+      for (const k of ['passYds','rushYds','recYds','passTds','rushTds','recTds','receptions']) curAvg[k] *= (0.5 + 0.5 * shrink);
       curAvg.shrink = shrink;
     }
   }
@@ -3059,7 +3072,7 @@ function projectPlayer(p) {
   if (curAvg && lastAvg) {
     const cw = 1 - w, pw = w;
     blended = {};
-    for (const k of ['passYds','rushYds','recYds','passTds','rushTds','recTds']) {
+    for (const k of ['passYds','rushYds','recYds','passTds','rushTds','recTds','receptions']) {
       blended[k] = cw * curAvg[k] + pw * lastAvg[k];
     }
     mode = 'blend';
@@ -3893,8 +3906,15 @@ function findDKEventForGame(g) {
   // DK uses full team names like "Buffalo Bills"; ESPN uses .name same way usually.
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
   const awayN = norm(g.away.name), homeN = norm(g.home.name);
+  // byEvent accumulates ALL season, so require the stored event to be THIS
+  // week's meeting — never grade a past game against a later rematch's line.
+  const near = ev => {
+    if (!ev.commenceTime || !g.date) return true;
+    return Math.abs(new Date(ev.commenceTime).getTime() - new Date(g.date).getTime()) < 6 * 86400000;
+  };
   for (const id in state.dkOdds.byEvent) {
     const ev = state.dkOdds.byEvent[id];
+    if (!near(ev)) continue;
     if ((norm(ev.away) === awayN && norm(ev.home) === homeN) ||
         (norm(ev.home) === awayN && norm(ev.away) === homeN)) {
       return ev;
@@ -3903,6 +3923,7 @@ function findDKEventForGame(g) {
   // Fallback: substring match
   for (const id in state.dkOdds.byEvent) {
     const ev = state.dkOdds.byEvent[id];
+    if (!near(ev)) continue;
     if (norm(ev.away).includes(awayN.slice(-6)) && norm(ev.home).includes(homeN.slice(-6))) return ev;
   }
   return null;
@@ -4091,6 +4112,9 @@ const CAT_META = {
   playerRec:  { label: 'Player Rec Yds ±10',  th: 'yards',     short: 'Rec yds' },
   anytimeTd:  { label: 'TD Locks (rush/rec)', th: 'anytimeTd', short: 'TD lock' },
   firstTd:    { label: 'First TD Pick',       th: 'firstTd',   short: '1st TD' },
+  dkSpread:   { label: 'ATS (DK Spread)',     th: 'dk',        short: 'ATS' },
+  playerRecCnt: { label: 'Receptions ±1',     th: 'yards',     short: 'Receptions' },
+  playerPassTd: { label: 'QB Pass TDs ±1',    th: 'yards',     short: 'Pass TDs' },
 };
 function catDesc(k) {
   const t = lockTh(CAT_META[k].th);
@@ -4098,6 +4122,8 @@ function catDesc(k) {
   if (k === 'winner') return 'Projected winner correct' + gate;
   if (k === 'anytimeTd') return 'Scored a rush/rec TD (never passing)' + gate;
   if (k === 'firstTd') return 'Pick scored the actual first rush/rec TD' + gate;
+  if (k === 'dkSpread') return 'Picked side covers the real DraftKings spread' + gate;
+  if (TOL_KEY_BY_CAT[k] === 'cnt') return 'Within ±' + hitTol('cnt') + (k === 'playerRecCnt' ? ' catches' : ' passing TDs') + gate;
   if (['total','awayPts','homePts'].includes(k)) return 'Within ±' + hitTol('pts') + ' pts' + gate;
   return 'Within ±' + hitTol('yds') + ' yds' + gate;
 }
@@ -4192,8 +4218,8 @@ function findToleranceForTarget(tolKey, targetPct) {
   }
   const pool = units.filter(u => TOL_KEY_BY_CAT[u.cat] === tolKey && u.adelta != null && unitQualifies(u));
   if (!pool.length) return null;
-  const step = tolKey === 'pts' ? 0.5 : 1;
-  const maxT = tolKey === 'pts' ? 21 : 40;
+  const step = tolKey === 'yds' ? 1 : 0.5;
+  const maxT = tolKey === 'pts' ? 21 : tolKey === 'cnt' ? 6 : 40;
   let best = null;
   for (let t = step; t <= maxT; t += step) {
     const hit = pool.reduce((c, u) => c + (u.adelta <= t ? 1 : 0), 0);
@@ -4213,6 +4239,7 @@ const TOL_KEY_BY_CAT = {
   total: 'pts', awayPts: 'pts', homePts: 'pts',
   teamPass: 'yds', teamRush: 'yds',
   playerPass: 'yds', playerRush: 'yds', playerRec: 'yds',
+  playerRecCnt: 'cnt', playerPassTd: 'cnt',
 };
 // Hit under CURRENT tolerances. Units store the raw miss distance (adelta), so
 // tolerance changes re-grade instantly. Falls back to the baked hit for units
@@ -4225,6 +4252,7 @@ function unitHit(u) {
 function catLabel(k) {
   if (['total','awayPts','homePts'].includes(k)) return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('pts'));
   if (TOL_KEY_BY_CAT[k] === 'yds') return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('yds'));
+  if (TOL_KEY_BY_CAT[k] === 'cnt') return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('cnt'));
   return CAT_META[k].label;
 }
 // Aggregate raw units into per-category records, applying CURRENT thresholds
@@ -4266,6 +4294,25 @@ function gradeWeek() {
         const actAbbr = actualWinner === 'home' ? g.home.abbr : g.away.abbr;
         units.push({ cat: 'winner', metric: pickProb, hit: proj.projWinner === actualWinner, game: gm,
           desc: 'pick ' + projAbbr + ' (' + pickProb.toFixed(0) + '%) → ' + actAbbr });
+      }
+    }
+
+    // ATS — projected margin vs the REAL stored DraftKings spread (pushes skip)
+    {
+      const dkEv = findDKEventForGame(g);
+      const spr = dkEv && dkEv.markets && dkEv.markets.spreads;
+      const homeLine = spr ? spr.find(o => o.name === g.home.name || o.name === dkEv.home) : null;
+      if (homeLine && homeLine.point != null && g.home.score != null) {
+        const dkHomeSpread = +homeLine.point;
+        const actualHomeMargin = g.home.score - g.away.score;
+        if (actualHomeMargin !== -dkHomeSpread) {
+          const pHome = normCdf(((proj.homePts - proj.awayPts) + dkHomeSpread) / MARGIN_SIGMA);
+          const pickHome = pHome >= 0.5;
+          const metric = Math.round(Math.max(pHome, 1 - pHome) * 100);
+          const homeCovers = actualHomeMargin > -dkHomeSpread;
+          units.push({ cat: 'dkSpread', metric, hit: pickHome === homeCovers, game: gm,
+            desc: (pickHome ? g.home.abbr : g.away.abbr) + ' ' + fmtSigned(pickHome ? dkHomeSpread : -dkHomeSpread, 1) + ' covers (' + metric + '%) → ' + (homeCovers ? g.home.abbr : g.away.abbr) + ' covered' });
+        }
       }
     }
 
@@ -4343,6 +4390,16 @@ function gradeWeek() {
           desc: firstPick.name + ' (' + pFirst.toFixed(0) + '%) → actual: ' + actualName });
       }
     }
+  }
+
+  // Count props — receptions + QB pass TDs, graded ±hitTol('cnt')
+  for (const r of gatherCountProps()) {
+    if (!r.completed || r.actual == null) continue;
+    const g2 = state.games.find(x => String(x.id) === String(r.gameId));
+    const gm2 = g2 ? g2.away.abbr + '@' + g2.home.abbr : '';
+    const delta = r.actual - r.projCnt;
+    units.push({ cat: r.cat, metric: r.conf, adelta: Math.abs(delta), hit: Math.abs(delta) <= hitTol('cnt'), game: gm2,
+      desc: r.name + ' ' + (r.cat === 'playerRecCnt' ? 'receptions' : 'pass TDs') + ' ' + r.projCnt + ' → ' + r.actual + ' (' + fmtSigned(delta, 1) + ') · conf ' + r.conf + '%' });
   }
 
   const cats = aggregateUnits(units);
@@ -5002,6 +5059,78 @@ function gatherAllProps() {
   return out;
 }
 
+// ---- Count props (V6.1): receptions + QB pass TDs, graded ±hitTol('cnt') ----
+// Same walk-forward machinery as the yardage props, but the projected quantity
+// is a COUNT, so it gets its own sigma priors and its own ± tolerance knob.
+const CNT_SIGMA_PRIOR = {
+  receptions: { WR: 2.0, TE: 1.8, RB: 1.7, QB: 0.5 },
+  passTds:    { QB: 1.15, WR: 0.3, TE: 0.3, RB: 0.3 },
+};
+function playerCntSigma(p, key, pos) {
+  const prior = (CNT_SIGMA_PRIOR[key] || {})[pos] || 1.5;
+  const cur = state.priorPlayer[p.id];
+  const rows = cur && cur.rows ? cur.rows.filter(r => r.week < state.week && r[key] != null) : [];
+  if (rows.length < 2) return { sigma: prior, n: rows.length };
+  const w = rows.map(r => Math.pow(PLAYER_RECENCY_DECAY, Math.max(0, (state.week - 1) - r.week)));
+  let sumW = 0, mean = 0;
+  rows.forEach((r, i) => { sumW += w[i]; mean += w[i] * (r[key] || 0); });
+  mean = sumW ? mean / sumW : 0;
+  let varSum = 0;
+  rows.forEach((r, i) => { varSum += w[i] * Math.pow((r[key] || 0) - mean, 2); });
+  const playerSigma = Math.sqrt(sumW ? varSum / sumW : 0);
+  const shrink = rows.length / (rows.length + 3);
+  return { sigma: Math.max(0.4, shrink * playerSigma + (1 - shrink) * prior), n: rows.length };
+}
+function cntConfidence(p, key, pos, injuryStatus) {
+  const sg = playerCntSigma(p, key, pos);
+  let conf = (2 * normCdf(hitTol('cnt') / sg.sigma) - 1) * 100;
+  if (injuryStatus === 'questionable') conf *= 0.75;
+  conf = Math.max(5, Math.min(95, Math.round(conf)));
+  return { conf, sigma: sg.sigma, sampleN: sg.n };
+}
+function getPlayerCntProj(p, key, ctx) {
+  const proj = projectPlayer(p);
+  const base = proj.blended ? (proj.blended[key] || 0) : 0;
+  // counts ride the passing channel; defense moves them half as much as yards
+  const mx = oppDefenseMultiplier(ctx.oppProfile || null, 'pass', ctx.lgYds || { pass: 230, rush: 110 });
+  const damped = 1 + 0.5 * (mx.mult - 1);
+  const wx = (ctx.weather || { pass: 1 }).pass || 1;
+  const wxD = 1 + 0.5 * (wx - 1);
+  return { cnt: Math.round(base * damped * wxD * 10) / 10, base, mult: damped };
+}
+function gatherCountProps() {
+  const out = [];
+  for (const g of state.games) {
+    const proj = projectGame(g);
+    if (!proj) continue;
+    for (const side of ['away','home']) {
+      const team = g[side];
+      const ctx = playerProjContext(g, proj, side);
+      for (const [key, cat, posList] of [['receptions','playerRecCnt',['WR','TE','RB']], ['passTds','playerPassTd',['QB']]]) {
+        for (const pos of posList) {
+          const teamPlayers = g.players.filter(p => p.team === team.id && p.position === pos)
+            .filter(p => g.completed || playerInjury(g, p) !== 'out');
+          teamPlayers.sort((a, b) => playerProjVolume(b, pos, ctx) - playerProjVolume(a, pos, ctx));
+          const limit = pos === 'WR' ? 3 : 1;
+          for (const p of teamPlayers.slice(0, limit)) {
+            const got = getPlayerCntProj(p, key, ctx);
+            if (got.cnt <= (key === 'receptions' ? 0.9 : 0.4) && !g.completed) continue;
+            const inj = g.completed ? null : playerInjury(g, p);
+            const pc = cntConfidence(p, key, pos, inj);
+            const actual = g.completed ? (key === 'receptions' ? (p.receptions || 0) : (p.passTds || 0)) : null;
+            const delta = actual != null ? actual - got.cnt : null;
+            out.push({ gameId: g.id, completed: g.completed, name: p.name, abbr: p.abbr, position: pos,
+              oppAbbr: side === 'away' ? g.home.abbr : g.away.abbr, cat, key,
+              projCnt: got.cnt, actual, delta, hit: delta != null ? Math.abs(delta) <= hitTol('cnt') : null,
+              conf: pc.conf, inj });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 
 // ============================================================================
 // Game Bets tab — TD predictions (anytime locks + first TD) with results,
@@ -5051,7 +5180,10 @@ const GB_META = {
   teamYds:  { tag: 'TEAM YARDS',  what: 'that team’s pass/rush yards land within the tolerance', th: 'lines', rateKeys: ['teamPass', 'teamRush'] },
   playerYds:{ tag: 'PLAYER YARDS', what: 'the player’s yards land within the tolerance of our projection', th: 'yards', rateKeys: ['playerPass', 'playerRush', 'playerRec'] },
   anytimeTd:{ tag: 'ANYTIME TD',  what: 'the player scores a touchdown', th: 'anytimeTd', rateKeys: ['anytimeTd'] },
-  firstTd:  { tag: 'FIRST TD',    what: 'the player scores the game’s first touchdown', th: 'firstTd', rateKeys: ['firstTd'] }
+  firstTd:  { tag: 'FIRST TD',    what: 'the player scores the game’s first touchdown', th: 'firstTd', rateKeys: ['firstTd'] },
+  dkSpread: { tag: 'SPREAD (ATS)', what: 'our side covers the real DraftKings spread', th: 'dk', rateKeys: ['dkSpread'] },
+  playerRecCnt: { tag: 'RECEPTIONS', what: 'the player’s catch count lands within the tolerance of our number', th: 'yards', rateKeys: ['playerRecCnt'] },
+  playerPassTd: { tag: 'PASS TDS', what: 'the QB’s passing TDs land within the tolerance of our number', th: 'yards', rateKeys: ['playerPassTd'] }
 };
 function gbRate(keys) {
   const cats = state.fsAccuracy && state.fsAccuracy.cats;
@@ -5075,6 +5207,17 @@ function gbRows(key) {
         r.completed ? r.hit : null,
         'Projected <b>' + Math.round(r.projYds) + ' ' + escapeHtml(r.statType) + '</b> from usage volume, matchup and recent form' + (r.inj === 'questionable' ? ' (damped — listed questionable)' : '') + '.' + (r.actual != null ? ' Actual: ' + r.actual + ' (' + fmtSigned(r.delta, 0) + ').' : ''));
     }
+  } else if (key === 'playerRecCnt' || key === 'playerPassTd') {
+    for (const r of gatherCountProps()) {
+      if (r.cat !== key) continue;
+      _early = gbEarly(state.games.find(x => String(x.id) === String(r.gameId)));
+      const lbl = key === 'playerRecCnt' ? 'receptions' : 'pass TDs';
+      const tok = key + '|' + r.name + '|' + r.gameId;
+      push(tok, gbName(r.name, tok) + ' — ' + lbl + ' ' + r.projCnt + ' ±' + hitTol('cnt'),
+        r.abbr + ' vs ' + r.oppAbbr + (r.inj === 'questionable' ? ' · Q' : ''), calGrade(key, r.conf),
+        r.completed ? r.hit : null,
+        'Projected <b>' + r.projCnt + ' ' + lbl + '</b> from per-game volume, matchup and recent form; the bet hits within ±' + hitTol('cnt') + '.' + (r.actual != null ? ' Actual: ' + r.actual + ' (' + fmtSigned(r.delta, 1) + ').' : ''));
+    }
   } else {
     for (const g of state.games) {
       const proj = projectGame(g);
@@ -5092,6 +5235,25 @@ function gbRows(key) {
         const tok = 'winner|' + g.id;
         push(tok, gbName(gm, tok) + ' — winner <b>' + pickAb + '</b>', '', pickProb, mark,
           'Model win probability for <b>' + pickAb + '</b>: ' + pickProb + '. Built from team offense/defense ratings, home-field and rest — open the game on the Today tab for the full breakdown.');
+      } else if (key === 'dkSpread') {
+        const dkEv = findDKEventForGame(g);
+        const spr = dkEv && dkEv.markets && dkEv.markets.spreads;
+        const homeLine = spr ? spr.find(o => o.name === g.home.name || o.name === dkEv.home) : null;
+        if (homeLine && homeLine.point != null) {
+          const dkHomeSpread = +homeLine.point;
+          const pHome = normCdf(((proj.homePts - proj.awayPts) + dkHomeSpread) / MARGIN_SIGMA);
+          const pickHome = pHome >= 0.5;
+          const pickAb = pickHome ? g.home.abbr : g.away.abbr;
+          const lineTxt = fmtSigned(pickHome ? dkHomeSpread : -dkHomeSpread, 1);
+          const tok = 'dkSpread|' + g.id;
+          let mark = null;
+          if (g.completed && g.home.score != null) {
+            const m2 = g.home.score - g.away.score;
+            if (m2 !== -dkHomeSpread) mark = pickHome === (m2 > -dkHomeSpread);
+          }
+          push(tok, gbName(gm, tok) + ' — <b>' + pickAb + ' ' + lineTxt + '</b> covers', 'DK spread', Math.round(calGrade('dkSpread', Math.max(pHome, 1 - pHome) * 100)), mark,
+            'Model home margin ' + fmtSigned(proj.homePts - proj.awayPts, 1) + ' vs the real DraftKings spread ' + fmtSigned(dkHomeSpread, 1) + ' — cover probability ' + Math.round(Math.max(pHome, 1 - pHome) * 100) + '%. Line from the stored DK pull, never invented.');
+        }
       } else if (key === 'total') {
         const tok = 'total|' + g.id;
         let mark = null;
@@ -5194,6 +5356,7 @@ function renderGameBets(main) {
   }
   const order = Object.keys(GB_META).map(k => ({ k, pct: (gbRate(GB_META[k].rateKeys) || {}).pct ?? -1 })).sort((a, b) => b.pct - a.pct);
   for (const { k } of order) {
+    if (typeof window !== 'undefined' && window.__DK_OK === false && /^dk/.test(k)) continue;
     const meta = GB_META[k];
     const all = gbRows(k);
     if (!all.length) continue;
@@ -5514,14 +5677,14 @@ document.getElementById('acc-sync-toggle').addEventListener('change', e => {
   logEvent('info', 'cfg', 'accuracy sync → ' + (e.target.checked ? 'on' : 'off'));
 });
 // ---- Auto-tune: find threshold for a target hit rate ----
-const TUNE_LABEL = { winner: 'Winner pick', anytimeTd: 'Anytime TD', firstTd: 'First TD', yards: 'Player yards', lines: 'Game lines', tolPts: '± points (scores/totals)', tolYds: '± yards (yardage props)' };
+const TUNE_LABEL = { winner: 'Winner pick', anytimeTd: 'Anytime TD', firstTd: 'First TD', yards: 'Player yards', lines: 'Game lines', dk: 'ATS (DK spread)', tolPts: '± points (scores/totals)', tolYds: '± yards (yardage props)', tolCnt: '± count (rec / pass TD props)' };
 document.getElementById('tune-find').addEventListener('click', () => {
   const key = document.getElementById('tune-key').value;
   const target = Math.max(1, Math.min(99, Math.round(+document.getElementById('tune-target').value || 0)));
   const resEl = document.getElementById('tune-result');
   if (!target) { resEl.innerHTML = '<div class="setting-note" style="color:var(--hot)">Enter a target hit rate % first.</div>'; return; }
-  const isTol = key === 'tolPts' || key === 'tolYds';
-  const tolKey = key === 'tolPts' ? 'pts' : 'yds';
+  const isTol = key === 'tolPts' || key === 'tolYds' || key === 'tolCnt';
+  const tolKey = key === 'tolPts' ? 'pts' : key === 'tolCnt' ? 'cnt' : 'yds';
   const best = isTol ? findToleranceForTarget(tolKey, target) : findThresholdForTarget(key, target);
   if (!best) {
     resEl.innerHTML = '<div class="setting-note" style="color:var(--hot)">No graded data to tune against — run a season scan (Facts tab) or load a completed week first.' + (isTol ? ' (Older stored scans lack miss-distance data — re-scan once.)' : '') + '</div>';
@@ -5542,8 +5705,8 @@ document.getElementById('tune-find').addEventListener('click', () => {
     '</div>';
   document.getElementById('tune-apply').addEventListener('click', (e) => {
     const k = e.target.dataset.key, v = +e.target.dataset.t;
-    if (k === 'tolPts' || k === 'tolYds') {
-      const tk = k === 'tolPts' ? 'pts' : 'yds';
+    if (k === 'tolPts' || k === 'tolYds' || k === 'tolCnt') {
+      const tk = k === 'tolPts' ? 'pts' : k === 'tolCnt' ? 'cnt' : 'yds';
       if (!state.settings.hitTol) state.settings.hitTol = {};
       state.settings.hitTol[tk] = v;
       saveSettings();
@@ -5775,6 +5938,7 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
           state.season = sb.season.year;
           state.week = sb.week.number;
           await loadWeek(); // builds state.games with full projections context
+          try { await loadRemoteDKOdds(); } catch (e) {} // ATS needs the stored DK spreads
           let skippedEarly = 0;
           for (const g of state.games){
             if (g.completed) continue;
@@ -5792,6 +5956,17 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
               tlocks.push({ cat: 'total', desc: gm + dayTag + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
               tlocks.push({ cat: 'awayPts', desc: g.away.abbr + ' points ' + proj.awayPts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
               tlocks.push({ cat: 'homePts', desc: g.home.abbr + ' points ' + proj.homePts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+            }
+            // ATS — only when a REAL DraftKings spread is stored for this game
+            const dkEvSL = findDKEventForGame(g);
+            const sprSL = dkEvSL && dkEvSL.markets && dkEvSL.markets.spreads;
+            const hlSL = sprSL ? sprSL.find(o => o.name === g.home.name || o.name === dkEvSL.home) : null;
+            if (hlSL && hlSL.point != null){
+              const dkHS = +hlSL.point;
+              const pHomeSL = normCdf(((proj.homePts - proj.awayPts) + dkHS) / MARGIN_SIGMA);
+              const pickHomeSL = pHomeSL >= 0.5;
+              const atsProb = Math.round(calGrade('dkSpread', Math.max(pHomeSL, 1 - pHomeSL) * 100));
+              if (atsProb >= lockTh('dk')) tlocks.push({ cat: 'dkSpread', desc: gm + dayTag + ' — ' + (pickHomeSL ? g.home.abbr : g.away.abbr) + ' ' + fmtSigned(pickHomeSL ? dkHS : -dkHS, 1) + ' covers (DK spread)', metric: atsProb });
             }
           }
         }
