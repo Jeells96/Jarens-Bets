@@ -290,6 +290,46 @@ try{
   if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
 }catch(e){}
 window.CONFIG=CONFIG; // shared with the standalone stats engine
+/* ═══ MODEL LAB — grade calibration ══════════════════════════════════════════
+   Diamond IQ doesn't store its model inputs, so the Lab can't replay alternate
+   stat weightings here. What it CAN do — and what actually answers "what makes
+   a bad rating bad" — is learn from EVERY rating ever placed (locks and
+   non-locks alike): group them by their stated grade, measure what each grade
+   level REALLY hit, and re-score future ratings to those real numbers. An 82
+   that historically hits like a 74 becomes a 74 — which changes what clears
+   the bet line without ever touching the threshold itself. Applied per bet
+   category from the Board (fable_settings/lab_cfg — one tiny doc read on
+   open); default is always one tap away. */
+let LAB_CFG=null;
+const LAB_CATS=['hits','hr','kB','bbB','gm'];
+function calApply(map,g){if(!map||!map.bins)return g;for(const b of map.bins){if(g>=b.lo&&g<b.hi)return b.rate;}return g;}
+function calGrade(m,g){const c=LAB_CFG&&LAB_CFG.cats&&LAB_CFG.cats[m];return c?calApply(c,g):g;}
+function pavCalib(pairs,width,minN){
+  // Bucket every placed rating by stated grade and measure what each bucket
+  // REALLY hit. No monotonicity is forced — if 85s genuinely hit worse than
+  // 65s, that IS the finding. Small buckets are shrunk toward the overall
+  // rate (k=10) so noise can't masquerade as signal.
+  if(pairs.length<minN*2)return null;
+  let H=0;pairs.forEach(x=>{if(x[1])H++;});
+  const p0=H/pairs.length,K=10;
+  const bins={};
+  for(const pr of pairs){const lo=Math.floor(pr[0]/width)*width;const b=bins[lo]||(bins[lo]={lo,hi:lo+width,h:0,n:0});b.n++;if(pr[1])b.h++;}
+  const arr=Object.values(bins).filter(b=>b.n>=minN).sort((a,b)=>a.lo-b.lo);
+  if(arr.length<2)return null;
+  return {bins:arr.map(b=>({lo:b.lo,hi:b.hi,rate:Math.round(1000*(b.h+K*p0)/(b.n+K))/10,n:b.n}))};
+}
+async function pullLabCfgPrem(){
+  if(!FBH.ready)return false;
+  try{
+    const doc=await withTO(FBH.db.collection('fable_settings').doc('lab_cfg').get(),6000);
+    if(doc.exists){
+      const d=doc.data();
+      const cfg=d&&d.data?JSON.parse(d.data):null;
+      LAB_CFG=(cfg&&cfg.cats&&Object.keys(cfg.cats).length)?cfg:null;
+    }
+    return !!LAB_CFG;
+  }catch(e){return false;}
+}
 function cfgSave(){try{localStorage.setItem('fablehits_cfg',JSON.stringify(CONFIG));}catch(e){}}
 async function cfgPull(){
   if(!FBH.ready)return;
@@ -1376,6 +1416,7 @@ async function loadDay(){
 
     prog('Fetching batter pitch-type profiles…');
     await cfgPull(); // league lock threshold
+    await pullLabCfgPrem(); // Board-applied grade calibration (Model Lab)
     pbRecalcAll(); // re-sync success rates to the (possibly new) thresholds
     await fetchLeagueProps(date); // DK lines pulled by Diamond IQ main
     prog('Team pitching + defense + game odds…');
@@ -1663,7 +1704,7 @@ function showCached(){
 function dayTallies(rows,mk,res,dbgDate,quiet){
   const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
-    if(!r.verified||(r.conf||0)<(CONFIG.gmLock||0))return;
+    if(!r.verified||calGrade('gm',(r.conf||0)*100)<(CONFIG.gmLock||0)*100)return;
     const g=res['g'+r.id];
     if(!g||g.hs==null||g.as==null||g.hs===g.as)return;
     const homeWon=g.hs>g.as;
@@ -1671,13 +1712,13 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
     if(homeWon===pickedHome)t.gm.w++;else t.gm.l++;
   });
   (rows||[]).forEach(r=>{
-    if(!r.verified||r.gradeFlag||r.prob==null||(r.prob||0)<CONFIG.lock)return;
+    if(!r.verified||r.gradeFlag||r.prob==null||calGrade('hits',(r.prob||0)*100)<CONFIG.lock*100)return;
     const o=res[r.id]||res[String(r.id)];
     if(!playedBat(o))return;
     t.hits.n++;if((o.h||0)>=1)t.hits.h++;
   });
   ((mk&&mk.hr)||[]).forEach(r=>{
-    if(!r.verified||r.gradeFlag||(r.prob||0)<CONFIG.hrLock)return;
+    if(!r.verified||r.gradeFlag||calGrade('hr',(r.prob||0)*100)<CONFIG.hrLock*100)return;
     const o=res[r.id]||res[String(r.id)];
     if(!playedBat(o))return;
     t.hr.n++;if((o.hr||0)>=1)t.hr.h++;
@@ -1686,7 +1727,7 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
   [['kB','so',CONFIG.kbLock],['bbB','bb',CONFIG.bbbLock]].forEach(([m,stat,lk])=>{
     ((mk&&mk[m])||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag)return;
-      const p=p1of(r);if(p==null||p<lk)return;
+      const p=p1of(r);if(p==null||calGrade(m,p*100)<lk*100)return;
       const o=res[r.id]||res[String(r.id)];
       if(!playedBat(o))return;
       t[m].n++;if((o[stat]||0)>=1)t[m].h++;
@@ -2180,11 +2221,11 @@ function pbRows(m,Dt){
   const rows=(Dt&&Dt.rows)||ROWS,mk=(Dt&&Dt.mk)||MK;
   const out=[];
   if(m==='hits'){
-    rows.forEach(r=>{if(r.verified&&!r.gradeFlag&&r.prob!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(r.prob*100),r:r,txt:''});});
+    rows.forEach(r=>{if(r.verified&&!r.gradeFlag&&r.prob!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(calGrade('hits',r.prob*100)),r:r,txt:''});});
   }else if(m==='hr'||m==='kB'||m==='bbB'){
-    (mk[m]||[]).forEach(r=>{const p=m==='hr'?r.prob:p1of(r);if(r.verified&&!r.gradeFlag&&p!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(p*100),r:r,txt:''});});
+    (mk[m]||[]).forEach(r=>{const p=m==='hr'?r.prob:p1of(r);if(r.verified&&!r.gradeFlag&&p!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(calGrade(m,p*100)),r:r,txt:''});});
   }else if(m==='gm'){
-    ((mk.gm)||[]).forEach(r=>{if(r.verified&&r.conf!=null)out.push({id:r.id,name:r.name,sub:'pick '+r.pick,grade:Math.round(r.conf*100),r:r,txt:'<b>'+r.pick+'</b> wins · '+r.name});});
+    ((mk.gm)||[]).forEach(r=>{if(r.verified&&r.conf!=null)out.push({id:r.id,name:r.name,sub:'pick '+r.pick,grade:Math.round(calGrade('gm',r.conf*100)),r:r,txt:'<b>'+r.pick+'</b> wins · '+r.name});});
   }else{
     (mk[m]||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag||r.line==null||r.exp==null)return;
@@ -2550,15 +2591,98 @@ async function bootLeagueLoad(){
   // the header + Results list once they land — even with no save happening.
   await computeSuccessStats();
   renderHeaderStats();
+  pullLabCfgPrem().then(got=>{try{if(got&&!loadDay._running)renderBetsView();}catch(e){}});
   pbRecalcAll();
   if(document.getElementById('vRes')&&document.getElementById('vRes').style.display!=='none')drawResultsList();
   maybeAutoPullDK();
+}
+
+/* ═══ MODEL LAB RUNNER (?lab=1 — on-demand, run from the Board) ═══ */
+async function runLabPrem(){
+  const say=m=>{window.__labStatus='lab: '+m;try{console.log('[premium lab] '+m);}catch(e){}};
+  say('starting');
+  try{
+    let waited=0;
+    while(!FBH.ready&&waited<12000){await new Promise(r=>setTimeout(r,200));waited+=200;}
+    if(!FBH.ready)throw new Error('Firebase not ready');
+    await cfgPull(); // current thresholds
+    say('reading every stored day');
+    const snap=await withTO(FBH.db.collection('fable_hits').get(),60000);
+    const pairs={};LAB_CATS.forEach(c=>{pairs[c]=[];});
+    const today=todayStr();
+    snap.forEach(doc=>{
+      const d=doc.id;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||d>=today)return;
+      const D=doc.data()||{};
+      const res=D.results;if(!res||!Object.keys(res).length)return;
+      (D.rows||[]).forEach(r=>{
+        if(!r.verified||r.gradeFlag||r.prob==null)return;
+        const o=res[r.id]||res[String(r.id)];if(!playedBat(o))return;
+        pairs.hits.push([r.prob*100,(o.h||0)>=1]);
+      });
+      const mk=D.mk||{};
+      (mk.hr||[]).forEach(r=>{
+        if(!r.verified||r.gradeFlag||r.prob==null)return;
+        const o=res[r.id]||res[String(r.id)];if(!playedBat(o))return;
+        pairs.hr.push([r.prob*100,(o.hr||0)>=1]);
+      });
+      [['kB','so'],['bbB','bb']].forEach(([m,stat])=>{
+        (mk[m]||[]).forEach(r=>{
+          if(!r.verified||r.gradeFlag)return;
+          const p=p1of(r);if(p==null)return;
+          const o=res[r.id]||res[String(r.id)];if(!playedBat(o))return;
+          pairs[m].push([p*100,(o[stat]||0)>=1]);
+        });
+      });
+      (mk.gm||[]).forEach(r=>{
+        if(!r.verified||r.conf==null)return;
+        const g=res['g'+r.id];if(!g||g.hs==null||g.as==null||g.hs===g.as)return;
+        pairs.gm.push([r.conf*100,(g.hs>g.as)===(r.pick===r.team)]);
+      });
+    });
+    const TH={hits:CONFIG.lock*100,hr:CONFIG.hrLock*100,kB:CONFIG.kbLock*100,bbB:CONFIG.bbbLock*100,gm:(CONFIG.gmLock||0)*100};
+    const rate=arr=>{let h=0;arr.forEach(x=>{if(x[1])h++;});return arr.length?{hit:h,n:arr.length,pct:Math.round(1000*h/arr.length)/10}:null;};
+    const base={},best={};let totalRatings=0;
+    for(const cat of LAB_CATS){
+      const P=pairs[cat];totalRatings+=P.length;
+      say(cat+': '+P.length+' placed ratings');
+      const b=rate(P.filter(x=>x[0]>=TH[cat]));
+      if(b)base[cat]=b;
+      const map=pavCalib(P,5,12);
+      if(!map)continue;
+      const c=rate(P.filter(x=>calApply(map,x[0])>=TH[cat]));
+      if(!c||!c.n)continue;
+      // the single most-miscalibrated learned bucket, in plain English
+      let worst=null;
+      for(const bin of map.bins){
+        const mid=(bin.lo+Math.min(bin.hi,100))/2;
+        if(worst==null||Math.abs(bin.rate-mid)>Math.abs(worst.rate-(worst.lo+Math.min(worst.hi,100))/2))worst=bin;
+      }
+      const note='Learned from '+P.length+' placed ratings (every candidate, not just locks). Biggest finding: ratings graded '+worst.lo+'–'+worst.hi+' have really hit '+worst.rate+'% — the Lab re-scores every rating to what its grade level actually hits, so what clears your bet line changes without touching the threshold.';
+      best[cat]={pct:c.pct,hit:c.hit,n:c.n,weights:map,note:note};
+    }
+    const report={t:new Date().toISOString(),app:'mlb',kind:'calib',ratings:totalRatings,tried:'calibration',
+      thresholds:TH,defaults:{},base:base,best:best};
+    await withTO(FBH.db.collection('fable_settings').doc('labReport').set({data:JSON.stringify(report),t:new Date().toISOString()}),10000);
+    say('done — report published ('+totalRatings+' ratings learned from)');
+    window.__labDone=true;
+    try{parent.postMessage({type:'lab-done',app:'mlb'},'*');}catch(e){}
+  }catch(e){
+    window.__labStatus='lab: ERROR — '+(e&&e.message||e);
+    window.__labDone=true;
+    try{parent.postMessage({type:'lab-error',app:'mlb',msg:String(e&&e.message||e)},'*');}catch(e2){}
+  }
 }
 
 /* boot: set date only. NOTHING auto-loads. */
 (function(){
   $('dp').value=todayStr();
   var cronMode=new URLSearchParams(location.search).get('cron');
+  if(new URLSearchParams(location.search).get('lab')==='1'){
+    try{localStorage.setItem('fablehits_access_ok','1');localStorage.setItem('fablehits_user',JSON.stringify({name:'lab',key:'lab'}));}catch(e){}
+    runLabPrem();
+    return;
+  }
   /* ── CRON MODE (?cron=1) — headless GRADING ──────────────────────────
      Uses the app's OWN grading path so numbers can't drift:
      autoGradePriorDays(today) sweeps days −1..−5, skips graded days,
@@ -2579,6 +2703,7 @@ async function bootLeagueLoad(){
            in-app Save uses. The app + hub then show new-threshold rates. */
         try{
           await cfgPull();
+          await pullLabCfgPrem();
           const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
@@ -2886,7 +3011,8 @@ async function bootLeagueLoad(){
    owner and the automation can never be locked out. The free app (mlbfree)
    only needs a name. Also carries the global DK-visibility switch. */
 (function(){
-  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var Q = new URLSearchParams(location.search);
+  if (Q.get('cron') || Q.get('lab')) return; // never gate automation
   var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
   var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
   var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';

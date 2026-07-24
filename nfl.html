@@ -1369,6 +1369,103 @@ async function fsListDocs(collectionPath, pageSize) {
   return (data.documents || []).map(d => ({ id: d.name.split('/').pop(), data: fsDecodeDoc(d) }));
 }
 
+/* ═══ MODEL LAB — grade calibration ══════════════════════════════════════════
+   Gridline doesn't store its model inputs, so the Lab can't replay alternate
+   stat weightings here. Instead it learns from EVERY rating ever placed
+   (accuracy/*_units keeps each one with its outcome): group by stated grade,
+   measure what each grade level REALLY hit, and re-score ratings to those
+   real numbers. Applied per bet category from the Board (accuracy/lab_cfg —
+   one tiny doc read on open); the threshold itself never changes. */
+let LAB_CFG = null;
+const LAB_CATS = ['winner', 'total', 'teamPts', 'teamYds', 'playerYds', 'anytimeTd', 'firstTd'];
+const FINE2LAB = { winner: 'winner', total: 'total', awayPts: 'teamPts', homePts: 'teamPts',
+  teamPass: 'teamYds', teamRush: 'teamYds', playerPass: 'playerYds', playerRush: 'playerYds', playerRec: 'playerYds',
+  anytimeTd: 'anytimeTd', firstTd: 'firstTd' };
+function calApply(map, g) { if (!map || !map.bins) return g; for (const b of map.bins) { if (g >= b.lo && g < b.hi) return b.rate; } return g; }
+function calGrade(fineCat, g) {
+  const lab = FINE2LAB[fineCat] || fineCat;
+  const c = LAB_CFG && LAB_CFG.cats && LAB_CFG.cats[lab];
+  return c ? calApply(c, g) : g;
+}
+function pavCalib(pairs, width, minN) {
+  // Bucket every placed rating by stated grade and measure what each bucket
+  // REALLY hit. No monotonicity is forced — if 85s genuinely hit worse than
+  // 65s, that IS the finding. Small buckets are shrunk toward the overall
+  // rate (k=10) so noise can't masquerade as signal.
+  if (pairs.length < minN * 2) return null;
+  let H = 0; pairs.forEach(x => { if (x[1]) H++; });
+  const p0 = H / pairs.length, K = 10;
+  const bins = {};
+  for (const pr of pairs) { const lo = Math.floor(pr[0] / width) * width; const b = bins[lo] || (bins[lo] = { lo, hi: lo + width, h: 0, n: 0 }); b.n++; if (pr[1]) b.h++; }
+  const arr = Object.values(bins).filter(b => b.n >= minN).sort((a, b) => a.lo - b.lo);
+  if (arr.length < 2) return null;
+  return { bins: arr.map(b => ({ lo: b.lo, hi: b.hi, rate: Math.round(1000 * (b.h + K * p0) / (b.n + K)) / 10, n: b.n })) };
+}
+async function pullLabCfg() {
+  try {
+    const d = await fsGetDoc('accuracy/lab_cfg');
+    const cfg = d && d.data ? JSON.parse(d.data) : null;
+    LAB_CFG = (cfg && cfg.cats && Object.keys(cfg.cats).length) ? cfg : null;
+    return !!LAB_CFG;
+  } catch (e) { return false; }
+}
+async function runLab() {
+  const say = m => { window.__labStatus = 'lab: ' + m; try { console.log('[nfl lab] ' + m); } catch (e) {} };
+  say('starting');
+  try {
+    try { await pullSharedLockCfg(); } catch (e) {}
+    say('reading every placed rating (accuracy/*_units)');
+    const docs = await fsListDocs('accuracy', 300);
+    const unitDocs = docs.filter(d => /_units$/.test(d.id));
+    if (!unitDocs.length) throw new Error('no stored rating docs yet — the grading cron fills accuracy/*_units');
+    const pairs = {}; LAB_CATS.forEach(c => { pairs[c] = []; });
+    let totalRatings = 0;
+    for (const d of unitDocs) {
+      let units = [];
+      try { units = JSON.parse(d.data.units || '[]'); } catch (e) {}
+      for (const u of units) {
+        const lab = FINE2LAB[u.c];
+        if (!lab || u.m == null) continue;
+        const tolKey = TOL_KEY_BY_CAT[u.c];
+        const hit = u.a != null && tolKey ? (u.a <= hitTol(tolKey)) : !!u.h;
+        pairs[lab].push([u.m, hit]);
+        totalRatings++;
+      }
+    }
+    const TH = { winner: lockTh('winner'), total: lockTh('lines'), teamPts: lockTh('lines'), teamYds: lockTh('lines'),
+      playerYds: lockTh('yards'), anytimeTd: lockTh('anytimeTd'), firstTd: lockTh('firstTd') };
+    const rate = arr => { let h = 0; arr.forEach(x => { if (x[1]) h++; }); return arr.length ? { hit: h, n: arr.length, pct: Math.round(1000 * h / arr.length) / 10 } : null; };
+    const base = {}, best = {};
+    for (const cat of LAB_CATS) {
+      const P = pairs[cat];
+      say(cat + ': ' + P.length + ' placed ratings');
+      const b = rate(P.filter(x => x[0] >= TH[cat]));
+      if (b) base[cat] = b;
+      const map = pavCalib(P, 5, 12);
+      if (!map) continue;
+      const c = rate(P.filter(x => calApply(map, x[0]) >= TH[cat]));
+      if (!c || !c.n) continue;
+      let worst = null;
+      for (const bin of map.bins) {
+        const mid = (bin.lo + Math.min(bin.hi, 100)) / 2;
+        if (worst == null || Math.abs(bin.rate - mid) > Math.abs(worst.rate - (worst.lo + Math.min(worst.hi, 100)) / 2)) worst = bin;
+      }
+      const note = 'Learned from ' + P.length + ' placed ratings (every candidate, not just locks). Biggest finding: ratings graded ' + worst.lo + '–' + worst.hi + ' have really hit ' + worst.rate + '% — the Lab re-scores every rating to what its grade level actually hits, so what clears your bet line changes without touching the threshold.';
+      best[cat] = { pct: c.pct, hit: c.hit, n: c.n, weights: map, note: note };
+    }
+    const report = { t: new Date().toISOString(), app: 'nfl', kind: 'calib', ratings: totalRatings, tried: 'calibration',
+      thresholds: TH, defaults: {}, base: base, best: best };
+    await fsSetDoc('accuracy/labReport', { data: JSON.stringify(report), t: new Date().toISOString() });
+    say('done — report published (' + totalRatings + ' ratings learned from)');
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-done', app: 'nfl' }, '*'); } catch (e) {}
+  } catch (e) {
+    window.__labStatus = 'lab: ERROR — ' + (e && e.message || e);
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-error', app: 'nfl', msg: String(e && e.message || e) }, '*'); } catch (e2) {}
+  }
+}
+
 const HIT_TOTAL_TOL = 3;     // game total / score: ±3
 const HIT_YDS_TOL   = 10;    // any yards prop: ±10
 const TD_LOCK_THRESHOLD = 50;
@@ -4002,7 +4099,7 @@ function findToleranceForTarget(tolKey, targetPct) {
 }
 
 function unitQualifies(u) {
-  return u.metric >= lockTh(CAT_META[u.cat].th);
+  return calGrade(u.cat, u.metric) >= lockTh(CAT_META[u.cat].th);
 }
 // Which tolerance governs a category ('pts' | 'yds' | null for binary bets)
 const TOL_KEY_BY_CAT = {
@@ -4833,7 +4930,7 @@ function gbRows(key) {
     for (const r of gatherAllProps()) {
       const tok = 'playerYds|' + r.name + '|' + r.stat + '|' + r.gameId;
       push(tok, gbName(r.name, tok) + ' — ' + escapeHtml(r.statType) + ' ' + Math.round(r.projYds) + ' ±' + hitTol('yds'),
-        r.abbr + ' vs ' + r.oppAbbr + (r.inj === 'questionable' ? ' · Q' : ''), r.conf,
+        r.abbr + ' vs ' + r.oppAbbr + (r.inj === 'questionable' ? ' · Q' : ''), calGrade('playerPass', r.conf),
         r.completed ? r.hit : null,
         'Projected <b>' + Math.round(r.projYds) + ' ' + escapeHtml(r.statType) + '</b> from usage volume, matchup and recent form' + (r.inj === 'questionable' ? ' (damped — listed questionable)' : '') + '.' + (r.actual != null ? ' Actual: ' + r.actual + ' (' + fmtSigned(r.delta, 0) + ').' : ''));
     }
@@ -4843,7 +4940,7 @@ function gbRows(key) {
       if (!proj) continue;
       const gm = g.away.abbr + '@' + g.home.abbr;
       if (key === 'winner') {
-        const pickProb = Math.round(Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100);
+        const pickProb = Math.round(calGrade('winner', Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100));
         const pickAb = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
         let mark = null;
         if (g.completed && g.home.score != null) {
@@ -4857,7 +4954,7 @@ function gbRows(key) {
         const tok = 'total|' + g.id;
         let mark = null;
         if (g.completed && g.home.score != null) mark = Math.abs((g.away.score + g.home.score) - proj.total) <= hitTol('pts');
-        push(tok, gbName(gm, tok) + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), '', proj.conf, mark,
+        push(tok, gbName(gm, tok) + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), '', calGrade('total', proj.conf), mark,
           'Projected combined score <b>' + proj.total.toFixed(1) + '</b>; the bet hits when the real total lands within ±' + hitTol('pts') + '. Grade = model confidence in this game’s script.');
       } else if (key === 'teamPts') {
         for (const side of ['away', 'home']) {
@@ -4865,21 +4962,21 @@ function gbRows(key) {
           const tok = 'teamPts|' + g.id + '|' + side;
           let mark = null;
           if (g.completed && g[side].score != null) mark = Math.abs(g[side].score - pts) <= hitTol('pts');
-          push(tok, gbName(ab, tok) + ' — team points ' + pts.toFixed(1) + ' ±' + hitTol('pts'), gm, proj.conf, mark,
+          push(tok, gbName(ab, tok) + ' — team points ' + pts.toFixed(1) + ' ±' + hitTol('pts'), gm, calGrade('awayPts', proj.conf), mark,
             'Projected <b>' + pts.toFixed(1) + '</b> points for ' + ab + ' from the same game script as the total.');
         }
       } else if (key === 'teamYds') {
         for (const item of [[g.away.abbr, proj.awayPassYds, 'pass'], [g.home.abbr, proj.homePassYds, 'pass'], [g.away.abbr, proj.awayRushYds, 'rush'], [g.home.abbr, proj.homeRushYds, 'rush']]) {
           if (item[1] == null) continue;
           const tok = 'teamYds|' + g.id + '|' + item[0] + item[2];
-          push(tok, gbName(item[0], tok) + ' — team ' + item[2] + ' yards ' + Math.round(item[1]) + ' ±' + hitTol('yds'), gm, proj.conf, null,
+          push(tok, gbName(item[0], tok) + ' — team ' + item[2] + ' yards ' + Math.round(item[1]) + ' ±' + hitTol('yds'), gm, calGrade('teamPass', proj.conf), null,
             'Projected <b>' + Math.round(item[1]) + '</b> ' + item[2] + ' yards from each side’s yard profiles vs this defense.');
         }
       } else if (key === 'anytimeTd') {
         const cands = buildTDCandidates(g, proj).slice(0, 6);
         for (const c of cands) {
           const tok = 'anytimeTd|' + g.id + '|' + c.name;
-          push(tok, gbName(c.name, tok) + ' — anytime TD', c.abbr + ' · ' + gm + (c._inj === 'questionable' ? ' · Q' : ''), c._td.prob,
+          push(tok, gbName(c.name, tok) + ' — anytime TD', c.abbr + ' · ' + gm + (c._inj === 'questionable' ? ' · Q' : ''), calGrade('anytimeTd', c._td.prob),
             g.completed ? !!c._scored : null,
             'TD odds from expected usage near the goal line (λ ' + ((c._td.lambda || 0)).toFixed(2) + ') vs this defense' + (c._td.injNote ? ' · ' + c._td.injNote : '') + '.');
         }
@@ -4892,7 +4989,7 @@ function gbRows(key) {
           const tok = 'firstTd|' + g.id;
           let mark = null;
           if (g.completed) { const isF = isActualFirstTdScorer(first, g); if (isF !== null) mark = isF; }
-          push(tok, gbName(first.name, tok) + ' — first TD of the game', first.abbr + ' · ' + gm, pFirst, mark,
+          push(tok, gbName(first.name, tok) + ' — first TD of the game', first.abbr + ' · ' + gm, calGrade('firstTd', pFirst), mark,
             'Most likely first scorer: their share of the game’s total TD expectation (' + pFirst + ').');
         }
       }
@@ -5453,9 +5550,12 @@ try{sessionStorage.setItem('gl_member_ok','1');}catch(e){}initPaywall();
    Idempotent by design: graded results are deterministic and the
    fingerprint memo skips unchanged Firestore writes. In the offseason
    this re-verifies the record and writes nothing new. */
-if (new URLSearchParams(location.search).get('cron') === '1') {
+if (new URLSearchParams(location.search).get('lab') === '1') {
+  runLab();
+} else if (new URLSearchParams(location.search).get('cron') === '1') {
   (async function () {
     window.__cronStatus = 'cron: starting';
+    try { if (await pullLabCfg()) console.log('[nfl] Model Lab calibration active for: ' + Object.keys(LAB_CFG.cats).join(', ')); } catch (e) {}
     try {
       const pr = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20250908', { cache: 'no-store' });
       let pg = 0; if (pr.ok) { try { const pj = await pr.json(); pg = (pj.events || []).length; } catch (e) {} }
@@ -5523,10 +5623,10 @@ if (new URLSearchParams(location.search).get('cron') === '1') {
             const proj = projectGame(g);
             if (!proj) continue;
             const gm = g.away.abbr + '@' + g.home.abbr;
-            const pickProb = Math.round(Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100);
+            const pickProb = Math.round(calGrade('winner', Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100));
             const pickAb = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
             if (pickProb >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + dayTag + ' — winner ' + pickAb, metric: pickProb });
-            if (proj.conf >= lockTh('lines')){
+            if (calGrade('total', proj.conf) >= lockTh('lines')){
               tlocks.push({ cat: 'total', desc: gm + dayTag + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
               tlocks.push({ cat: 'awayPts', desc: g.away.abbr + ' points ' + proj.awayPts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
               tlocks.push({ cat: 'homePts', desc: g.home.abbr + ' points ' + proj.homePts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
@@ -5603,7 +5703,7 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
 // Try the Thursday auto-pull on boot (after a short delay so the UI is responsive)
 // Background automation (GitHub Action) handles scheduled pulls now.
 // On boot: adopt any newer background odds + show automation status.
-setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg().then(ok => { if (ok && state.activeTab === 'facts') render(); }); if (!new URLSearchParams(location.search).get('cron')) loadFirebaseAccuracy(); }, 600);
+setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg().then(ok => { if (ok && state.activeTab === 'facts') render(); }); pullLabCfg().then(ok => { if (ok) render(); }); if (!new URLSearchParams(location.search).get('cron')) loadFirebaseAccuracy(); }, 600);
 </script>
 
 <script>window.__APPKEY='nfl';</script>
@@ -5617,7 +5717,8 @@ setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg()
    owner and the automation can never be locked out. The free app (mlbfree)
    only needs a name. Also carries the global DK-visibility switch. */
 (function(){
-  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var Q = new URLSearchParams(location.search);
+  if (Q.get('cron') || Q.get('lab')) return; // never gate automation
   var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
   var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
   var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';

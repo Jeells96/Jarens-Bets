@@ -1366,13 +1366,18 @@ function rateRow(label, cur, prop){
    members feel zero slowdown. Default is always one tap away, and the report
    always shows exactly what default vs tuned does to the success rate. */
 var LAB_APPS = [
-  { ns: 'nascar', file: 'nascar.html', name: 'Pete’s Picks (NASCAR)',
+  { ns: 'nascar', file: 'nascar.html', name: 'Pete’s Picks (NASCAR)', kind: 'weights', proj: 'NFLP', reportPath: 'nascar/labReport', cfgPath: 'nascar/lab_cfg',
     cats: { winner: 'Winner', top5: 'Top 5', top10: 'Top 10', top15: 'Top 15', h2h: 'Matchup' } },
-  { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)',
+  { ns: 'mlb', file: 'premium.html', name: 'Diamond IQ Premium (MLB)', kind: 'calib', proj: 'ADMIN', reportPath: 'fable_settings/labReport', cfgPath: 'fable_settings/lab_cfg',
+    cats: { hits: 'Batter hits', hr: 'Home runs', kB: 'Batter K', bbB: 'Batter BB', gm: 'Game winner' } },
+  { ns: 'nfl', file: 'nfl.html', name: 'Gridline (NFL)', kind: 'calib', proj: 'NFLP', reportPath: 'accuracy/labReport', cfgPath: 'accuracy/lab_cfg',
+    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD' } },
+  { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)', kind: 'weights', proj: 'NFLP', reportPath: 'nba/labReport', cfgPath: 'nba/lab_cfg',
     cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Player rebounds', playerAst: 'Player assists' } },
-  { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)',
+  { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)', kind: 'weights', proj: 'NFLP', reportPath: 'nhl/labReport', cfgPath: 'nhl/lab_cfg',
     cats: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorers', point: 'Point scorers' } }
 ];
+function labProj(app){ return app.proj === 'ADMIN' ? ADMIN : NFLP; }
 var KNOB_PHRASE = {
   decay: { down: 'recent races count more', up: 'older races count more' },
   typeW: { down: 'overall form counts more', up: 'this track type’s history counts more' },
@@ -1385,16 +1390,19 @@ var KNOB_PHRASE = {
   regressGp: { down: 'player hot streaks trusted more', up: 'player rates pulled harder to league average' }
 };
 var LAB = { reports: {}, cfgs: {}, wired: false, running: false };
-function labRead(ns, doc){
-  return fetch(FS + NFLP.p + '/databases/(default)/documents/' + ns + '/' + doc + '?key=' + NFLP.k)
+function labRead(app, which){
+  var pr = labProj(app);
+  var path = which === 'report' ? app.reportPath : app.cfgPath;
+  return fetch(FS + pr.p + '/databases/(default)/documents/' + path + '?key=' + pr.k)
     .then(function(r){ return r.ok ? r.json() : null; })
     .then(function(j){
       var v = j && j.fields && j.fields.data && j.fields.data.stringValue;
       try { return v ? JSON.parse(v) : null; } catch (e){ return null; }
     }).catch(function(){ return null; });
 }
-function labWrite(ns, doc, obj){
-  return fetch(FS + NFLP.p + '/databases/(default)/documents/' + ns + '/' + doc + '?key=' + NFLP.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
+function labWrite(app, obj){
+  var pr = labProj(app);
+  return fetch(FS + pr.p + '/databases/(default)/documents/' + app.cfgPath + '?key=' + pr.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify(obj) }, t: { stringValue: new Date().toISOString() } } })
   }).then(function(r){ if (!r.ok) throw new Error('lab save failed (HTTP ' + r.status + ')'); return true; });
@@ -1411,8 +1419,9 @@ function labWeightDesc(defs, w){
 }
 function labTabHtml(){
   return '<div class="sect"><div class="row"><span class="lbl">Model Lab</span><span class="hint">weekly · on-demand only</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">The Lab teaches each app to <b>read its stats better</b> — it re-runs the whole graded season under 27 different stat weightings (how much recent form counts, how track/home factors weigh, how decisive the model is) and shows what each does to the <b>real success rate</b>. It never touches your lock thresholds. Nothing loads until you tap a button here — the Sunday-morning ritual is: <b>Run this week’s scan</b>, read the numbers, flip on what helps. Default is always one tap away.</p>' +
-    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">v1 covers Pete’s Picks, The Key and Icing — their models store every game and can be replayed. Diamond IQ and Gridline don’t store their model inputs, so they can’t replay alternate weightings yet.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">The Lab teaches each app to <b>read its stats better</b> — it never touches your lock thresholds, and nothing loads until you tap a button here. The Sunday-morning ritual: <b>Run this week’s scan</b>, read the numbers, flip on what helps. Default is always one tap away.</p>' +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">Two kinds of learning. <b>Re-weighting</b> (Pete’s Picks, The Key, Icing): the whole stored season is replayed under 27 different stat weightings — recent form vs old, track/home factors, decisiveness. <b>Calibration</b> (Diamond IQ Premium, Gridline): every rating ever placed — locks and non-locks — is grouped by its stated grade to learn what each grade level <b>really</b> hits; ratings are then re-scored to those real numbers, which is exactly how a bad rating gets caught.</p>' +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">Why sample sizes differ between rows: the record counts <b>picks that cleared your bet line</b>, and a different weighting (or re-scored grades) puts a different set of picks over that same line — so the denominator moves with the weighting, never the threshold.</p>' +
     '<div style="display:flex;gap:8px;margin-bottom:10px">' +
       '<button class="go" id="lab-run" style="flex:1;margin:0">Run this week’s scan</button>' +
       '<button class="close" id="lab-load" style="flex:1;border:1px solid var(--hair);border-radius:9px;padding:8px">Load last report</button>' +
@@ -1436,20 +1445,23 @@ function labCatRowHtml(app, cat, rep, cfg){
     '<div class="row" style="margin-bottom:4px"><span class="lbl" style="font-size:13.5px">' + esc(app.cats[cat]) + '</span>' +
       (best ? '<label class="tog" title="use the tuned weighting for this bet type"><input type="checkbox" class="lab-use" data-ns="' + app.ns + '" data-cat="' + cat + '"' + (applied ? ' checked' : '') + '><span></span></label>' : '<span class="hint">not enough graded picks</span>') + '</div>' +
     '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">default (what you have now)</span><span>' + fmt(base) + '</span></div>' +
-    (best ? '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">best tuned weighting</span><span>' + fmt(best) + ' ' + delta + '</span></div>' +
-      '<div class="hint" style="margin-top:4px;line-height:1.5">What changes: ' + esc(labWeightDesc(rep.defaults, best.weights)) + (noGain ? ' · <b>no gain over default — leave it off</b>' : '') + '</div>' : '') +
+    (best ? '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + (best.note ? 'with re-scored (calibrated) grades' : 'best tuned weighting') + '</span><span>' + fmt(best) + ' ' + delta + '</span></div>' +
+      '<div class="hint" style="margin-top:4px;line-height:1.5">' + (best.note ? esc(best.note) : 'What changes: ' + esc(labWeightDesc(rep.defaults, best.weights))) + (noGain ? ' · <b>no gain over default — leave it off</b>' : '') + '</div>' : '') +
     (applied ? '<div class="hint" style="margin-top:4px;color:#c9a84c">Tuned weighting is LIVE for this bet type. Switching it off returns it to the default row above.</div>' : '') +
     '</div>';
 }
 function labAppCardHtml(app){
   var rep = LAB.reports[app.ns], cfg = LAB.cfgs[app.ns];
   var head = '<div class="row"><span class="lbl">' + esc(app.name) + '</span>' +
-    '<span class="hint">' + (rep ? 'scanned ' + esc(String(rep.t || '').slice(0, 10)) + ' · ' + (rep.tried || 27) + ' weightings' : 'no report yet') + '</span></div>';
+    '<span class="hint">' + (rep ? 'scanned ' + esc(String(rep.t || '').slice(0, 10)) + ' · ' + (rep.kind === 'calib' ? (rep.ratings || 0) + ' ratings learned from' : (rep.tried || 27) + ' weightings') : 'no report yet') + '</span></div>';
   if (!rep) return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px">' + head +
     '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">Run a scan (or load the last report) to see what re-weighting does here.</p></div>';
   var body = Object.keys(app.cats).map(function(c){ return labCatRowHtml(app, c, rep, cfg); }).join('');
   return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px" data-labapp="' + app.ns + '">' + head +
-    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Numbers = the whole stored season re-graded walk-forward at your current thresholds. Flip a switch to use the tuned weighting for that bet type only.</p>' +
+    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">' + (rep.kind === 'calib'
+      ? 'Numbers = every placed rating, judged at your current bet line. Calibration re-scores each rating to what its grade level has really hit — flip a switch to apply it to that bet type only.'
+      : 'Numbers = the whole stored season re-graded walk-forward at your current thresholds. Flip a switch to use the tuned weighting for that bet type only.') +
+      ' Sample sizes differ between rows because each version puts a different set of picks over the same bet line.</p>' +
     body +
     '<div style="display:flex;gap:8px;margin-top:4px">' +
       '<button class="go lab-save" data-ns="' + app.ns + '" style="flex:1;margin:0">Save choices</button>' +
@@ -1472,7 +1484,7 @@ function labRenderBody(box){
         if (cb.checked && rep && rep.best && rep.best[cb.getAttribute('data-cat')]) cats[cb.getAttribute('data-cat')] = rep.best[cb.getAttribute('data-cat')].weights;
       });
       msg.textContent = 'Saving…';
-      labWrite(ns, 'lab_cfg', { cats: cats, savedAt: new Date().toISOString() }).then(function(){
+      labWrite(app, { cats: cats, savedAt: new Date().toISOString() }).then(function(){
         LAB.cfgs[ns] = { cats: cats };
         msg.textContent = Object.keys(cats).length
           ? 'Saved — ' + app.name + ' uses the tuned weighting for: ' + Object.keys(cats).map(function(c){ return app.cats[c]; }).join(', ') + '. Apps pick it up on next open; the graded record re-syncs on the next 2-hour grading run.'
@@ -1489,7 +1501,7 @@ function labRenderBody(box){
       var card = el.querySelector('[data-labapp="' + ns + '"]');
       var msg = card ? card.querySelector('.lab-msg') : null;
       if (msg) msg.textContent = 'Resetting…';
-      labWrite(ns, 'lab_cfg', { cats: {}, savedAt: new Date().toISOString() }).then(function(){
+      labWrite(app, { cats: {}, savedAt: new Date().toISOString() }).then(function(){
         LAB.cfgs[ns] = { cats: {} };
         labRenderBody(box);
         var m2 = box.querySelector('[data-labapp="' + ns + '"] .lab-msg');
@@ -1503,8 +1515,8 @@ async function labLoadReports(box){
   st.textContent = 'Loading the latest reports…';
   for (var i = 0; i < LAB_APPS.length; i++){
     var a = LAB_APPS[i];
-    LAB.reports[a.ns] = await labRead(a.ns, 'labReport');
-    LAB.cfgs[a.ns] = await labRead(a.ns, 'lab_cfg');
+    LAB.reports[a.ns] = await labRead(a, 'report');
+    LAB.cfgs[a.ns] = await labRead(a, 'cfg');
   }
   st.textContent = 'Reports loaded.';
   labRenderBody(box);
@@ -1533,7 +1545,7 @@ function labRunScan(box){
       clearTimeout(tm);
       try { fr.remove(); } catch (e) {}
       if (!ok) st.textContent = app.name + ': ' + (msg || 'scan failed') + ' — moving on.';
-      labRead(app.ns, 'labReport').then(function(r){ LAB.reports[app.ns] = r; return labRead(app.ns, 'lab_cfg'); })
+      labRead(app, 'report').then(function(r){ LAB.reports[app.ns] = r; return labRead(app, 'cfg'); })
         .then(function(c){ LAB.cfgs[app.ns] = c; labRenderBody(box); runNext(); });
     };
     var onMsg = function(ev){
