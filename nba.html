@@ -126,7 +126,7 @@ body{font-size:16px}
     <span class="pill" id="fbPill"></span>
   </header>
   <main>
-    <section id="tab-games">
+    <section id="tab-games" class="hidden">
       <div class="datebar">
         <button class="dstep" id="dPrev">&#8249;</button>
         <input type="date" class="dpick" id="dPick">
@@ -141,13 +141,13 @@ body{font-size:16px}
       <div id="gamesList"></div>
       <div id="gameDetail" class="hidden"></div>
     </section>
-    <section id="tab-bets" class="hidden"></section>
+    <section id="tab-bets"></section>
     <section id="tab-facts" class="hidden"></section>
     <section id="tab-settings" class="hidden"></section>
   </main>
   <nav id="tabbar">
-    <button data-tab="games" class="active"><span class="ico">&#127936;</span>Today</button>
-    <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
+    <button data-tab="bets" class="active"><span class="ico">&#128274;</span>Bets</button>
+    <button data-tab="games"><span class="ico">&#127936;</span>Today</button>
     <button data-tab="facts"><span class="ico">&#128202;</span>Results</button>
     <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
   </nav>
@@ -2149,75 +2149,207 @@ function renderGameDetail(id, summary){
   bindPropRows(el);
 }
 
-function renderBets(){
-  const el = document.getElementById('tab-bets');
-  const s = state.settings;
-  const th = '<div class="small muted" style="margin-top:4px">Thresholds: winner \u2265' + lockTh('winner') + '% \u00b7 lines \u2265' + lockTh('lines') + '% \u00b7 props \u2265' + lockTh('props') + '% \u00b7 tol \u00b1' + hitTol('pts') + ' pts / \u00b1' + hitTol('stat') + ' stat</div>';
-  if (!state.slate || state.slate.date !== state.slateDate){
-    el.innerHTML = '<div class="card"><h2>Locks</h2><div class="muted small">Load a slate on Games, then tap Project Slate.</div>' + th + '</div>';
-    return;
-  }
+/* ═══ BETS FRONT PAGE — Pete's Picks format ═══════════════════════════════
+   Official header card + one card per bet type ordered by its REAL all-time
+   success rate (the cron re-grades those records at the current thresholds).
+   Collapsed card = qualifying locks; tap a card = every candidate with a hard
+   BET LINE divider. Tap a NAME = why. Red numbers are confidence grades. */
+const NB = { open: {}, why: null, loading: false, tried: {} };
+const NB_META = {
+  winner:    { tag: 'WINNER',           what: 'our pick wins the game', th: 'winner', mkt: 'winner' },
+  total:     { tag: 'GAME TOTAL',       what: 'the combined score lands within the tolerance of our number', th: 'lines', mkt: 'total' },
+  teamPts:   { tag: 'TEAM POINTS',      what: 'that team’s points land within the tolerance of our number', th: 'lines', mkt: 'teamPts' },
+  playerPts: { tag: 'PLAYER POINTS',    what: 'the player’s points land within the tolerance of our projection', th: 'props', mkt: 'playerPts' },
+  playerReb: { tag: 'PLAYER REBOUNDS',  what: 'the player’s rebounds land within the tolerance of our projection', th: 'props', mkt: 'playerReb' },
+  playerAst: { tag: 'PLAYER ASSISTS',   what: 'the player’s assists land within the tolerance of our projection', th: 'props', mkt: 'playerAst' },
+  dkML:      { tag: 'DK MONEYLINE VALUE', what: 'our pick wins where our odds beat DraftKings’ implied price', th: 'dk', dk: true },
+  dkTotal:   { tag: 'DK TOTAL O/U',     what: 'our OVER/UNDER lean beats DraftKings’ posted total', th: 'dk', dk: true },
+  dkSpread:  { tag: 'DK SPREAD ATS',    what: 'our side covers DraftKings’ posted spread', th: 'dk', dk: true }
+};
+function nbName(n, tok){ return '<b class="nbname" data-tok="' + tok + '" style="cursor:pointer;border-bottom:1px dotted var(--muted)">' + esc(n) + '</b>'; }
+function nbMark(ok, extra){ if (ok == null) return ''; return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (extra != null ? esc(String(extra)) + ' ' : '') + (ok ? '✓' : '✗') + '</span>'; }
+function nbRows(k){
+  const rows = [];
   const projected = state.slate.games.filter(function(g){ return state.projections[g.id]; });
-  if (!projected.length){
-    el.innerHTML = '<div class="card"><h2>Locks \u00b7 ' + esc(state.slate.date) + '</h2><div class="muted small">Tap Project Slate on Games to compute this date\u2019s bets.</div>' + th + '</div>';
-    return;
-  }
-  let hitN = 0, gradedN = 0;
-  const bets = []; // { conf, html } — flattened across games, sorted by confidence below
   for (const g of projected){
     const proj = state.projections[g.id];
     let recD = null;
-    if (g.completed){
-      try { recD = hasRecord(g.id) ? JSON.parse(localStorage.getItem(recKey(g.id))) : null; } catch (e) {}
-    }
-    const gTag = '<span class="muted">' + esc(g.away.abbr) + '@' + esc(g.home.abbr) + '</span> ';
-    const mark = function(ok, extra){
-      gradedN++; if (ok) hitN++;
-      return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (extra != null ? extra + ' ' : '') + (ok ? '\u2713' : '\u2717') + '</span>';
-    };
-    if (s.markets.winner !== false && proj.winMetric >= lockTh('winner')){
-      let m = '';
-      if (recD && recD.home.pts != null && recD.away.pts != null){
-        const actW = recD.home.pts > recD.away.pts ? recD.home.ab : recD.away.ab;
-        m = mark(actW === proj.winAb, null);
-      }
-      bets.push({ conf: proj.winMetric, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Winner: <b>' + esc(proj.winAb) + '</b>' + m + '</div><div class="lock">' + proj.winMetric + '% \ud83d\udd12</div></div>' });
-    }
-    if (s.markets.total !== false && proj.confTotal >= lockTh('lines')){
-      let m = '';
-      if (recD && recD.home.pts != null && recD.away.pts != null){
-        const aTot = recD.home.pts + recD.away.pts;
-        m = mark(Math.abs(aTot - proj.total) <= hitTol('pts'), aTot);
-      }
-      bets.push({ conf: proj.confTotal, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Total ' + proj.total + ' \u00b1' + hitTol('pts') + m + '</div><div class="lock">' + proj.confTotal + '% \ud83d\udd12</div></div>' });
-    }
-    if (s.markets.teamPts !== false && proj.confTeam >= lockTh('lines')){
-      const sides = [[g.away.abbr, proj.awayPts, recD ? recD.away.pts : null], [g.home.abbr, proj.homePts, recD ? recD.home.pts : null]];
+    if (g.completed){ try { recD = hasRecord(g.id) ? JSON.parse(localStorage.getItem(recKey(g.id))) : null; } catch (e) {} }
+    const gm = g.away.abbr + '@' + g.home.abbr;
+    const scored = recD && recD.home.pts != null && recD.away.pts != null;
+    if (k === 'winner'){
+      const tok = 'winner|' + g.id;
+      let mark = null;
+      if (scored){ const actW = recD.home.pts > recD.away.pts ? recD.home.ab : recD.away.ab; mark = actW === proj.winAb; }
+      rows.push({ tok: tok, html: nbName(gm, tok) + ' — winner <b>' + esc(proj.winAb) + '</b>' + nbMark(mark), grade: proj.winMetric,
+        why: 'Model win probability for <b>' + esc(proj.winAb) + '</b>: ' + proj.winMetric + ' — built walk-forward from each side’s scoring profile, pace and rest. Projected score ' + proj.awayPts + '–' + proj.homePts + '. Open the game on the Today tab for the full breakdown.' });
+    } else if (k === 'total'){
+      const tok = 'total|' + g.id;
+      let mark = null, extra = null;
+      if (scored){ const aTot = recD.home.pts + recD.away.pts; mark = Math.abs(aTot - proj.total) <= hitTol('pts'); extra = aTot; }
+      rows.push({ tok: tok, html: nbName(gm, tok) + ' — total ' + proj.total + ' ±' + hitTol('pts') + nbMark(mark, extra), grade: proj.confTotal,
+        why: 'Projected combined score <b>' + proj.total + '</b>; the bet hits when the real total lands within ±' + hitTol('pts') + '. Grade = model confidence in this game’s script.' });
+    } else if (k === 'teamPts'){
+      const sides = [[g.away.abbr, proj.awayPts, scored ? recD.away.pts : null], [g.home.abbr, proj.homePts, scored ? recD.home.pts : null]];
       for (const sd of sides){
-        let m = '';
-        if (sd[2] != null) m = mark(Math.abs(sd[2] - sd[1]) <= hitTol('pts'), sd[2]);
-        bets.push({ conf: proj.confTeam, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(sd[0]) + ' pts ' + sd[1] + ' \u00b1' + hitTol('pts') + m + '</div><div class="lock">' + proj.confTeam + '% \ud83d\udd12</div></div>' });
+        const tok = 'teamPts|' + g.id + '|' + sd[0];
+        const mark = sd[2] != null ? Math.abs(sd[2] - sd[1]) <= hitTol('pts') : null;
+        rows.push({ tok: tok, html: nbName(sd[0], tok) + ' — team points ' + sd[1] + ' ±' + hitTol('pts') + nbMark(mark, sd[2]), sub: gm, grade: proj.confTeam,
+          why: 'Projected <b>' + sd[1] + '</b> points for ' + esc(sd[0]) + ' from the same walk-forward game script as the total.' });
       }
-    }
-    for (const p of proj.props){
-      if (s.markets[p.cat] === false) continue;
-      if (p.conf < lockTh('props')) continue;
-      let m = '';
-      const act = actualFor(recD, p.pid, p.stat);
-      if (act != null) m = mark(Math.abs(act - p.proj) <= hitTol('stat'), act);
-      bets.push({ conf: p.conf, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(p.name) + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + hitTol('stat') +
-        (p.inj === 'questionable' ? ' <span style="color:var(--amber)">Q</span>' : '') + m + '</div><div class="lock">' + p.conf + '% \ud83d\udd12</div></div>' });
+    } else if (k === 'playerPts' || k === 'playerReb' || k === 'playerAst'){
+      for (const p of proj.props){
+        if (p.cat !== k) continue;
+        const tok = k + '|' + g.id + '|' + p.pid + '|' + p.stat;
+        const act = actualFor(recD, p.pid, p.stat);
+        const mark = act != null ? Math.abs(act - p.proj) <= hitTol('stat') : null;
+        rows.push({ tok: tok, html: nbName(p.name, tok) + ' — ' + esc(p.stat) + ' ' + p.proj + ' ±' + hitTol('stat') + (p.inj === 'questionable' ? ' <span style="color:var(--amber)">Q</span>' : '') + nbMark(mark, act), sub: gm, grade: p.conf,
+          why: 'Projected <b>' + p.proj + ' ' + esc(p.stat) + '</b> from recent usage, minutes and this matchup’s defense' + (p.inj === 'questionable' ? ' (damped — listed questionable)' : '') + '. Hits within ±' + hitTol('stat') + '.' });
+      }
+    } else {
+      const snap = state.dkOdds;
+      const e = snap && snap.games && snap.games[gm];
+      if (!e) continue;
+      if (k === 'dkML' && e.mlHome != null && e.mlAway != null){
+        const imp = function(p2){ return p2 < 0 ? (-p2) / ((-p2) + 100) : 100 / (p2 + 100); };
+        const pickHome = proj.winAb === g.home.abbr;
+        const dkP = imp(pickHome ? e.mlHome : e.mlAway);
+        if ((proj.winMetric / 100) > dkP + 0.03){
+          const tok = 'dkML|' + g.id;
+          let mark = null;
+          if (scored){ const actW = recD.home.pts > recD.away.pts ? recD.home.ab : recD.away.ab; mark = actW === proj.winAb; }
+          rows.push({ tok: tok, html: nbName(gm, tok) + ' — ML <b>' + esc(proj.winAb) + '</b> vs DK ' + Math.round(dkP * 100) + '%' + nbMark(mark), grade: proj.winMetric,
+            why: 'We give ' + esc(proj.winAb) + ' <b>' + proj.winMetric + '%</b>; DraftKings’ price implies only ' + Math.round(dkP * 100) + '%. That gap is the value — we only list ML bets with a real edge over the book.' });
+        }
+      } else if (k === 'dkTotal' && e.total != null){
+        const lean = proj.total > e.total ? 'OVER' : 'UNDER';
+        const tok = 'dkTotal|' + g.id;
+        let mark = null, extra = null;
+        if (scored){ const aTot = recD.home.pts + recD.away.pts; if (aTot !== e.total){ mark = lean === 'OVER' ? aTot > e.total : aTot < e.total; extra = aTot; } }
+        rows.push({ tok: tok, html: nbName(gm, tok) + ' — <b>' + lean + '</b> ' + e.total + nbMark(mark, extra), sub: 'proj ' + proj.total, grade: proj.winMetric,
+          why: 'Our projected total is <b>' + proj.total + '</b> against DraftKings’ posted ' + e.total + ' — lean ' + lean + '.' });
+      } else if (k === 'dkSpread' && e.spreadHome != null){
+        const ourPickHome = proj.margin > -e.spreadHome;
+        const side = ourPickHome ? g.home.abbr : g.away.abbr;
+        const tok = 'dkSpread|' + g.id;
+        let mark = null;
+        if (scored){ const homeCovers = (recD.home.pts - recD.away.pts) > -e.spreadHome; mark = ourPickHome === homeCovers; }
+        rows.push({ tok: tok, html: nbName(gm, tok) + ' — ATS <b>' + esc(side) + '</b> (DK ' + e.spreadHome + ')' + nbMark(mark), sub: 'proj margin ' + proj.margin, grade: proj.winMetric,
+          why: 'Our projected home margin is <b>' + proj.margin + '</b> against DraftKings’ spread of ' + e.spreadHome + ' — so we take ' + esc(side) + ' to cover.' });
+      }
     }
   }
-  bets.sort(function(a, b){ return b.conf - a.conf; }); // strongest bets first, across all games
-  const total = bets.length;
-  const html = total ? '<div class="card"><h2>All bets \u00b7 highest confidence first</h2>' + bets.map(function(b){ return b.html; }).join('') + '</div>' : '';
-  const head = '<div class="card"><h2>Locks \u00b7 ' + esc(state.slate.date) + '</h2><div class="small">' + total + ' qualifying bets' +
-    (gradedN ? ' \u00b7 completed so far: <b>' + hitN + '/' + gradedN + '</b> <span class="muted">(view-only \u2014 stored units land in v0.4)</span>' : '') +
-    '</div>' + th + '</div>';
-  el.innerHTML = total
-    ? head + html
-    : head + '<div class="card muted small">Nothing clears the current thresholds. That is the system working \u2014 lower thresholds in Settings if you want more (weaker) bets.</div>';
+  rows.sort(function(a, b){ return b.grade - a.grade; });
+  return rows;
+}
+function nbRowHtml(row, grey){
+  return '<div class="row small" style="padding:6px 0;border-top:1px solid rgba(255,255,255,.06)"><div class="grow"' + (grey ? ' style="color:var(--muted)"' : '') + '>' + row.html + (row.sub ? ' <span class="muted" style="font-size:.85em">' + esc(row.sub) + '</span>' : '') + '</div>' +
+    '<div style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'var(--muted)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</div></div>' +
+    (NB.why === row.tok ? '<div class="small" style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;color:var(--muted);line-height:1.5">' + row.why + '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
+}
+function nbShiftDay(n){
+  state.slateDate = n === 0 ? todayPT() : addDays(state.slateDate, n);
+  NB.open = {}; NB.why = null;
+  closeGame();
+  renderBets();
+}
+async function nbEnsure(){
+  if (NB.loading || NB.tried[state.slateDate]) return;
+  NB.loading = true; NB.tried[state.slateDate] = true;
+  try {
+    if (!state.slate || state.slate.date !== state.slateDate) await loadSlate();
+    if (state.slate && state.slate.date === state.slateDate && state.slate.games.length && !Object.keys(state.projections).length){
+      await projectSlate();
+    }
+  } catch (e){ logEvent('warn', 'bets', 'bets auto-load failed: ' + e.message); }
+  NB.loading = false;
+  renderBets();
+}
+function renderBets(){
+  const el = document.getElementById('tab-bets');
+  const ds = state.slateDate;
+  const today = todayPT();
+  const kick = ds === today ? 'Tonight’s slate · NBA' : (ds < today ? 'Earlier slate · NBA' : 'Upcoming slate · NBA');
+  const pretty = (function(){ try { return new Date(ds + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }); } catch (e){ return ds; } })();
+  const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:var(--text,#fff);border-radius:9px;padding:7px 0;font-size:.72rem;font-weight:700;cursor:pointer';
+  let html = '<div class="card" style="border-color:rgba(255,93,93,.35)">' +
+    '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:#ff5d5d;text-transform:uppercase">' + kick + '</div>' +
+    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + pretty + '</div>' +
+    '<div class="small muted">The Key · every pick graded walk-forward</div>' +
+    '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px" class="small muted">' +
+      '<span><b style="color:#ff5d5d">##</b> = confidence grade</span>' +
+      '<span>ranked by real success rate</span>' +
+      '<span>tap a <b style="color:var(--text,#fff)">name</b> — why</span>' +
+      '<span>tap a <b style="color:var(--text,#fff)">card</b> — bet line</span>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button class="nbnav" data-n="-1" style="' + btn + '">‹ prev day</button>' +
+      (ds !== today ? '<button class="nbnav" data-n="0" style="' + btn + ';border-color:rgba(255,93,93,.5);color:#ff5d5d;font-weight:800">today</button>' : '') +
+      '<button class="nbnav" data-n="1" style="' + btn + '">next day ›</button>' +
+    '</div></div>';
+  const wire = function(){
+    Array.prototype.forEach.call(el.querySelectorAll('.nbnav'), function(b){ b.addEventListener('click', function(){ nbShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    Array.prototype.forEach.call(el.querySelectorAll('.nbhead'), function(h){ h.addEventListener('click', function(){ const k = h.getAttribute('data-k'); NB.open[k] = !NB.open[k]; renderBets(); }); });
+    Array.prototype.forEach.call(el.querySelectorAll('.nbname'), function(nm){ nm.addEventListener('click', function(e){ e.stopPropagation(); const tok = nm.getAttribute('data-tok'); NB.why = NB.why === tok ? null : tok; renderBets(); }); });
+  };
+  const notLoaded = !state.slate || state.slate.date !== ds;
+  const notProjected = !notLoaded && state.slate.games.length && !state.slate.games.some(function(g){ return state.projections[g.id]; });
+  if (notLoaded || notProjected){
+    if (!NB.tried[ds]){ nbEnsure(); }
+    el.innerHTML = html + (NB.loading
+      ? '<div class="card muted small">Loading the slate and projections…</div>'
+      : '<div class="card muted small">' + (notLoaded ? 'No slate loaded for this date — use the arrows above or Load Slate on Today.' : 'No projections for this date. The model needs built history — the grading autopilot fills it, or run Facts → Update.') + '</div>');
+    wire(); return;
+  }
+  if (!state.slate.games.length){
+    el.innerHTML = html + '<div class="card muted small">No NBA games on this date.</div>';
+    wire(); return;
+  }
+  const s = state.settings;
+  const keys = Object.keys(NB_META).filter(function(k){
+    if (NB_META[k].dk && (typeof window !== 'undefined' && window.__DK_OK === false)) return false;
+    if (NB_META[k].mkt && s.markets && s.markets[NB_META[k].mkt] === false) return false;
+    return true;
+  });
+  const order = keys.map(function(k){ return { k: k, pct: (catRate(k) || {}).pct != null ? catRate(k).pct : -1 }; }).sort(function(a, b){ return b.pct - a.pct; });
+  let any = false;
+  for (const ok of order){
+    const k = ok.k, meta = NB_META[k];
+    const all = nbRows(k);
+    if (!all.length) continue;
+    any = true;
+    const th = lockTh(meta.th);
+    const locks = all.filter(function(r){ return r.grade >= th; });
+    const rate = catRate(k);
+    const open = !!NB.open[k];
+    html += '<div class="card">' +
+      '<div class="nbhead" data-k="' + k + '" style="cursor:pointer">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+          '<div style="font-size:.76rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d">' + meta.tag + ' <span class="muted" style="font-weight:600;font-size:.66rem">' + (open ? '▴' : '▾') + '</span></div>' +
+          (rate ? '<span class="small muted">this bet type has hit <b style="color:var(--text,#fff)">' + rate.pct + '%</b> of the time (' + rate.hit + '/' + rate.n + ')</span>' : '') + '</div>' +
+        '<div class="small muted" style="margin:2px 0 5px">Bet = ' + meta.what + ' · bet line: confidence <b style="color:var(--text,#fff)">' + th + '+</b></div>' +
+      '</div>';
+    if (!open){
+      if (locks.length) html += locks.map(function(r){ return nbRowHtml(r, false); }).join('');
+      else html += '<div class="small muted" style="padding:3px 0">No picks clear the bet line — tap to see every candidate.</div>';
+    } else {
+      let lineDrawn = false;
+      html += all.map(function(r){
+        const q = r.grade >= th;
+        let pre = '';
+        if (!q && !lineDrawn){
+          lineDrawn = true;
+          pre = '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed #ff5d5d"></div><span style="font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d;white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span><div style="flex:1;border-top:2px dashed #ff5d5d"></div></div>';
+        }
+        return pre + nbRowHtml(r, !q);
+      }).join('');
+      if (!lineDrawn) html += '<div class="small muted" style="padding:3px 0 0">Everyone shown clears the bet line.</div>';
+    }
+    html += '</div>';
+  }
+  if (!any) html += '<div class="card muted small">Projections ran but produced no bet candidates for this date.</div>';
+  el.innerHTML = html;
+  wire();
 }
 
 function coverageLine(){
@@ -2740,6 +2872,7 @@ function boot(){
   });
 
   renderGames();
+  switchTab('bets');
   try{localStorage.setItem(PIN_OK_KEY,'1');}catch(e){} hideGate();
   logEvent('info', 'boot', APP.name + ' v' + APP.version + ' ready \u2014 cloud sync starting');
   setTimeout(function(){ autoCloudSync(); }, 60); // mandatory, non-blocking, quiet when in sync
