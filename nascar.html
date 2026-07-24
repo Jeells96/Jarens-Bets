@@ -109,6 +109,24 @@ const recal = p => p <= 0.55 ? p : 0.55 + (p - 0.55) * 0.55;
 const SIGMA = { super: 11, inter: 6.5, short: 6, road: 6 }; // finishing-position noise by track type
 const MIN_RACES = 3;        // driver needs this many prior finishes for a real rating
 const MIN_PRIOR_RACES = 8;  // races of history before we grade/project at all
+/* ═══ MODEL LAB — tunable stat weights ═══════════════════════════════════════
+   The model's stat weightings, exposed as knobs. Defaults reproduce today's
+   behavior EXACTLY. The Board's Model Lab replays the whole stored season
+   walk-forward under alternative weightings and reports what each does to the
+   real success rate; applying a tuned set per bet category stores it in
+   nascar/lab_cfg, which this app reads on open (one tiny doc — no slowdown).
+     decay      — how fast old races fade (lower = recent races count more)
+     typeW      — how much this track type's history counts vs overall form
+     thinPen    — how far below field average a thin-history driver starts
+     sigmaScale — race chaos: lower = model more decisive, higher = more cautious */
+const MODEL_DEFAULTS = { decay: 0.94, typeW: 0.55, thinPen: 2, sigmaScale: 1 };
+let MODEL_W = Object.assign({}, MODEL_DEFAULTS);
+let LAB_CFG = null; // { cats: { top10: {decay,typeW,sigmaScale}, ... }, t }
+const LAB_CATS = ['winner', 'top5', 'top10', 'top15', 'h2h'];
+async function pullLabCfg(){
+  try { const d = await fbRead(FB_NS, 'lab_cfg'); LAB_CFG = (d && d.cats && Object.keys(d.cats).length) ? d : null; return !!LAB_CFG; }
+  catch (e){ return false; }
+}
 const state = {
   tab: 'bets', projections: {}, nextRace: null,
   seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} }, building: false, fieldExpanded: false, fieldDetailed: false, h2hExpanded: false, betsOpen: {}, whyOpen: null, betsDate: null
@@ -304,19 +322,19 @@ function driverRatings(prior, trackType){
     }
   }
   const lgAvg = nF ? sumF / nF : 20;
-  const decay = 0.94;
+  const decay = MODEL_W.decay;
   const wmean = arr => { if (!arr.length) return null; let s = 0, w = 0; const N = arr.length; for (let k = 0; k < N; k++){ const wt = Math.pow(decay, N - 1 - k); s += arr[k] * wt; w += wt; } return s / w; };
   const rating = {}, count = {}, names = {}, detail = {};
   for (const id in hist){
     const h = hist[id]; count[id] = h.finishes.length; names[id] = h.name;
     if (h.finishes.length < MIN_RACES){
-      rating[id] = lgAvg + 2;
+      rating[id] = lgAvg + MODEL_W.thinPen;
       detail[id] = { n: h.finishes.length, overall: null, typeAvg: null, typeN: h.typeFin.length };
       continue; // thin history → just below field average
     }
     const overall = wmean(h.finishes);
     const typ = h.typeFin.length >= 2 ? wmean(h.typeFin) : null;
-    rating[id] = typ != null ? 0.55 * typ + 0.45 * overall : overall; // track-type-weighted
+    rating[id] = typ != null ? MODEL_W.typeW * typ + (1 - MODEL_W.typeW) * overall : overall; // track-type-weighted
     detail[id] = { n: h.finishes.length, overall: overall, typeAvg: typ, typeN: h.typeFin.length };
   }
   return { rating, lgAvg, count, names, detail };
@@ -353,12 +371,12 @@ function finishProbs(ratings, i, sigma){
   }
   return { pWin: recal(pWin / wsum), pTop5: recal(pT5 / wsum), pTop10: recal(pT10 / wsum), pTop15: recal(pT15 / wsum) };
 }
-function projectRace(fieldDrivers, prior, trackType){
+function projectRaceBase(fieldDrivers, prior, trackType){
   const R = driverRatings(prior, trackType);
   const ids = fieldDrivers.map(d => d.id);
   const names = {}; fieldDrivers.forEach(d => names[d.id] = d.name);
-  const ratings = ids.map(id => R.rating[id] != null ? R.rating[id] : R.lgAvg + 3);
-  const sigma = SIGMA[trackType] || SIGMA.inter;
+  const ratings = ids.map(id => R.rating[id] != null ? R.rating[id] : R.lgAvg + MODEL_W.thinPen + 1);
+  const sigma = (SIGMA[trackType] || SIGMA.inter) * MODEL_W.sigmaScale;
   const byId = {}; let favId = null, favP = -1;
   ids.forEach((id, i) => {
     const pr = finishProbs(ratings, i, sigma);
@@ -377,6 +395,36 @@ function projectRace(fieldDrivers, prior, trackType){
     h2h.push({ aId, bId, aName: names[aId], bName: names[bId], p: normCdf((rb - ra) / sd) }); // P(a beats b)
   }
   return { byId, favId, h2h };
+}
+/* Per-category weight application: compute the default projection, then for
+   each bet category the Board switched to tuned weights, recompute with those
+   weights and take ONLY that category's numbers from the tuned run. Grading,
+   the cron, and every screen all flow through here — the record you see is
+   always the record of the weights that made the picks. */
+function projectRace(fieldDrivers, prior, trackType){
+  const base = projectRaceBase(fieldDrivers, prior, trackType);
+  const cfg = LAB_CFG && LAB_CFG.cats;
+  if (!cfg) return base;
+  const groups = {};
+  for (const cat of LAB_CATS){
+    const w = cfg[cat];
+    if (!w || !Object.keys(w).length) continue;
+    const key = JSON.stringify(w);
+    (groups[key] = groups[key] || { w: w, cats: [] }).cats.push(cat);
+  }
+  for (const key in groups){
+    const g = groups[key];
+    const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, g.w);
+    let tuned;
+    try { tuned = projectRaceBase(fieldDrivers, prior, trackType); }
+    finally { MODEL_W = old; }
+    for (const cat of g.cats){
+      if (cat === 'h2h') base.h2h = tuned.h2h;
+      else if (cat === 'winner'){ base.favId = tuned.favId; for (const id in base.byId) if (tuned.byId[id]) base.byId[id].pWin = tuned.byId[id].pWin; }
+      else { const pk = { top5: 'pTop5', top10: 'pTop10', top15: 'pTop15' }[cat]; for (const id in base.byId) if (tuned.byId[id]) base.byId[id][pk] = tuned.byId[id][pk]; }
+    }
+  }
+  return base;
 }
 
 /* ═══ SECTION: GRADE (stored races vs projections — read-time thresholds) ═══ */
@@ -871,6 +919,7 @@ async function runCronGrade(){
   try {
     clog('applying shared lock config');
     try { await pullSharedLockCfg(); } catch (e) {}
+    try { if (await pullLabCfg()) clog('Model Lab weights active for: ' + Object.keys(LAB_CFG.cats).join(', ')); } catch (e) {}
     const seeded = await seedFromFB(clog);
     clog('seeded ' + seeded + ' race dates from ' + FB_RECS);
     let espnOK = false;
@@ -938,12 +987,80 @@ async function runCronGrade(){
   window.__cronDone = true;
 }
 
+/* ═══ SECTION: MODEL LAB (?lab=1 — on-demand weight search, run from the Board) ═══ */
+async function runLab(){
+  const say = m => { window.__labStatus = 'lab: ' + m; try { console.log('[nascar lab] ' + m); } catch (e) {} };
+  say('starting');
+  try {
+    try { await pullSharedLockCfg(); } catch (e) {}
+    await seedFromFB();
+    try { await buildData(); } catch (e) {}
+    const dates = allRecDates();
+    if (dates.length < 8) throw new Error('only ' + dates.length + ' stored race dates — need 8+ to learn from');
+    const evalW = async w => {
+      const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, w);
+      const cats = {}; LAB_CATS.forEach(c => { cats[c] = { hit: 0, n: 0 }; });
+      try {
+        for (const d of dates){
+          const races = loadRecs(d); if (!races) continue;
+          const prior = priorRaces(d);
+          if (prior.length < MIN_PRIOR_RACES) continue;
+          await new Promise(r => setTimeout(r, 0));
+          for (const rec of races){
+            const proj = projectRaceBase(rec.drivers, prior, rec.trackType);
+            for (const u of unitsFromRace(rec, proj)){
+              if (!cats[u.cat] || !unitQualifies(u)) continue;
+              cats[u.cat].n++; if (u.hit) cats[u.cat].hit++;
+            }
+          }
+        }
+      } finally { MODEL_W = old; }
+      for (const c in cats) cats[c].pct = cats[c].n ? Math.round(1000 * cats[c].hit / cats[c].n) / 10 : null;
+      return cats;
+    };
+    const GRID = [];
+    for (const decay of [0.88, 0.94, 0.985])
+      for (const typeW of [0.3, 0.55, 0.8])
+        for (const sigmaScale of [0.85, 1, 1.2]) GRID.push({ decay, typeW, sigmaScale });
+    const results = [];
+    for (let i = 0; i < GRID.length; i++){
+      say('testing weight set ' + (i + 1) + '/' + GRID.length);
+      results.push({ w: GRID[i], cats: await evalW(GRID[i]) });
+    }
+    const base = results.find(r => r.w.decay === MODEL_DEFAULTS.decay && r.w.typeW === MODEL_DEFAULTS.typeW && r.w.sigmaScale === MODEL_DEFAULTS.sigmaScale);
+    const MIN_N = { winner: 10, top5: 20, top10: 20, top15: 20, h2h: 40 };
+    const best = {};
+    for (const cat of LAB_CATS){
+      let b = null;
+      for (const r of results){
+        const c = r.cats[cat];
+        if (!c || c.pct == null || c.n < (MIN_N[cat] || 20)) continue;
+        if (!b || c.pct > b.pct || (c.pct === b.pct && c.n > b.n)) b = { pct: c.pct, hit: c.hit, n: c.n, weights: r.w };
+      }
+      if (b) best[cat] = b;
+    }
+    const th = {}; LAB_CATS.forEach(c => { th[c] = lockTh(c); });
+    const report = { t: new Date().toISOString(), app: 'nascar', races: dates.length, tried: GRID.length,
+      thresholds: th, defaults: MODEL_DEFAULTS, base: base ? base.cats : null, best: best };
+    await fbWrite(FB_NS, 'labReport', report);
+    say('done — report published to nascar/labReport');
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-done', app: 'nascar' }, '*'); } catch (e) {}
+  } catch (e){
+    window.__labStatus = 'lab: ERROR — ' + (e && e.message || e);
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-error', app: 'nascar', msg: String(e && e.message || e) }, '*'); } catch (e2) {}
+  }
+}
+
 /* ═══ SECTION: BOOT ═══ */
 (function boot(){
   $id('verBadge').textContent = 'v' + APP.version + ' · walk-forward';
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => switchTab(b.getAttribute('data-tab')));
   if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
+  if (new URLSearchParams(location.search).get('lab') === '1'){ runLab(); return; }
   pullSharedLockCfg().then(got => { if (got) rerenderCurrent(); }).catch(() => {});
+  pullLabCfg().then(got => { if (got) rerenderCurrent(); }).catch(() => {});
   loadCatRecords();
   loadNextRace().then(() => rerenderCurrent());
   switchTab(state.tab); // Bets is the front page
@@ -958,7 +1075,8 @@ async function runCronGrade(){
    (app_settings/board_access in mlb-bets-d196c). Admin PIN (2325) and any
    ?cron= run always bypass. The free app (mlbfree) only needs a name. */
 (function(){
-  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var Q = new URLSearchParams(location.search);
+  if (Q.get('cron') || Q.get('lab')) return; // never gate automation
   var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
   var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
   var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';

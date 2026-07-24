@@ -1353,11 +1353,214 @@ function rateRow(label, cur, prop){
     '<span style="font-size:13px;font-weight:800;min-width:92px;text-align:right">' + f(prop) + '</span></div>';
 }
 
+
+/* ═══ MODEL LAB (Board side) ═══════════════════════════════════════════════
+   The Lab teaches the models to read their stats better — it never touches
+   your lock thresholds. Each app (v1: NASCAR, NBA, NHL — their models store
+   every game and can be replayed) exposes ?lab=1: it replays the WHOLE stored
+   season walk-forward under 27 alternative stat weightings and publishes a
+   report ({ns}/labReport) of what each weighting does to the REAL success
+   rate per bet category. Nothing here loads at page-open — only when the
+   buttons inside this tab are tapped (the Sunday-morning ritual). Applying a
+   category writes {ns}/lab_cfg; each app reads that one tiny doc on open, so
+   members feel zero slowdown. Default is always one tap away, and the report
+   always shows exactly what default vs tuned does to the success rate. */
+var LAB_APPS = [
+  { ns: 'nascar', file: 'nascar.html', name: 'Pete’s Picks (NASCAR)',
+    cats: { winner: 'Winner', top5: 'Top 5', top10: 'Top 10', top15: 'Top 15', h2h: 'Matchup' } },
+  { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)',
+    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Player rebounds', playerAst: 'Player assists' } },
+  { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)',
+    cats: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorers', point: 'Point scorers' } }
+];
+var KNOB_PHRASE = {
+  decay: { down: 'recent races count more', up: 'older races count more' },
+  typeW: { down: 'overall form counts more', up: 'this track type’s history counts more' },
+  sigmaScale: { down: 'model reads the field more decisively', up: 'model plays it more cautious' },
+  teamDecay: { down: 'recent team form counts more', up: 'season-long form counts more' },
+  sigmaMargin: { down: 'margins trusted more (more decisive)', up: 'margins trusted less (more cautious)' },
+  b2bSelf: { down: 'back-to-backs matter less', up: 'back-to-backs punished harder' },
+  homeBump: { down: 'home ice counts less', up: 'home ice counts more' },
+  pythEx: { down: 'goal edge converts softer', up: 'goal edge converts harder into win odds' },
+  regressGp: { down: 'player hot streaks trusted more', up: 'player rates pulled harder to league average' }
+};
+var LAB = { reports: {}, cfgs: {}, wired: false, running: false };
+function labRead(ns, doc){
+  return fetch(FS + NFLP.p + '/databases/(default)/documents/' + ns + '/' + doc + '?key=' + NFLP.k)
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      var v = j && j.fields && j.fields.data && j.fields.data.stringValue;
+      try { return v ? JSON.parse(v) : null; } catch (e){ return null; }
+    }).catch(function(){ return null; });
+}
+function labWrite(ns, doc, obj){
+  return fetch(FS + NFLP.p + '/databases/(default)/documents/' + ns + '/' + doc + '?key=' + NFLP.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify(obj) }, t: { stringValue: new Date().toISOString() } } })
+  }).then(function(r){ if (!r.ok) throw new Error('lab save failed (HTTP ' + r.status + ')'); return true; });
+}
+function labWeightDesc(defs, w){
+  var bits = [];
+  for (var k in w){
+    if (!(k in (defs || {})) || w[k] === defs[k]) continue;
+    var ph = KNOB_PHRASE[k];
+    var dir = w[k] > defs[k] ? 'up' : 'down';
+    bits.push((ph ? ph[dir] : k) + ' (' + defs[k] + ' → ' + w[k] + ')');
+  }
+  return bits.length ? bits.join(' · ') : 'same as default';
+}
+function labTabHtml(){
+  return '<div class="sect"><div class="row"><span class="lbl">Model Lab</span><span class="hint">weekly · on-demand only</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">The Lab teaches each app to <b>read its stats better</b> — it re-runs the whole graded season under 27 different stat weightings (how much recent form counts, how track/home factors weigh, how decisive the model is) and shows what each does to the <b>real success rate</b>. It never touches your lock thresholds. Nothing loads until you tap a button here — the Sunday-morning ritual is: <b>Run this week’s scan</b>, read the numbers, flip on what helps. Default is always one tap away.</p>' +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">v1 covers Pete’s Picks, The Key and Icing — their models store every game and can be replayed. Diamond IQ and Gridline don’t store their model inputs, so they can’t replay alternate weightings yet.</p>' +
+    '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+      '<button class="go" id="lab-run" style="flex:1;margin:0">Run this week’s scan</button>' +
+      '<button class="close" id="lab-load" style="flex:1;border:1px solid var(--hair);border-radius:9px;padding:8px">Load last report</button>' +
+    '</div>' +
+    '<div id="lab-status" class="hint" style="min-height:16px;margin-bottom:6px"></div>' +
+    '<div id="lab-body"><p class="sub" style="color:var(--dim2)">No report loaded. “Load last report” shows the most recent scan; “Run this week’s scan” replays every stored game fresh (takes a few minutes, runs entirely in this tab).</p></div>' +
+    '</div>';
+}
+function labCatRowHtml(app, cat, rep, cfg){
+  var base = rep && rep.base && rep.base[cat];
+  var best = rep && rep.best && rep.best[cat];
+  var applied = !!(cfg && cfg.cats && cfg.cats[cat]);
+  var fmt = function(o){ return o && o.n ? '<b>' + o.pct + '%</b> <span class="hint">(' + o.hit + '/' + o.n + ')</span>' : '<span class="hint">—</span>'; };
+  var delta = '';
+  if (base && best && base.n && best.n){
+    var d = Math.round((best.pct - base.pct) * 10) / 10;
+    delta = d > 0 ? '<b style="color:#7fd99a">+' + d + '</b>' : d < 0 ? '<b style="color:#ff7a7a">' + d + '</b>' : '<b style="color:var(--dim2)">±0</b>';
+  }
+  var noGain = best && base && best.pct <= base.pct;
+  return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px">' +
+    '<div class="row" style="margin-bottom:4px"><span class="lbl" style="font-size:13.5px">' + esc(app.cats[cat]) + '</span>' +
+      (best ? '<label class="tog" title="use the tuned weighting for this bet type"><input type="checkbox" class="lab-use" data-ns="' + app.ns + '" data-cat="' + cat + '"' + (applied ? ' checked' : '') + '><span></span></label>' : '<span class="hint">not enough graded picks</span>') + '</div>' +
+    '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">default (what you have now)</span><span>' + fmt(base) + '</span></div>' +
+    (best ? '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">best tuned weighting</span><span>' + fmt(best) + ' ' + delta + '</span></div>' +
+      '<div class="hint" style="margin-top:4px;line-height:1.5">What changes: ' + esc(labWeightDesc(rep.defaults, best.weights)) + (noGain ? ' · <b>no gain over default — leave it off</b>' : '') + '</div>' : '') +
+    (applied ? '<div class="hint" style="margin-top:4px;color:#c9a84c">Tuned weighting is LIVE for this bet type. Switching it off returns it to the default row above.</div>' : '') +
+    '</div>';
+}
+function labAppCardHtml(app){
+  var rep = LAB.reports[app.ns], cfg = LAB.cfgs[app.ns];
+  var head = '<div class="row"><span class="lbl">' + esc(app.name) + '</span>' +
+    '<span class="hint">' + (rep ? 'scanned ' + esc(String(rep.t || '').slice(0, 10)) + ' · ' + (rep.tried || 27) + ' weightings' : 'no report yet') + '</span></div>';
+  if (!rep) return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px">' + head +
+    '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">Run a scan (or load the last report) to see what re-weighting does here.</p></div>';
+  var body = Object.keys(app.cats).map(function(c){ return labCatRowHtml(app, c, rep, cfg); }).join('');
+  return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px" data-labapp="' + app.ns + '">' + head +
+    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Numbers = the whole stored season re-graded walk-forward at your current thresholds. Flip a switch to use the tuned weighting for that bet type only.</p>' +
+    body +
+    '<div style="display:flex;gap:8px;margin-top:4px">' +
+      '<button class="go lab-save" data-ns="' + app.ns + '" style="flex:1;margin:0">Save choices</button>' +
+      '<button class="close lab-reset" data-ns="' + app.ns + '" style="flex:1;border:1px solid var(--hair);border-radius:9px;padding:8px">Back to default</button>' +
+    '</div><div class="hint lab-msg" style="min-height:14px;margin-top:4px"></div></div>';
+}
+function labRenderBody(box){
+  var el = box.querySelector('#lab-body');
+  if (!el) return;
+  el.innerHTML = LAB_APPS.map(labAppCardHtml).join('');
+  el.querySelectorAll('.lab-save').forEach(function(b){
+    b.addEventListener('click', function(){
+      var ns = b.getAttribute('data-ns');
+      var app = LAB_APPS.find(function(a){ return a.ns === ns; });
+      var rep = LAB.reports[ns];
+      var card = el.querySelector('[data-labapp="' + ns + '"]');
+      var msg = card.querySelector('.lab-msg');
+      var cats = {};
+      card.querySelectorAll('.lab-use').forEach(function(cb){
+        if (cb.checked && rep && rep.best && rep.best[cb.getAttribute('data-cat')]) cats[cb.getAttribute('data-cat')] = rep.best[cb.getAttribute('data-cat')].weights;
+      });
+      msg.textContent = 'Saving…';
+      labWrite(ns, 'lab_cfg', { cats: cats, savedAt: new Date().toISOString() }).then(function(){
+        LAB.cfgs[ns] = { cats: cats };
+        msg.textContent = Object.keys(cats).length
+          ? 'Saved — ' + app.name + ' uses the tuned weighting for: ' + Object.keys(cats).map(function(c){ return app.cats[c]; }).join(', ') + '. Apps pick it up on next open; the graded record re-syncs on the next 2-hour grading run.'
+          : 'Saved — everything back to the default weighting.';
+        labRenderBody(box);
+        var m2 = box.querySelector('[data-labapp="' + ns + '"] .lab-msg'); if (m2) m2.textContent = msg.textContent;
+      }).catch(function(e){ msg.textContent = String(e.message || e); });
+    });
+  });
+  el.querySelectorAll('.lab-reset').forEach(function(b){
+    b.addEventListener('click', function(){
+      var ns = b.getAttribute('data-ns');
+      var app = LAB_APPS.find(function(a){ return a.ns === ns; });
+      var card = el.querySelector('[data-labapp="' + ns + '"]');
+      var msg = card ? card.querySelector('.lab-msg') : null;
+      if (msg) msg.textContent = 'Resetting…';
+      labWrite(ns, 'lab_cfg', { cats: {}, savedAt: new Date().toISOString() }).then(function(){
+        LAB.cfgs[ns] = { cats: {} };
+        labRenderBody(box);
+        var m2 = box.querySelector('[data-labapp="' + ns + '"] .lab-msg');
+        if (m2) m2.textContent = 'Back to default — ' + app.name + ' reads its stats exactly as before; your success returns to the “default” row shown on each bet type.';
+      }).catch(function(e){ if (msg) msg.textContent = String(e.message || e); });
+    });
+  });
+}
+async function labLoadReports(box){
+  var st = box.querySelector('#lab-status');
+  st.textContent = 'Loading the latest reports…';
+  for (var i = 0; i < LAB_APPS.length; i++){
+    var a = LAB_APPS[i];
+    LAB.reports[a.ns] = await labRead(a.ns, 'labReport');
+    LAB.cfgs[a.ns] = await labRead(a.ns, 'lab_cfg');
+  }
+  st.textContent = 'Reports loaded.';
+  labRenderBody(box);
+}
+function labRunScan(box){
+  if (LAB.running) return;
+  LAB.running = true;
+  var st = box.querySelector('#lab-status');
+  var queue = LAB_APPS.slice();
+  var runNext = function(){
+    var app = queue.shift();
+    if (!app){
+      LAB.running = false;
+      st.textContent = 'Scan complete.';
+      labLoadReports(box);
+      return;
+    }
+    st.textContent = 'Scanning ' + app.name + '… (replaying its whole stored season — a minute or two)';
+    var fr = document.createElement('iframe');
+    fr.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none';
+    fr.src = './' + app.file + '?lab=1';
+    var done = false;
+    var finish = function(ok, msg){
+      if (done) return; done = true;
+      window.removeEventListener('message', onMsg);
+      clearTimeout(tm);
+      try { fr.remove(); } catch (e) {}
+      if (!ok) st.textContent = app.name + ': ' + (msg || 'scan failed') + ' — moving on.';
+      labRead(app.ns, 'labReport').then(function(r){ LAB.reports[app.ns] = r; return labRead(app.ns, 'lab_cfg'); })
+        .then(function(c){ LAB.cfgs[app.ns] = c; labRenderBody(box); runNext(); });
+    };
+    var onMsg = function(ev){
+      var d = ev && ev.data;
+      if (!d || d.app !== app.ns) return;
+      if (d.type === 'lab-done') finish(true);
+      if (d.type === 'lab-error') finish(false, d.msg);
+    };
+    window.addEventListener('message', onMsg);
+    var tm = setTimeout(function(){ finish(false, 'timed out after 6 minutes'); }, 360000);
+    document.body.appendChild(fr);
+  };
+  runNext();
+}
+function wireLab(box){
+  if (LAB.wired) return;
+  LAB.wired = true;
+  box.querySelector('#lab-run').addEventListener('click', function(){ labRunScan(box); });
+  box.querySelector('#lab-load').addEventListener('click', function(){ labLoadReports(box); });
+}
+
 async function openSettingsPanel(){
   var pin = prompt('Admin PIN');
   if (pin == null) return;
   if (!adminPinOk(pin)){ alert('Wrong PIN.'); return; }
   var old = document.getElementById('adminovl'); if (old) old.remove();
+  LAB.wired = false;
   var ovl = document.createElement('div');
   ovl.className = 'ovl'; ovl.id = 'adminovl';
   ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
@@ -1493,6 +1696,36 @@ async function openSettingsPanel(){
 
   ovl.querySelector('.box').innerHTML =
     '<h3>Board Settings</h3>' +
+    '<div id="stabbar" style="display:flex;gap:6px;margin:10px 0 14px">' +
+      '<button class="stabbtn" data-stab="members" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid #c9a84c;background:transparent;color:#c9a84c;font-weight:800;cursor:pointer;font:inherit;font-size:13px">Members</button>' +
+      '<button class="stabbtn" data-stab="thresholds" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Thresholds</button>' +
+      '<button class="stabbtn" data-stab="lab" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Model Lab</button>' +
+    '</div>' +
+    '<div id="stab-members">' +
+    '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + DK odds the 1st–15th; <b>$20</b> = all sports + ⚡ Super Locks + DK the 1st–15th; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
+    '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
+    '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
+    (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
+      freeLog.slice(0, 40).map(function(x){ return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(x.n) + '</span><span class="hint">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>'; }).join('') : '') +
+    '</div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown when a free user taps a paid app</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
+    '<label class="hint">Headline</label>' +
+    '<input type="text" id="ad-title" value="' + esc(adCfg.title) + '" style="margin:2px 0 10px">' +
+    '<label class="hint">Pitch (one or two sentences)</label>' +
+    '<textarea id="ad-pitch" rows="3" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.pitch) + '</textarea>' +
+    '<label class="hint">What’s included — one perk per line</label>' +
+    '<textarea id="ad-perks" rows="5" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.perks.join('\n')) + '</textarea>' +
+    '<label class="hint">How to reach you (optional line above the button)</label>' +
+    '<input type="text" id="ad-contact" value="' + esc(adCfg.contact) + '" style="margin:2px 0 10px">' +
+    '<label class="hint">Your phone (the button texts this number)</label>' +
+    '<input type="text" id="ad-phone" value="' + esc(adCfg.phone) + '" placeholder="503-278-6961" style="margin:2px 0 10px">' +
+    '<label class="hint">Button label</label>' +
+    '<input type="text" id="ad-cta" value="' + esc(adCfg.cta) + '" style="margin:2px 0 4px">' +
+    '<button class="close" id="ad-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:8px">Preview the ad</button></div>' +
+    '</div>' +
+    '<div id="stab-thresholds" style="display:none">' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Pulls run themselves at the smart times below \u2014 each game is pulled once, close to start, so no API quota is wasted. Just flip a league on or off.</p>' +
     '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
@@ -1509,13 +1742,6 @@ async function openSettingsPanel(){
     '<div class="row" style="margin-top:10px"><span class="lbl">Icing \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-hon"' + (dk.hockeyOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s puck drop</b>, once per game that day.</div></div>' +
-    '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + DK odds the 1st–15th; <b>$20</b> = all sports + ⚡ Super Locks + DK the 1st–15th; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
-    '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
-    '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
-    (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
-      freeLog.slice(0, 40).map(function(x){ return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(x.n) + '</span><span class="hint">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>'; }).join('') : '') +
-    '</div>' +
     lockSect('Lock grades \u00b7 Diamond IQ Premium',
       'Hits/HR are lock probabilities (0\u20131, e.g. 0.80). The rest are edge-vs-line margins. Preview = lock-tier success from real graded history.',
       PREM_KNOBS, 'pk-', premCfg, 'p-preview', 'p-prevout') +
@@ -1534,27 +1760,30 @@ async function openSettingsPanel(){
     lockSect('Lock grades \u00b7 Pete\u2019s Picks (NASCAR)',
       'Lock percentages per bet type (no tolerances \u2014 all are yes/no). Preview re-grades every stored race at your proposed numbers.',
       NASCAR_KNOBS, 'nc-', Object.assign({}, nascarTh), 'nc-preview', 'nc-prevout') +
-    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown when a free user taps a paid app</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
-    '<label class="hint">Headline</label>' +
-    '<input type="text" id="ad-title" value="' + esc(adCfg.title) + '" style="margin:2px 0 10px">' +
-    '<label class="hint">Pitch (one or two sentences)</label>' +
-    '<textarea id="ad-pitch" rows="3" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.pitch) + '</textarea>' +
-    '<label class="hint">What’s included — one perk per line</label>' +
-    '<textarea id="ad-perks" rows="5" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.perks.join('\n')) + '</textarea>' +
-    '<label class="hint">How to reach you (optional line above the button)</label>' +
-    '<input type="text" id="ad-contact" value="' + esc(adCfg.contact) + '" style="margin:2px 0 10px">' +
-    '<label class="hint">Your phone (the button texts this number)</label>' +
-    '<input type="text" id="ad-phone" value="' + esc(adCfg.phone) + '" placeholder="503-278-6961" style="margin:2px 0 10px">' +
-    '<label class="hint">Button label</label>' +
-    '<input type="text" id="ad-cta" value="' + esc(adCfg.cta) + '" style="margin:2px 0 4px">' +
-    '<button class="close" id="ad-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:8px">Preview the ad</button></div>' +
+    '</div>' +
+    '<div id="stab-lab" style="display:none">' + labTabHtml() + '</div>' +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
     '<button class="close" id="s-signout" style="margin-top:6px">Sign out this device (switch account)</button>' +
     '<button class="close" id="s-close">Close</button>';
 
   var box = ovl.querySelector('.box');
+  box.querySelectorAll('.stabbtn').forEach(function(b){
+    b.addEventListener('click', function(){
+      var want = b.getAttribute('data-stab');
+      box.querySelectorAll('.stabbtn').forEach(function(x){
+        var on = x === b;
+        x.style.borderColor = on ? '#c9a84c' : 'var(--hair)';
+        x.style.color = on ? '#c9a84c' : 'var(--dim2)';
+        x.style.fontWeight = on ? '800' : '700';
+      });
+      ['members', 'thresholds', 'lab'].forEach(function(t){
+        var el = box.querySelector('#stab-' + t);
+        if (el) el.style.display = t === want ? '' : 'none';
+      });
+      if (want === 'lab') wireLab(box);
+    });
+  });
   box.querySelector('#ad-preview').addEventListener('click', function(){
     AD_CACHE = normalizeAd({
       title: box.querySelector('#ad-title').value, pitch: box.querySelector('#ad-pitch').value,

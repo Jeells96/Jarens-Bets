@@ -524,6 +524,22 @@ const SIGMA_TOTAL_PRIOR = 18;      // sd of game total around a projection (TUNE
 const SIGMA_TEAMPTS_PRIOR = 11;    // sd of one team's points (TUNE from grading)
 const B2B_SELF = 1.5;              // pts a team loses on 0 days rest (TUNE)
 const B2B_OPP = 1.0;               // pts its opponent gains (TUNE)
+/* ═══ MODEL LAB — tunable stat weights (defaults = today's behavior exactly).
+   The Board's Model Lab replays the stored season under alternative weightings
+   and can apply a tuned set per bet category (nba/lab_cfg — one tiny doc read
+   on open, no slowdown).
+     teamDecay   — how fast old team games fade (lower = recent form counts more)
+     playerDecay — same for player game logs
+     sigmaMargin — how noisy we assume final margins are (lower = more decisive)
+     b2bSelf/b2bOpp — how many points a back-to-back costs / gifts */
+const MODEL_DEFAULTS = { teamDecay: TEAM_RECENCY_DECAY, playerDecay: PLAYER_RECENCY_DECAY, sigmaMargin: SIGMA_MARGIN, b2bSelf: B2B_SELF, b2bOpp: B2B_OPP };
+let MODEL_W = Object.assign({}, MODEL_DEFAULTS);
+let LAB_CFG = null;
+const LAB_CATS = ['winner', 'total', 'teamPts', 'playerPts', 'playerReb', 'playerAst'];
+async function pullLabCfg(){
+  try { const d = await fbRead(FB_NS, 'lab_cfg'); LAB_CFG = (d && d.cats && Object.keys(d.cats).length) ? d : null; return !!LAB_CFG; }
+  catch (e){ return false; }
+}
 const MIN_AVG_MIN = 15;            // props only for real rotation players
 // League-typical per-game MEANS small samples shrink toward (rotation players)
 const MEAN_PRIOR = {
@@ -550,7 +566,7 @@ function playerStatSigma(p, stat, pos, beforeDate){
   const rows = cur && cur.rows ? cur.rows.filter(function(r){ return r.date < beforeDate; }) : [];
   if (rows.length < 2) return { sigma: prior, n: rows.length, playerSigma: null };
   let sumW = 0, mean = 0;
-  const w = rows.map(function(r, i){ return Math.pow(PLAYER_RECENCY_DECAY, rows.length - 1 - i); });
+  const w = rows.map(function(r, i){ return Math.pow(MODEL_W.playerDecay, rows.length - 1 - i); });
   rows.forEach(function(r, i){ sumW += w[i]; mean += w[i] * r[stat]; });
   mean = sumW ? mean / sumW : 0;
   let varSum = 0;
@@ -998,7 +1014,7 @@ function teamForm(tid, beforeDate, lg){
   if (!rows.length) return base;
   let sw = 0, off = 0, def = 0, pace = 0;
   rows.forEach(function(r, i){
-    const w = Math.pow(TEAM_RECENCY_DECAY, rows.length - 1 - i);
+    const w = Math.pow(MODEL_W.teamDecay, rows.length - 1 - i);
     sw += w; off += w * (r.pf / r.poss); def += w * (r.pa / r.poss); pace += w * r.poss;
   });
   off /= sw; def /= sw; pace /= sw;
@@ -1056,7 +1072,7 @@ function projectPlayerStat(pid, stat, pos, oppAb, beforeDate){
   if (rows.length < 2) return null;
   let sw = 0, mean = 0, mins = 0;
   rows.forEach(function(r, i){
-    const w = Math.pow(PLAYER_RECENCY_DECAY, rows.length - 1 - i);
+    const w = Math.pow(MODEL_W.playerDecay, rows.length - 1 - i);
     sw += w; mean += w * r[stat]; mins += w * r.min;
   });
   mean /= sw; mins /= sw;
@@ -1101,7 +1117,7 @@ function buildProps(g, injuries, beforeDate, isPost){
   return props;
 }
 
-function projectGame(g, injuries, beforeDate){
+function projectGameBase(g, injuries, beforeDate){
   if (!state.coverage) hydrateFromStore();
   if (!state.coverage || !state.coverage.games) return null;
   const lg = leagueBaselines(beforeDate);
@@ -1112,10 +1128,10 @@ function projectGame(g, injuries, beforeDate){
   let awayPts = (A.off * H.def / lg.ppp) * pace;
   let homePts = (H.off * A.def / lg.ppp) * pace;
   homePts += lg.hca / 2; awayPts -= lg.hca / 2;   // HCA from real home margins
-  if (A.b2b){ awayPts -= B2B_SELF; homePts += B2B_OPP; } // rest replaces weather
-  if (H.b2b){ homePts -= B2B_SELF; awayPts += B2B_OPP; }
+  if (A.b2b){ awayPts -= MODEL_W.b2bSelf; homePts += MODEL_W.b2bOpp; } // rest replaces weather
+  if (H.b2b){ homePts -= MODEL_W.b2bSelf; awayPts += MODEL_W.b2bOpp; }
   const margin = homePts - awayPts;
-  const pHome = normCdf(margin / SIGMA_MARGIN);
+  const pHome = normCdf(margin / MODEL_W.sigmaMargin);
   const winProb = Math.max(pHome, 1 - pHome);
   const sigTotal = SIGMA_TOTAL_PRIOR * pace / lg.pace;
   const sigTeam = SIGMA_TEAMPTS_PRIOR * pace / lg.pace;
@@ -1132,6 +1148,38 @@ function projectGame(g, injuries, beforeDate){
     confTeam: pct(2 * normCdf(hitTol('pts') / sigTeam) - 1),
     props: buildProps(g, injuries, beforeDate, g.stateCode === 'post')
   };
+}
+
+/* Per-category weight application: every caller (slate, grading, cron) flows
+   through here, so shown picks and the graded record always match the applied
+   weights. Categories without a tuned set keep the default model untouched. */
+function projectGame(g, injuries, beforeDate){
+  const base = projectGameBase(g, injuries, beforeDate);
+  const cfg = LAB_CFG && LAB_CFG.cats;
+  if (!base || !cfg) return base;
+  const groups = {};
+  for (const cat of LAB_CATS){
+    const w = cfg[cat];
+    if (!w || !Object.keys(w).length) continue;
+    const key = JSON.stringify(w);
+    (groups[key] = groups[key] || { w: w, cats: [] }).cats.push(cat);
+  }
+  for (const key in groups){
+    const grp = groups[key];
+    const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, grp.w);
+    let tuned;
+    try { tuned = projectGameBase(g, injuries, beforeDate); }
+    finally { MODEL_W = old; }
+    if (!tuned) continue;
+    const tProp = {}; (tuned.props || []).forEach(function(p){ tProp[p.pid + '|' + p.stat] = p; });
+    for (const cat of grp.cats){
+      if (cat === 'winner'){ base.winAb = tuned.winAb; base.winMetric = tuned.winMetric; base.margin = tuned.margin; }
+      else if (cat === 'total'){ base.total = tuned.total; base.confTotal = tuned.confTotal; }
+      else if (cat === 'teamPts'){ base.awayPts = tuned.awayPts; base.homePts = tuned.homePts; base.confTeam = tuned.confTeam; }
+      else (base.props || []).forEach(function(p){ const t = tProp[p.pid + '|' + p.stat]; if (p.cat === cat && t){ p.proj = t.proj; p.conf = t.conf; } });
+    }
+  }
+  return base;
 }
 
 async function projectSlate(){
@@ -1407,12 +1455,82 @@ async function runCronDkPull(){
   window.__cronDone = true;
 }
 
+/* ═══ SECTION: MODEL LAB (?lab=1 — on-demand weight search, run from the Board) ═══ */
+async function runLab(){
+  const say = function(m){ window.__labStatus = 'lab: ' + m; try { console.log('[nba lab] ' + m); } catch (e) {} };
+  say('starting');
+  try {
+    try { localStorage.setItem(PIN_OK_KEY, '1'); } catch (e) {}
+    state.settings = state.settings && Object.keys(state.settings).length ? state.settings : loadSettings();
+    try { await pullSharedLockCfg(); } catch (e) {}
+    say('seeding records from Firebase');
+    try { await pullRecsFB(); } catch (e) {}
+    hydrateFromStore();
+    const byDate = loadRecsByDate();
+    const dates = Object.keys(byDate).sort();
+    if (dates.length < 15) throw new Error('only ' + dates.length + ' stored dates — need 15+ to learn from');
+    const evalW = async function(w){
+      const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, w);
+      const cats = {}; LAB_CATS.forEach(function(c){ cats[c] = { hit: 0, n: 0 }; });
+      try {
+        for (const d of dates){
+          await sleep(0);
+          state.defCache = null; state.lgCache = null; // weight-dependent caches
+          for (const rec of byDate[d]){
+            const proj = projectGameBase(recToGame(rec), {}, d);
+            if (!proj) continue;
+            for (const u of unitsFromRecord(rec, proj)){
+              if (!cats[u.cat] || !unitQualifies(u)) continue;
+              cats[u.cat].n++; if (unitHit(u)) cats[u.cat].hit++;
+            }
+          }
+        }
+      } finally { MODEL_W = old; state.defCache = null; state.lgCache = null; }
+      for (const c in cats) cats[c].pct = cats[c].n ? Math.round(1000 * cats[c].hit / cats[c].n) / 10 : null;
+      return cats;
+    };
+    const GRID = [];
+    for (const teamDecay of [0.93, 0.97, 1])
+      for (const sigmaMargin of [9, 12, 15])
+        for (const b2bSelf of [0.5, 1.5, 3]) GRID.push({ teamDecay, sigmaMargin, b2bSelf });
+    const results = [];
+    for (let i = 0; i < GRID.length; i++){
+      say('testing weight set ' + (i + 1) + '/' + GRID.length);
+      results.push({ w: GRID[i], cats: await evalW(GRID[i]) });
+    }
+    const base = results.find(function(r){ return r.w.teamDecay === MODEL_DEFAULTS.teamDecay && r.w.sigmaMargin === MODEL_DEFAULTS.sigmaMargin && r.w.b2bSelf === MODEL_DEFAULTS.b2bSelf; });
+    const MIN_N = { winner: 30, total: 30, teamPts: 40, playerPts: 40, playerReb: 40, playerAst: 40 };
+    const best = {};
+    for (const cat of LAB_CATS){
+      let b = null;
+      for (const r of results){
+        const c = r.cats[cat];
+        if (!c || c.pct == null || c.n < (MIN_N[cat] || 30)) continue;
+        if (!b || c.pct > b.pct || (c.pct === b.pct && c.n > b.n)) b = { pct: c.pct, hit: c.hit, n: c.n, weights: r.w };
+      }
+      if (b) best[cat] = b;
+    }
+    const th = {}; LAB_CATS.forEach(function(c){ th[c] = lockTh(CAT_META[c].th); });
+    const report = { t: new Date().toISOString(), app: 'nba', dates: dates.length, tried: GRID.length,
+      thresholds: th, defaults: MODEL_DEFAULTS, base: base ? base.cats : null, best: best };
+    await fbWrite(FB_NS, 'labReport', report);
+    say('done — report published to nba/labReport');
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-done', app: 'nba' }, '*'); } catch (e) {}
+  } catch (e){
+    window.__labStatus = 'lab: ERROR — ' + (e && e.message || e);
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-error', app: 'nba', msg: String(e && e.message || e) }, '*'); } catch (e2) {}
+  }
+}
+
 async function runCronGrade(){
   window.__cronStatus = 'cron: starting';
   try { localStorage.setItem(PIN_OK_KEY, '1'); } catch (e) {}
   const clog = function(m){ window.__cronStatus = 'cron: ' + m; try { console.log('[nba] ' + m); } catch (e) {} };
   const countRecs = function(){ let n = 0; try { eachStoredRecord(function(){ n++; }); } catch (e) {} return n; };
   try {
+    try { if (await pullLabCfg()) clog('Model Lab weights active for: ' + Object.keys(LAB_CFG.cats).join(', ')); } catch (e) {}
     clog('seeding records from Firebase (nba_recs)');
     const seed = await pullRecsFB();
     clog('seed: ' + seed.dates + ' cloud dates, ' + seed.seeded + ' records loaded');
@@ -2838,12 +2956,17 @@ function boot(){
     runCronDkPull();
     return;
   }
+  if (new URLSearchParams(location.search).get('lab') === '1'){
+    runLab();
+    return;
+  }
   document.getElementById('verBadge').textContent = 'v' + APP.version;
   document.getElementById('fbPill').textContent = fbReady() ? 'FB: ' + FB.projectId : 'Firebase: not set';
   purgeStaleCache(); // quota hygiene only — no data fetches on boot
   state.settings = loadSettings();
   // League-wide lock config from the Board overrides device settings on open.
   pullSharedLockCfg().then(function(got){ if (got){ try { renderFactsBody(); } catch (e) {} } }).catch(function(){});
+  pullLabCfg().then(function(got){ if (got){ try { renderBets(); } catch (e) {} } }).catch(function(){});
   loadCatRecords(); // per-category success rates for the bet lists
   state.slateDate = todayPT();
 
@@ -2891,7 +3014,8 @@ document.addEventListener('DOMContentLoaded', boot);
    owner and the automation can never be locked out. The free app (mlbfree)
    only needs a name. Also carries the global DK-visibility switch. */
 (function(){
-  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var Q = new URLSearchParams(location.search);
+  if (Q.get('cron') || Q.get('lab')) return; // never gate automation
   var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
   var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
   var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';

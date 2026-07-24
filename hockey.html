@@ -107,6 +107,21 @@ const TOL_DEFAULTS = { goals: 1, p1: 1 };
 const HOME_BUMP = 0.12;   // home-ice goals bump
 const PYTH_EX = 2.2;      // hockey Pythagorean exponent
 const REGRESS_GP = 12;    // player-rate regression games
+/* ═══ MODEL LAB — tunable stat weights (defaults = today's behavior exactly).
+   The Board's Model Lab replays the stored season under alternative weightings
+   and can apply a tuned set per bet category (nhl/lab_cfg — one tiny doc read
+   on open, no slowdown).
+     homeBump  — how many goals home ice is worth
+     pythEx    — how hard goal differential converts into win probability
+     regressGp — how many games of "league average" a player's rates are blended with */
+const MODEL_DEFAULTS = { homeBump: HOME_BUMP, pythEx: PYTH_EX, regressGp: REGRESS_GP };
+let MODEL_W = Object.assign({}, MODEL_DEFAULTS);
+let LAB_CFG = null;
+const LAB_CATS = ['winner', 'total', 'p1', 'goal', 'point'];
+async function pullLabCfg(){
+  try { const d = await fbRead(FB_NS, 'lab_cfg'); LAB_CFG = (d && d.cats && Object.keys(d.cats).length) ? d : null; return !!LAB_CFG; }
+  catch (e){ return false; }
+}
 const state = {
   tab: 'bets', slateDate: null, slate: null, projections: {},
   seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} },
@@ -334,14 +349,14 @@ function playerRates(prior){
   }
   return { P, lastLineup };
 }
-function projectGame(game, ctx){
+function projectGameBase(game, ctx){
   // ctx = { rates, players } computed once per slate (walk-forward for its date)
   const { T, lgGpg, lgP1pg } = ctx.rates;
   const h = T[game.home.ab], a = T[game.away.ab];
   if (!h || !a || h.n < 8 || a.n < 8) return null; // insufficient history — skip honestly
-  const eH = lgGpg * (h.gf / lgGpg) * (a.ga / lgGpg) + HOME_BUMP / 2;
-  const eA = lgGpg * (a.gf / lgGpg) * (h.ga / lgGpg) - HOME_BUMP / 2;
-  const pH = Math.pow(eH, PYTH_EX) / (Math.pow(eH, PYTH_EX) + Math.pow(eA, PYTH_EX));
+  const eH = lgGpg * (h.gf / lgGpg) * (a.ga / lgGpg) + MODEL_W.homeBump / 2;
+  const eA = lgGpg * (a.gf / lgGpg) * (h.ga / lgGpg) - MODEL_W.homeBump / 2;
+  const pH = Math.pow(eH, MODEL_W.pythEx) / (Math.pow(eH, MODEL_W.pythEx) + Math.pow(eA, MODEL_W.pythEx));
   const winAb = pH >= 0.5 ? game.home.ab : game.away.ab;
   const winMetric = Math.round(Math.max(pH, 1 - pH) * 100);
   const total = Math.round((eH + eA) * 10) / 10;
@@ -355,8 +370,8 @@ function projectGame(game, ctx){
     for (const pid of (ctx.players.lastLineup[ab] || [])){
       const p = ctx.players.P[pid];
       if (!p || p.gp < 8) continue;
-      const gRate = (p.g + 0.10 * REGRESS_GP) / (p.gp + REGRESS_GP);   // regressed goals/game
-      const ptRate = (p.pts + 0.28 * REGRESS_GP) / (p.gp + REGRESS_GP); // regressed points/game
+      const gRate = (p.g + 0.10 * MODEL_W.regressGp) / (p.gp + MODEL_W.regressGp);   // regressed goals/game
+      const ptRate = (p.pts + 0.28 * MODEL_W.regressGp) / (p.gp + MODEL_W.regressGp); // regressed points/game
       const pGoal = 1 - Math.exp(-gRate * oppF);
       const pPoint = 1 - Math.exp(-ptRate * oppF);
       props.push({ pid, name: p.name, ab,
@@ -366,6 +381,39 @@ function projectGame(game, ctx){
   }
   props.sort((x, y) => y.goalConf - x.goalConf);
   return { winAb, winMetric, pHome: pH, eH: Math.round(eH * 10) / 10, eA: Math.round(eA * 10) / 10, total, p1, props };
+}
+
+/* Per-category weight application: every caller (slate, grading, cron) flows
+   through here, so shown picks and the graded record always match the applied
+   weights. Categories without a tuned set keep the default model untouched. */
+function projectGame(game, ctx){
+  const base = projectGameBase(game, ctx);
+  const cfg = LAB_CFG && LAB_CFG.cats;
+  if (!base || !cfg) return base;
+  const groups = {};
+  for (const cat of LAB_CATS){
+    const w = cfg[cat];
+    if (!w || !Object.keys(w).length) continue;
+    const key = JSON.stringify(w);
+    (groups[key] = groups[key] || { w: w, cats: [] }).cats.push(cat);
+  }
+  for (const key in groups){
+    const g = groups[key];
+    const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, g.w);
+    let tuned;
+    try { tuned = projectGameBase(game, ctx); }
+    finally { MODEL_W = old; }
+    if (!tuned) continue;
+    const tByPid = {}; tuned.props.forEach(function(p){ tByPid[p.pid] = p; });
+    for (const cat of g.cats){
+      if (cat === 'winner'){ base.winAb = tuned.winAb; base.winMetric = tuned.winMetric; base.pHome = tuned.pHome; base.eH = tuned.eH; base.eA = tuned.eA; }
+      else if (cat === 'total') base.total = tuned.total;
+      else if (cat === 'p1') base.p1 = tuned.p1;
+      else if (cat === 'goal') base.props.forEach(function(p){ if (tByPid[p.pid]) p.goalConf = tByPid[p.pid].goalConf; });
+      else if (cat === 'point') base.props.forEach(function(p){ if (tByPid[p.pid]) p.pointConf = tByPid[p.pid].pointConf; });
+    }
+  }
+  return base;
 }
 
 /* ═══ SECTION: GRADE (stored picks vs real results — read-time thresholds) ═══ */
@@ -977,12 +1025,80 @@ async function runCronDkPull(){
   window.__cronDone = true;
 }
 
+/* ═══ SECTION: MODEL LAB (?lab=1 — on-demand weight search, run from the Board) ═══ */
+async function runLab(){
+  const say = m => { window.__labStatus = 'lab: ' + m; try { console.log('[ice lab] ' + m); } catch (e) {} };
+  say('starting');
+  try {
+    try { await pullSharedLockCfg(); } catch (e) {}
+    try { await seedFromFB(); } catch (e) {}
+    const dates = allRecDates();
+    if (dates.length < 15) throw new Error('only ' + dates.length + ' stored dates — need 15+ to learn from');
+    await seedDkFromFB();
+    const evalW = async w => {
+      const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, w);
+      const cats = {}; LAB_CATS.forEach(c => { cats[c] = { hit: 0, n: 0 }; });
+      try {
+        for (const d of dates){
+          const recs = loadRecs(d);
+          if (!recs || !recs.length) continue;
+          await new Promise(r => setTimeout(r, 0));
+          const ctx = { rates: teamRates(priorRecords(d)), players: playerRates(priorRecords(d)) };
+          for (const rec of recs){
+            const proj = projectGameBase(rec, ctx);
+            if (!proj) continue;
+            for (const u of unitsFromRecord(rec, proj)){
+              if (!cats[u.cat] || !unitQualifies(u)) continue;
+              cats[u.cat].n++; if (unitHit(u)) cats[u.cat].hit++;
+            }
+          }
+        }
+      } finally { MODEL_W = old; }
+      for (const c in cats) cats[c].pct = cats[c].n ? Math.round(1000 * cats[c].hit / cats[c].n) / 10 : null;
+      return cats;
+    };
+    const GRID = [];
+    for (const homeBump of [0, 0.12, 0.3])
+      for (const pythEx of [1.8, 2.2, 2.8])
+        for (const regressGp of [6, 12, 20]) GRID.push({ homeBump, pythEx, regressGp });
+    const results = [];
+    for (let i = 0; i < GRID.length; i++){
+      say('testing weight set ' + (i + 1) + '/' + GRID.length);
+      results.push({ w: GRID[i], cats: await evalW(GRID[i]) });
+    }
+    const base = results.find(r => r.w.homeBump === MODEL_DEFAULTS.homeBump && r.w.pythEx === MODEL_DEFAULTS.pythEx && r.w.regressGp === MODEL_DEFAULTS.regressGp);
+    const MIN_N = { winner: 30, total: 30, p1: 30, goal: 40, point: 40 };
+    const best = {};
+    for (const cat of LAB_CATS){
+      let b = null;
+      for (const r of results){
+        const c = r.cats[cat];
+        if (!c || c.pct == null || c.n < (MIN_N[cat] || 30)) continue;
+        if (!b || c.pct > b.pct || (c.pct === b.pct && c.n > b.n)) b = { pct: c.pct, hit: c.hit, n: c.n, weights: r.w };
+      }
+      if (b) best[cat] = b;
+    }
+    const th = {}; LAB_CATS.forEach(c => { th[c] = lockTh(CAT_META[c].th); });
+    const report = { t: new Date().toISOString(), app: 'nhl', dates: dates.length, tried: GRID.length,
+      thresholds: th, defaults: MODEL_DEFAULTS, base: base ? base.cats : null, best: best };
+    await fbWrite(FB_NS, 'labReport', report);
+    say('done — report published to nhl/labReport');
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-done', app: 'nhl' }, '*'); } catch (e) {}
+  } catch (e){
+    window.__labStatus = 'lab: ERROR — ' + (e && e.message || e);
+    window.__labDone = true;
+    try { parent.postMessage({ type: 'lab-error', app: 'nhl', msg: String(e && e.message || e) }, '*'); } catch (e2) {}
+  }
+}
+
 async function runCronGrade(){
   const clog = m => { window.__cronStatus = 'cron: ' + m; try { console.log('[ice] ' + m); } catch (e) {} };
   window.__cronStatus = 'cron: starting';
   try {
     clog('applying shared lock config');
     try { await pullSharedLockCfg(); } catch (e) {}
+    try { if (await pullLabCfg()) clog('Model Lab weights active for: ' + Object.keys(LAB_CFG.cats).join(', ')); } catch (e) {}
     const seeded = await seedFromFB(clog);
     clog('seeded ' + seeded + ' dates from nhl_recs');
     let espnOK = false;
@@ -1080,8 +1196,10 @@ async function runCronGrade(){
   $id('verBadge').textContent = 'v' + APP.version + ' · walk-forward';
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => switchTab(b.getAttribute('data-tab')));
   if (new URLSearchParams(location.search).get('cron') === '1'){ runCronGrade(); return; }
+  if (new URLSearchParams(location.search).get('lab') === '1'){ runLab(); return; }
   if (new URLSearchParams(location.search).get('cron') === 'dk'){ runCronDkPull(); return; }
   pullSharedLockCfg().then(got => { if (got && state.tab === 'facts') renderFacts(); }).catch(() => {});
+  pullLabCfg().then(got => { if (got && state.slate) { renderBets(); } }).catch(() => {});
   loadCatRecords(); // per-category success rates for the bet lists
   renderGames();
   renderBets();
@@ -1103,7 +1221,8 @@ async function runCronGrade(){
    owner and the automation can never be locked out. The free app (mlbfree)
    only needs a name. Also carries the global DK-visibility switch. */
 (function(){
-  if (new URLSearchParams(location.search).get('cron')) return; // never gate automation
+  var Q = new URLSearchParams(location.search);
+  if (Q.get('cron') || Q.get('lab')) return; // never gate automation
   var APPKEY = window.__APPKEY, FREE = APPKEY === 'mlbfree';
   var MP = 'mlb-bets-d196c', MK = 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0';
   var DOC = 'https://firestore.googleapis.com/v1/projects/' + MP + '/databases/(default)/documents/';
