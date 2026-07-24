@@ -1405,8 +1405,8 @@ async function pullLabCfg() {
   try {
     const d = await fsGetDoc('accuracy/lab_cfg');
     const cfg = d && d.data ? JSON.parse(d.data) : null;
-    LAB_CFG = (cfg && cfg.cats && Object.keys(cfg.cats).length) ? cfg : null;
-    return !!LAB_CFG;
+    LAB_CFG = cfg || null; // full cfg — carries auto-deploy flags too
+    return !!(LAB_CFG && LAB_CFG.cats && Object.keys(LAB_CFG.cats).length);
   } catch (e) { return false; }
 }
 /* CHAMPION vs CHALLENGER: with calibration applied, also grade everything since
@@ -1508,6 +1508,32 @@ async function runLab() {
     }
     const report = { t: new Date().toISOString(), app: 'nfl', kind: 'calib', ratings: totalRatings, tried: 'calibration',
       fwdOK: anyFwd, thresholds: TH, defaults: {}, base: base, best: best };
+    /* AUTO-DEPLOY: bet types the Board marked auto are applied/reverted by this
+       run itself — apply only what passed the forward test, revert what didn't. */
+    try {
+      await pullLabCfg();
+      const auto = (LAB_CFG && LAB_CFG.auto) || {};
+      if (Object.keys(auto).some(k => auto[k])){
+        const cats = Object.assign({}, (LAB_CFG && LAB_CFG.cats) || {});
+        const actions = [];
+        for (const cat in auto){
+          if (!auto[cat]) continue;
+          const b = best[cat];
+          if (b && !b.noGain && b.weights){
+            if (JSON.stringify(cats[cat] || null) !== JSON.stringify(b.weights)){ cats[cat] = b.weights; actions.push(cat + ': applied (passed the forward test)'); }
+            else actions.push(cat + ': kept');
+          } else if (cats[cat]){ delete cats[cat]; actions.push(cat + ': back to default (no forward gain)'); }
+          else actions.push(cat + ': stays default');
+        }
+        const unchanged = JSON.stringify(cats) === JSON.stringify((LAB_CFG && LAB_CFG.cats) || {});
+        const newCfg = { cats: cats, auto: auto, savedAt: unchanged && LAB_CFG && LAB_CFG.savedAt ? LAB_CFG.savedAt : new Date().toISOString(), autoBy: 'lab' };
+        if (unchanged && LAB_CFG && LAB_CFG.sinceOrd) newCfg.sinceOrd = LAB_CFG.sinceOrd;
+        await fsSetDoc('accuracy/lab_cfg', { data: JSON.stringify(newCfg), t: new Date().toISOString() });
+        LAB_CFG = newCfg;
+        report.autoActions = actions;
+        say('auto-deploy: ' + actions.join(' · '));
+      }
+    } catch (e){ say('auto-deploy warn: ' + (e && e.message || e)); }
     await fsSetDoc('accuracy/labReport', { data: JSON.stringify(report), t: new Date().toISOString() });
     say('done — report published (' + totalRatings + ' ratings learned from)');
     window.__labDone = true;

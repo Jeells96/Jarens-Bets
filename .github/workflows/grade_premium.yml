@@ -3,7 +3,8 @@ name: Grade - Diamond IQ Premium
 on:
   workflow_dispatch:
   schedule:
-    - cron: "37 */2 * * *"
+    # Hourly: re-checks lineup confirmations and locks picks in as they post.
+    - cron: "37 * * * *"
 
 concurrency:
   group: grade-premium

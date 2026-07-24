@@ -325,9 +325,9 @@ async function pullLabCfgPrem(){
     if(doc.exists){
       const d=doc.data();
       const cfg=d&&d.data?JSON.parse(d.data):null;
-      LAB_CFG=(cfg&&cfg.cats&&Object.keys(cfg.cats).length)?cfg:null;
+      LAB_CFG=cfg||null; // full cfg — carries auto-deploy flags too
     }
-    return !!LAB_CFG;
+    return !!(LAB_CFG&&LAB_CFG.cats&&Object.keys(LAB_CFG.cats).length);
   }catch(e){return false;}
 }
 function cfgSave(){try{localStorage.setItem('fablehits_cfg',JSON.stringify(CONFIG));}catch(e){}}
@@ -2221,16 +2221,16 @@ function pbRows(m,Dt){
   const rows=(Dt&&Dt.rows)||ROWS,mk=(Dt&&Dt.mk)||MK;
   const out=[];
   if(m==='hits'){
-    rows.forEach(r=>{if(r.verified&&!r.gradeFlag&&r.prob!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(calGrade('hits',r.prob*100)),r:r,txt:''});});
+    rows.forEach(r=>{if(!r.gradeFlag&&r.prob!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(calGrade('hits',r.prob*100)),r:r,txt:'',w:!r.verified});});
   }else if(m==='hr'||m==='kB'||m==='bbB'){
-    (mk[m]||[]).forEach(r=>{const p=m==='hr'?r.prob:p1of(r);if(r.verified&&!r.gradeFlag&&p!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(calGrade(m,p*100)),r:r,txt:''});});
+    (mk[m]||[]).forEach(r=>{const p=m==='hr'?r.prob:p1of(r);if(!r.gradeFlag&&p!=null)out.push({id:r.id,name:r.name,sub:r.team+' vs '+(r.pit||r.opp),grade:Math.round(calGrade(m,p*100)),r:r,txt:'',w:!r.verified});});
   }else if(m==='gm'){
-    ((mk.gm)||[]).forEach(r=>{if(r.verified&&r.conf!=null)out.push({id:r.id,name:r.name,sub:'pick '+r.pick,grade:Math.round(calGrade('gm',r.conf*100)),r:r,txt:'<b>'+r.pick+'</b> wins · '+r.name});});
+    ((mk.gm)||[]).forEach(r=>{if(r.conf!=null)out.push({id:r.id,name:r.name,sub:'pick '+r.pick,grade:Math.round(calGrade('gm',r.conf*100)),r:r,txt:'<b>'+r.pick+'</b> wins · '+r.name,w:!r.verified});});
   }else{
     (mk[m]||[]).forEach(r=>{
-      if(!r.verified||r.gradeFlag||r.line==null||r.exp==null)return;
+      if(r.gradeFlag||r.line==null||r.exp==null)return;
       const d=r.exp-r.line;
-      out.push({id:r.id,name:r.name,sub:(STD_LINE_MK[m]?'std':'DK')+' line '+r.line+' · exp '+r.exp,grade:Math.round(Math.abs(d)*10)/10,lean:d>=0?'OVER':'UNDER',r:r,txt:''});
+      out.push({id:r.id,name:r.name,sub:(STD_LINE_MK[m]?'std':'DK')+' line '+r.line+' · exp '+r.exp,grade:Math.round(Math.abs(d)*10)/10,lean:d>=0?'OVER':'UNDER',r:r,txt:'',w:!r.verified});
     });
   }
   out.sort((a,b)=>b.grade-a.grade);
@@ -2257,10 +2257,11 @@ function pbName(name,tok){return `<b class="pbname" data-tok="${tok}" style="cur
 function pbRowHtml(m,row,grey,res){
   const tok=m+'|'+row.id;
   const meta=PB_META[m];
-  const label=row.txt||(pbName(row.name,tok)+(meta.kind==='edge'?' — <b>'+row.lean+'</b> '+(row.r.line??'')+'':'')+` <span style="color:var(--mt2);font-size:.62rem">${row.sub||''}</span>`);
+  const warn=row.w?' <span style="color:var(--warm,#ffb454);font-size:.6rem;font-weight:700;white-space:nowrap">○ lineup not confirmed</span>':'';
+  const label=row.txt||(pbName(row.name,tok)+(meta.kind==='edge'?' — <b>'+row.lean+'</b> '+(row.r.line??'')+'':'')+` <span style="color:var(--mt2);font-size:.62rem">${row.sub||''}</span>`+warn);
   const mark=(typeof todayMark==='function'&&meta.kind!=='edge')?'':'';
   return `<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid var(--bdr);font-size:.74rem">
-      <span style="flex:1;min-width:0;${grey?'color:var(--mt2)':''}">${row.txt?pbName(row.name,tok)+' · '+row.txt:label}</span>
+      <span style="flex:1;min-width:0;${grey?'color:var(--mt2)':''}">${row.txt?pbName(row.name,tok)+' · '+row.txt+(row.w?' <span style="color:var(--warm,#ffb454);font-size:.6rem;font-weight:700;white-space:nowrap">○ lineup not confirmed</span>':''):label}</span>
       ${res?`<span style="min-width:14px;text-align:center">${pbMark(m,row,res)}</span>`:''}
       <span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:.74rem;color:${grey?'var(--mt2)':'var(--rd,#ff5d5d)'}">${row.grade}${PB_META[m].kind==='edge'?'':''}</span>
     </div>`+(PB.why===tok?pbWhyHtml(m,row):'');
@@ -2293,12 +2294,16 @@ function renderBetsView(){
     el.innerHTML=html;wirePbNav(el);return;
   }
   if(Dt.none){
-    html+=`<div class="empty"><b>No slate stored for ${pretty}.</b>${dShown>todayStr()?'Future slates are built the morning of the games.':'That day was never generated.'}</div>`;
+    html+=`<div class="empty"><b>No slate stored for ${pretty}.</b>${dShown>todayStr()?'Tomorrow’s board is projected automatically from the latest lineups on the next hourly run — check back shortly.':'That day was never generated.'}</div>`;
     el.innerHTML=html;wirePbNav(el);return;
   }
   if(!haveAny){
     html+=`<div class="empty"><b>Building today’s bet slip…</b>The board loads itself in the background — this fills in the moment it’s ready. The Today tab shows the full detail view.</div>`;
     el.innerHTML=html;wirePbNav(el);return;
+  }
+  const anyUnconf=Object.keys(PB_META).some(m=>pbRows(m,Dt).some(x=>x.w));
+  if(anyUnconf){
+    html+=`<div style="margin:0 12px 11px;padding:10px 12px;border:1px solid rgba(255,180,84,.5);border-radius:11px;background:rgba(255,180,84,.08);color:var(--warm,#ffb454);font-size:.66rem;line-height:1.55"><b>⚠ Some lineups aren’t confirmed yet.</b> Picks marked “○ lineup not confirmed” are projected from each team’s most recent lineup — <b>recommended to wait until the lineup is confirmed before placing those bets</b>. The board re-checks for confirmations every hour and locks picks in as they confirm.</div>`;
   }
   const order=Object.keys(PB_META).map(m=>({m,pct:(mkAllTime(m)||{}).pct??-1})).sort((a,b)=>b.pct-a.pct);
   for(const {m} of order){
@@ -2713,6 +2718,31 @@ async function runLabPrem(){
     }
     const report={t:new Date().toISOString(),app:'mlb',kind:'calib',ratings:totalRatings,tried:'calibration',
       fwdOK:anyFwd,thresholds:TH,defaults:{},base:base,best:best};
+    /* AUTO-DEPLOY: bet types the Board marked auto are applied/reverted by this
+       run itself — apply only what passed the forward test, revert what didn't. */
+    try{
+      await pullLabCfgPrem();
+      const auto=(LAB_CFG&&LAB_CFG.auto)||{};
+      if(Object.keys(auto).some(k=>auto[k])){
+        const cats=Object.assign({},(LAB_CFG&&LAB_CFG.cats)||{});
+        const actions=[];
+        for(const cat in auto){
+          if(!auto[cat])continue;
+          const b=best[cat];
+          if(b&&!b.noGain&&b.weights){
+            if(JSON.stringify(cats[cat]||null)!==JSON.stringify(b.weights)){cats[cat]=b.weights;actions.push(cat+': applied (passed the forward test)');}
+            else actions.push(cat+': kept');
+          }else if(cats[cat]){delete cats[cat];actions.push(cat+': back to default (no forward gain)');}
+          else actions.push(cat+': stays default');
+        }
+        const unchanged=JSON.stringify(cats)===JSON.stringify((LAB_CFG&&LAB_CFG.cats)||{});
+        const newCfg={cats:cats,auto:auto,savedAt:unchanged&&LAB_CFG&&LAB_CFG.savedAt?LAB_CFG.savedAt:new Date().toISOString(),autoBy:'lab'};
+        await withTO(FBH.db.collection('fable_settings').doc('lab_cfg').set({data:JSON.stringify(newCfg),t:new Date().toISOString()}),10000);
+        LAB_CFG=newCfg;
+        report.autoActions=actions;
+        say('auto-deploy: '+actions.join(' · '));
+      }
+    }catch(e){say('auto-deploy warn: '+(e&&e.message||e));}
     await withTO(FBH.db.collection('fable_settings').doc('labReport').set({data:JSON.stringify(report),t:new Date().toISOString()}),10000);
     say('done — report published ('+totalRatings+' ratings learned from)');
     window.__labDone=true;
@@ -2860,7 +2890,17 @@ async function runLabPrem(){
            days, but run the guarantee too so a hiccup inside loadDay can
            never leave yesterday ungraded. Already-graded days skip instantly. */
         try{ await ensurePriorDaysGraded(todayStr(),m=>{window.__cronStatus='picks: '+String(m||'');},2); }catch(e){}
-        window.__cronStatus='picks: done — locks generated + saved for '+todayStr();
+        /* TOMORROW: project the next slate from probables + each team's most
+           recent lineup, so the Bets tab can show it (flagged unconfirmed).
+           Confirmed matchups stay locked when the real lineups post. */
+        try{
+          const tm=addDays(todayStr(),1);
+          $('dp').value=tm;
+          window.__cronStatus='picks: projecting tomorrow ('+tm+') from the latest lineups';
+          await loadDay();
+        }catch(e){console.log('[premium] tomorrow projection warn: '+(e&&e.message||e));}
+        try{$('dp').value=todayStr();}catch(e){}
+        window.__cronStatus='picks: done — locks generated + saved for '+todayStr()+' and projected for tomorrow';
       }catch(e){window.__cronStatus='picks: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;
     })();

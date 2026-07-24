@@ -1,0 +1,31 @@
+name: Model Lab - Weekly Scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Sunday 6:07 AM Pacific (13:07 UTC). Each app re-learns from the latest
+    # stored season, publishes its forward-tested report, and auto-deploys the
+    # bet types the Board marked AUTO (apply when the forward test passes,
+    # revert to default when it stops passing). Manual choices are untouched.
+    - cron: "7 13 * * 0"
+
+concurrency:
+  group: model-lab
+  cancel-in-progress: false
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+      - name: Run the Model Lab (all apps)
+        run: node lab_cron.js

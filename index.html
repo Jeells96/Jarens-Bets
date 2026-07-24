@@ -1420,6 +1420,7 @@ function labWeightDesc(defs, w){
 function labTabHtml(){
   return '<div class="sect"><div class="row"><span class="lbl">Model Lab</span><span class="hint">weekly · on-demand only</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">The Lab teaches each app to <b>read its stats better</b> — it never touches your lock thresholds, and nothing loads until you tap a button here. The Sunday-morning ritual: <b>Run this week’s scan</b>, read the numbers, flip on what helps. Default is always one tap away.</p>' +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)"><b>Auto-deploy:</b> flip a bet type’s <b>auto</b> switch and the Lab runs itself — a scheduled scan every Sunday morning re-learns from the latest games, applies the tuned version only when it passes the forward test, and reverts to default the moment it stops passing. You can still read everything here; auto just saves you the taps.</p>' +
     '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">Two kinds of learning. <b>Re-weighting</b> (Pete’s Picks, The Key, Icing): the whole stored season is replayed under 27 different stat weightings — recent form vs old, track/home factors, decisiveness. <b>Calibration</b> (Diamond IQ Premium, Gridline): every rating ever placed — locks and non-locks — is grouped by its stated grade to learn what each grade level <b>really</b> hits; ratings are then re-scored to those real numbers, which is exactly how a bad rating gets caught.</p>' +
     '<p class="sub" style="margin:0 0 10px;color:var(--dim2)"><b>Every gain is forward-tested:</b> the Lab learns only from older games, then measures the tuned version on the newest games it never saw while learning. If a tuning doesn’t hold up on unseen games it’s flagged and can’t be applied. And once you DO apply something, both versions keep being graded in parallel — the “Since you applied” box shows whether the tuning is still earning its keep, and warns you when it isn’t.</p>' +
     '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">Why sample sizes differ between rows: the record counts <b>picks that cleared your bet line</b>, and a different weighting (or re-scored grades) puts a different set of picks over that same line — so the denominator moves with the weighting, never the threshold.</p>' +
@@ -1455,12 +1456,15 @@ function labCatRowHtml(app, cat, rep, cfg){
   } else if (best) {
     fwdRows = '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + (best.note ? 'with re-scored (calibrated) grades' : 'best tuned weighting') + ' <b style="color:#ffb454">(in-sample — not forward-tested yet, season too short)</b></span><span>' + fmt(best) + ' ' + delta + '</span></div>';
   }
+  var autoOn = !!(cfg && cfg.auto && cfg.auto[cat]);
   return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px">' +
-    '<div class="row" style="margin-bottom:4px"><span class="lbl" style="font-size:13.5px">' + esc(app.cats[cat]) + '</span>' +
+    '<div class="row" style="margin-bottom:4px;gap:10px"><span class="lbl" style="font-size:13.5px;flex:1">' + esc(app.cats[cat]) + '</span>' +
+      '<label class="hint" style="display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap' + (autoOn ? ';color:#7fd99a;font-weight:700' : '') + '" title="Auto-deploy: every Lab run decides this bet type by itself — applies the tuned version when it passes the forward test, reverts to default when it stops passing"><input type="checkbox" class="lab-auto" data-ns="' + app.ns + '" data-cat="' + cat + '"' + (autoOn ? ' checked' : '') + ' style="width:auto;margin:0">auto</label>' +
       (best ? (canApply || applied
         ? '<label class="tog" title="use the tuned version for this bet type"><input type="checkbox" class="lab-use" data-ns="' + app.ns + '" data-cat="' + cat + '"' + (applied ? ' checked' : '') + '><span></span></label>'
         : '<span class="hint" style="color:#ffb454">didn’t hold up on unseen games — not applyable</span>')
         : '<span class="hint">not enough graded picks</span>') + '</div>' +
+    (autoOn ? '<div class="hint" style="margin:0 0 4px;color:#7fd99a">AUTO — every Lab run applies or reverts this bet type by itself based on the forward test.</div>' : '') +
     '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">default (what you have now, all stored games)</span><span>' + fmt(base) + '</span></div>' +
     fwdRows +
     (best ? '<div class="hint" style="margin-top:4px;line-height:1.5">' + (best.note ? esc(best.note) : 'What changes: ' + esc(labWeightDesc(rep.defaults, best.weights))) + (noGain ? ' · <b>no real gain on unseen games — leave it off</b>' : '') + '</div>' : '') +
@@ -1522,12 +1526,21 @@ function labRenderBody(box){
       card.querySelectorAll('.lab-use').forEach(function(cb){
         if (cb.checked && rep && rep.best && rep.best[cb.getAttribute('data-cat')]) cats[cb.getAttribute('data-cat')] = rep.best[cb.getAttribute('data-cat')].weights;
       });
+      var auto = {};
+      card.querySelectorAll('.lab-auto').forEach(function(cb){ if (cb.checked) auto[cb.getAttribute('data-cat')] = true; });
       msg.textContent = 'Saving…';
-      labWrite(app, { cats: cats, savedAt: new Date().toISOString() }).then(function(){
-        LAB.cfgs[ns] = { cats: cats };
-        msg.textContent = Object.keys(cats).length
-          ? 'Saved — ' + app.name + ' uses the tuned weighting for: ' + Object.keys(cats).map(function(c){ return app.cats[c]; }).join(', ') + '. Apps pick it up on next open; the graded record re-syncs on the next 2-hour grading run.'
-          : 'Saved — everything back to the default weighting.';
+      var prev = LAB.cfgs[ns] || {};
+      var unchanged = JSON.stringify(cats) === JSON.stringify(prev.cats || {});
+      var payload = { cats: cats, auto: auto, savedAt: unchanged && prev.savedAt ? prev.savedAt : new Date().toISOString() };
+      if (unchanged && prev.sinceOrd) payload.sinceOrd = prev.sinceOrd;
+      labWrite(app, payload).then(function(){
+        LAB.cfgs[ns] = payload;
+        var autoList = Object.keys(auto);
+        msg.textContent = (Object.keys(cats).length
+          ? 'Saved — ' + app.name + ' uses the tuned version for: ' + Object.keys(cats).map(function(c){ return app.cats[c]; }).join(', ') + '.'
+          : 'Saved — everything back to the default weighting.') +
+          (autoList.length ? ' AUTO is on for: ' + autoList.map(function(c){ return app.cats[c]; }).join(', ') + ' — every Lab run will apply/revert those by itself.' : '') +
+          ' Apps pick it up on next open; the graded record re-syncs on the next grading run.';
         labRenderBody(box);
         var m2 = box.querySelector('[data-labapp="' + ns + '"] .lab-msg'); if (m2) m2.textContent = msg.textContent;
       }).catch(function(e){ msg.textContent = String(e.message || e); });
@@ -1540,8 +1553,8 @@ function labRenderBody(box){
       var card = el.querySelector('[data-labapp="' + ns + '"]');
       var msg = card ? card.querySelector('.lab-msg') : null;
       if (msg) msg.textContent = 'Resetting…';
-      labWrite(app, { cats: {}, savedAt: new Date().toISOString() }).then(function(){
-        LAB.cfgs[ns] = { cats: {} };
+      labWrite(app, { cats: {}, auto: {}, savedAt: new Date().toISOString() }).then(function(){
+        LAB.cfgs[ns] = { cats: {}, auto: {} };
         labRenderBody(box);
         var m2 = box.querySelector('[data-labapp="' + ns + '"] .lab-msg');
         if (m2) m2.textContent = 'Back to default — ' + app.name + ' reads its stats exactly as before; your success returns to the “default” row shown on each bet type.';

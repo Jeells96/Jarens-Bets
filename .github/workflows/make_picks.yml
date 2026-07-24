@@ -6,7 +6,9 @@ on:
     # MLB lineup window (UTC). Lineups firm up through the afternoon/evening ET;
     # repeats are safe — verified matchups stay locked, so re-runs can't corrupt
     # anything, they only fill in picks for games whose lineups just posted.
-    - cron: "43 15,17,19,21,23 * * *"
+    # Hourly: lineups confirm at unpredictable times through the day; every run
+    # locks newly-confirmed matchups and (last step) projects tomorrow's slate.
+    - cron: "43 * * * *"
 
 concurrency:
   group: make-picks

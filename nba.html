@@ -537,7 +537,7 @@ let MODEL_W = Object.assign({}, MODEL_DEFAULTS);
 let LAB_CFG = null;
 const LAB_CATS = ['winner', 'total', 'teamPts', 'playerPts', 'playerReb', 'playerAst'];
 async function pullLabCfg(){
-  try { const d = await fbRead(FB_NS, 'lab_cfg'); LAB_CFG = (d && d.cats && Object.keys(d.cats).length) ? d : null; return !!LAB_CFG; }
+  try { const d = await fbRead(FB_NS, 'lab_cfg'); LAB_CFG = d || null; return !!(LAB_CFG && LAB_CFG.cats && Object.keys(LAB_CFG.cats).length); }
   catch (e){ return false; }
 }
 const MIN_AVG_MIN = 15;            // props only for real rotation players
@@ -1546,6 +1546,31 @@ async function runLab(){
     const th = {}; LAB_CATS.forEach(function(c){ th[c] = lockTh(CAT_META[c].th); });
     const report = { t: new Date().toISOString(), app: 'nba', dates: dates.length, tried: GRID.length,
       fwdOK: fwdOK, holdout: hold.length, thresholds: th, defaults: MODEL_DEFAULTS, base: baseAll, best: best };
+    /* AUTO-DEPLOY: bet types the Board marked auto are applied/reverted by this
+       run itself — apply only what passed the forward test, revert what didn't. */
+    try {
+      await pullLabCfg();
+      const auto = (LAB_CFG && LAB_CFG.auto) || {};
+      if (Object.keys(auto).some(k => auto[k])){
+        const cats = Object.assign({}, (LAB_CFG && LAB_CFG.cats) || {});
+        const actions = [];
+        for (const cat in auto){
+          if (!auto[cat]) continue;
+          const b = best[cat];
+          if (b && !b.noGain && b.weights){
+            if (JSON.stringify(cats[cat] || null) !== JSON.stringify(b.weights)){ cats[cat] = b.weights; actions.push(cat + ': applied (passed the forward test)'); }
+            else actions.push(cat + ': kept');
+          } else if (cats[cat]){ delete cats[cat]; actions.push(cat + ': back to default (no forward gain)'); }
+          else actions.push(cat + ': stays default');
+        }
+        const unchanged = JSON.stringify(cats) === JSON.stringify((LAB_CFG && LAB_CFG.cats) || {});
+        const newCfg = { cats: cats, auto: auto, savedAt: unchanged && LAB_CFG && LAB_CFG.savedAt ? LAB_CFG.savedAt : new Date().toISOString(), autoBy: 'lab' };
+        await fbWrite(FB_NS, 'lab_cfg', newCfg);
+        LAB_CFG = newCfg;
+        report.autoActions = actions;
+        say('auto-deploy: ' + actions.join(' · '));
+      }
+    } catch (e){ say('auto-deploy warn: ' + (e && e.message || e)); }
     await fbWrite(FB_NS, 'labReport', report);
     say('done — report published to nba/labReport');
     window.__labDone = true;
