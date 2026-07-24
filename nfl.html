@@ -5803,6 +5803,13 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
       console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
       window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks, ~' + graded + ' results), accuracy synced';
     } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
+    /* HEARTBEAT: the grading cron writes this at the end of EVERY run, pass or
+       fail. The Board's health strip reads it, so "last run" reflects the pipeline
+       actually running — not whether that run happened to have new data to write
+       (a correct run with nothing to grade used to look like an outage). */
+    try {
+      await fsSetDoc('accuracy/health', { t: new Date().toISOString(), ok: !/ERROR/.test(window.__cronStatus || ''), note: String(window.__cronStatus || '').slice(0, 300) });
+    } catch (e) {}
     window.__cronDone = true;
   })();
 }

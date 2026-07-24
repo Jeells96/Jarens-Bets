@@ -1317,6 +1317,11 @@ async function runCronGrade(){
     } catch (e){ clog('today-locks publish warn: ' + (e && e.message || e)); }
     clog('done — ' + after + ' dates stored, ' + g.unitCount + ' units, ' + pushed + ' unit docs pushed, ' + mirrored + ' rec docs mirrored, nhl/allTime verified (' + summary.all.hit + '/' + summary.all.n + ' locks)');
   } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
+  /* HEARTBEAT: the grading cron writes this at the end of EVERY run, pass or
+     fail. The Board's health strip reads it, so "last run" reflects the pipeline
+     actually running — not whether that run happened to have new data to write
+     (a correct run with nothing to grade used to look like an outage). */
+  try { await fbWrite(FB_NS, 'health', { t: new Date().toISOString(), ok: !/ERROR/.test(window.__cronStatus || ''), note: String(window.__cronStatus || '').slice(0, 300) }); } catch (e) {}
   window.__cronDone = true;
 }
 

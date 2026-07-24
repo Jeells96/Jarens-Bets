@@ -1629,12 +1629,12 @@ function wireLab(box){
    own updateTime on the docs each pipeline already writes; loads only when
    settings opens. */
 var HEALTH_DOCS = [
-  { name: 'Diamond IQ Premium', proj: 'ADMIN', grade: 'fable_settings/summary', lab: 'fable_settings/labReport', dkKey: 'premiumAt' },
-  { name: 'Diamond IQ Free',    proj: 'ADMIN', grade: 'app_settings/locks',     lab: null,                       dkKey: null },
-  { name: 'Gridline',           proj: 'NFLP',  grade: 'gridline/todayLocks',    lab: 'accuracy/labReport',       dkKey: 'nflAt' },
-  { name: 'The Key',            proj: 'NFLP',  grade: 'nba/allTime',            lab: 'nba/labReport',            dkKey: 'nbaAt' },
-  { name: 'Icing',              proj: 'NFLP',  grade: 'nhl/allTime',            lab: 'nhl/labReport',            dkKey: 'hockeyAt' },
-  { name: 'Pete\u2019s Picks',   proj: 'NFLP',  grade: 'nascar/allTime',         lab: 'nascar/labReport',         dkKey: null }
+  { name: 'Diamond IQ Premium', proj: 'ADMIN', grade: 'fable_settings/health',      fallback: 'fable_settings/summary', lab: 'fable_settings/labReport', dkKey: 'premiumAt' },
+  { name: 'Diamond IQ Free',    proj: 'ADMIN', grade: 'app_settings/health_free',   fallback: null,                    lab: null,                       dkKey: null },
+  { name: 'Gridline',           proj: 'NFLP',  grade: 'accuracy/health',            fallback: 'gridline/todayLocks',   lab: 'accuracy/labReport',       dkKey: 'nflAt' },
+  { name: 'The Key',            proj: 'NFLP',  grade: 'nba/health',                 fallback: 'nba/allTime',           lab: 'nba/labReport',            dkKey: 'nbaAt' },
+  { name: 'Icing',              proj: 'NFLP',  grade: 'nhl/health',                 fallback: 'nhl/allTime',           lab: 'nhl/labReport',            dkKey: 'hockeyAt' },
+  { name: 'Pete\u2019s Picks',   proj: 'NFLP',  grade: 'nascar/health',              fallback: 'nascar/allTime',        lab: 'nascar/labReport',         dkKey: null }
 ];
 function healthAge(iso){
   if (!iso) return null;
@@ -1657,28 +1657,54 @@ async function healthDocTime(projObj, path){
     return healthAge(j.updateTime);
   } catch (e){ return null; }
 }
+/* Reads a heartbeat doc: {t, ok, note} written at the END of every cron run —
+   so a run that legitimately had nothing new to grade still reports healthy. */
+async function healthBeat(projObj, path){
+  try {
+    var r = await fetch(FS + projObj.p + '/databases/(default)/documents/' + path + '?key=' + projObj.k);
+    if (!r.ok) return null;
+    var j = await r.json();
+    var f = j.fields || {};
+    var raw = f.data && f.data.stringValue ? JSON.parse(f.data.stringValue) : null;
+    var okv = raw ? raw.ok : (f.ok ? f.ok.booleanValue : null);
+    var note = raw ? raw.note : (f.note ? f.note.stringValue : '');
+    return { age: healthAge(j.updateTime), ok: okv !== false, note: note || '' };
+  } catch (e){ return null; }
+}
 async function loadHealthStrip(box){
   var el = box.querySelector('#healthstrip');
   if (!el) return;
   el.innerHTML = '<div class="hint">Checking pipelines\u2026</div>';
   var dkStat = {};
   try { dkStat = (await adminGetDoc('dk_status')) || {}; } catch (e) {}
+  var anyStale = false, anyFailed = false, waiting = 0;
   var rows = await Promise.all(HEALTH_DOCS.map(async function(a){
     var pr = a.proj === 'ADMIN' ? ADMIN : NFLP;
-    var g = await healthDocTime(pr, a.grade);
+    var beat = await healthBeat(pr, a.grade);
+    /* No heartbeat yet = this app hasn't run since heartbeats shipped. Fall back
+       to its data doc but say so, rather than crying wolf. */
+    var g = beat ? beat.age : (a.fallback ? await healthDocTime(pr, a.fallback) : null);
+    var pending = !beat;
+    if (pending) waiting++;
     var lab = a.lab ? await healthDocTime(pr, a.lab) : null;
     var dk = a.dkKey && dkStat[a.dkKey] ? healthAge(new Date(+dkStat[a.dkKey]).toISOString()) : null;
     var gh = g == null ? 99 : g / 3600000;
-    var col = gh <= 3.5 ? '#7fd99a' : gh <= 8 ? '#ffb454' : '#ff7a7a';
+    var failed = !!(beat && beat.ok === false);
+    var stale = !pending && (gh > 8 || g == null);
+    if (stale) anyStale = true;
+    if (failed) anyFailed = true;
+    var col = pending ? 'var(--dim)' : failed ? '#ff7a7a' : gh <= 3.5 ? '#7fd99a' : gh <= 8 ? '#ffb454' : '#ff7a7a';
     return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1;color:var(--bone)">' + a.name + '</span>' +
-      '<span class="hint">graded <b style="color:' + col + '">' + healthFmt(g) + '</b>' +
-      (a.dkKey ? ' \u00b7 DK ' + healthFmt(dk) : '') +
+      '<span class="hint">ran <b style="color:' + col + '">' + healthFmt(g) + '</b>' + (failed ? ' <b style="color:#ff7a7a">· last run errored</b>' : '') +
+      (pending ? ' <span style="color:var(--dim2)">(pre-heartbeat)</span>' : '') +
+      (a.dkKey ? ' \u00b7 DK ' + (dk == null ? 'none yet' : healthFmt(dk)) : '') +
       (a.lab ? ' \u00b7 Lab ' + healthFmt(lab) : '') + '</span></div>';
   }));
-  var stale = rows.some(function(r){ return r.indexOf('#ff7a7a') >= 0; });
   el.innerHTML = rows.join('') +
-    (stale ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading pipeline looks stale \u2014 check the repo\u2019s Actions tab (runs are every 1\u20132h).</div>'
-           : '<div class="hint" style="color:var(--dim2);margin-top:4px">All pipelines healthy. Grading runs every 1\u20132h; DK pulls fire 10\u201345 min before games; the Lab runs Sunday mornings.</div>');
+    (anyFailed ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading run reported an error \u2014 check the repo\u2019s Actions tab.</div>'
+     : anyStale ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading pipeline hasn\u2019t run in a while \u2014 check the repo\u2019s Actions tab (runs are every 1\u20132h).</div>'
+     : waiting ? '<div class="hint" style="color:var(--dim2);margin-top:4px">Waiting on first heartbeats \u2014 each app records one at the end of its next grading run. Times shown are that app\u2019s last data write until then.</div>'
+     : '<div class="hint" style="color:var(--dim2);margin-top:4px">All pipelines healthy. \u201cRan\u201d is the last completed grading run (a run with nothing new to grade still counts). DK pulls fire 10\u201345 min before games; the Lab runs Sunday mornings.</div>');
 }
 async function openSettingsPanel(){
   var pin = prompt('Admin PIN');
