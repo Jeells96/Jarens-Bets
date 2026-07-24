@@ -987,10 +987,10 @@ async function runCronDkPull(){
     // Pull only games within 2h of puck drop we don't already have — once each.
     let existing = {};
     try { const cur = await fbRead(FB_DK, date); if (cur && cur.games) existing = cur.games; } catch (e) {}
-    const now = Date.now(), WIN = 2 * 3600 * 1000;
+    const now = Date.now();
     const eligibleKeys = new Set();
-    for (const pr of pairs){ const gm = pr.aAb + '@' + pr.hAb; if (pr.start > now && pr.start <= now + WIN && !existing[gm]) eligibleKeys.add(gm); }
-    if (!eligibleKeys.size){ window.__cronStatus = 'dk: skipped — no NHL games within 2h of puck drop that still need lines'; window.__cronDone = true; return; }
+    for (const pr of pairs){ const gm = pr.aAb + '@' + pr.hAb; if (pr.start > now + 10 * 60 * 1000 && pr.start <= now + 45 * 60 * 1000 && !existing[gm]) eligibleKeys.add(gm); }
+    if (!eligibleKeys.size){ window.__cronStatus = 'dk: skipped — no NHL games entering the pull window (10–45 min before puck drop)'; window.__cronDone = true; return; }
     window.__cronStatus = 'dk: pulling DK lines for ' + eligibleKeys.size + ' game(s)';
     const res = await fetch(DK_ODDS_URL + ODDS_KEY_SHARED);
     if (!res.ok) throw new Error('odds API ' + res.status);

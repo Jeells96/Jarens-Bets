@@ -3,10 +3,11 @@ name: DK Pull - Board Scheduled
 on:
   workflow_dispatch:
   schedule:
-    # Hourly sweep; each app decides for itself (via the Board's settings doc)
-    # whether this hour is one of its configured pull times. Off-hours cost
-    # nothing — the page reports "skipped" without touching the odds API.
-    - cron: "20 * * * *"
+    # Every 30 minutes. Each app checks the FREE events list (0 quota) and
+    # pulls a game's DK lines exactly once, 10-45 minutes before its start -
+    # closest to gametime while leaving time to bet. Runs with no game
+    # entering the window report "skipped" without touching the odds API.
+    - cron: "5,35 * * * *"
 
 concurrency:
   group: dk-pull

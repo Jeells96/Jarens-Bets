@@ -344,7 +344,7 @@ async function cfgPull(){
 }
 async function cfgPush(){
   if(!FBH.ready)return;
-  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gkEdge:CONFIG.gkEdge,hrlEdge:CONFIG.hrlEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
+  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
 }
 
 const nameKey=n=>n.trim().toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,'_');
@@ -451,7 +451,7 @@ async function saveThresholds(){
   cfgSave();
   await cfgPush();
   // re-lean already-computed K/BB rows against the new edges (no refetch needed)
-  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge],['gmK',CONFIG.gkEdge],['hrL',CONFIG.hrlEdge]].forEach(([m,th])=>{
+  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge]].forEach(([m,th])=>{
     (MK[m]||[]).forEach(r=>{if(r.line!=null){r.lean=leanFor(r.exp,r.line,th);}});
   });
   if(ROWS.length)render(null);
@@ -526,10 +526,10 @@ let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
 let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gmK:[],hrL:[]};
 let MARKET='hits'; // first tab you see = Hits
 let AUTO_REFRESH=false; // true while the on-open background reload is running
-const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gmK:'GAME K',hrL:'GAME HRs'};
-// gmK/hrL grade vs STANDARD lines (16.5 combined K / 2.5 combined HR) — never
+const MK_LABEL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+// Every remaining O/U market grades vs a REAL DraftKings line — never
 // DraftKings. Label their lines honestly so nobody thinks DK posted them.
-const STD_LINE_MK={gmK:1,hrL:1};
+const STD_LINE_MK={}; // (empty — fabricated 'standard line' markets were removed)
 const lineTag=m=>STD_LINE_MK[m]?'std':'DK';
 
 function toast(msg,kind){
@@ -874,8 +874,8 @@ async function fetchDKPropsAndPush(date,onProg){
       if(!ev.commence_time)return false;
       const d=new Date(ev.commence_time);
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`===date;
-    }).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now&&st<=now+2*3600*1000;}); // only within 2h before first pitch
-    if(!dateEvents.length)return{ok:false,reason:'No upcoming MLB events for '+date};
+    }).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now+10*60*1000&&st<=now+45*60*1000;}); // pull window: 10–45 min before first pitch — closest to gametime with time left to bet
+    if(!dateEvents.length)return{ok:false,reason:'no MLB games entering the pull window (10\u201345 min before first pitch)'};
     // QUOTA SAVER: player props cost one API call PER GAME. Read what we've
     // already pulled for this date and fetch ONLY games we don't have yet, so
     // repeated scheduled runs never re-pull the same game. Each game's props
@@ -1537,43 +1537,15 @@ async function loadDay(){
         eA:Math.round(g.eA*10)/10,eH:Math.round(g.eH*10)/10,total:g.total,
         mlEdge:mlEdge!=null?Math.round(mlEdge*1000)/1000:null,mlLean,
         totLine,totLean,verified:gj.verified,reasons:g.reasons,math:g.math});
-      // GAME K TOTAL — both starters' expected K (full advanced model) + each
-      // bullpen's K rate over the remaining ~3.6 innings. Graded vs a standard
-      // 16.5 combined-K line; the model only leans when it clears gkEdge.
-      {
-        const spH=SPKEXP[gj.hSPid],spA=SPKEXP[gj.aSPid];
-        if(spH!=null&&spA!=null){
-          const bp=id=>{const t=TEAM_PITCH[id];return(t&&t.ip>0)?(t.k/t.ip)*3.6:3.5;};
-          const exp=Math.round((spH+spA+bp(gj.hId)+bp(gj.aId))*10)/10;
-          const GK_LINE=16.5;
-          MK.gmK.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
-            verified:gj.verified,exp,line:GK_LINE,lean:leanFor(exp,GK_LINE,CONFIG.gkEdge??1.5),
-            edge:exp-GK_LINE,reasons:[
-              {t:'Starters: '+spA.toFixed(1)+' + '+spH.toFixed(1)+' expected K (lineup-adjusted)',k:'info'},
-              {t:'Bullpens add ~'+(bp(gj.hId)+bp(gj.aId)).toFixed(1)+' K over the late innings',k:'info'}],
-            math:'SP '+spA.toFixed(1)+'+'+spH.toFixed(1)+' K + bullpens '+(bp(gj.aId)).toFixed(1)+'+'+(bp(gj.hId)).toFixed(1)+' vs '+GK_LINE});
-        }
-      }
-      // GAME HR LINE — expected homers = sum of every batter's expected HR count
-      // (each already carries split/pitcher/park/power adjustments). Over/under
-      // the standard 2.5 combined-HR line, leaning only past hrlEdge.
-      {
-        const ids=[...gj.hLids,...gj.aLids].filter(id=>EXPHR[id]!=null);
-        if(ids.length>=12){
-          const raw=ids.reduce((s2,id)=>s2+EXPHR[id],0);
-          const exp=Math.round(raw*(18/ids.length)*10)/10; // normalize to 18 lineup spots
-          const HRL_LINE=2.5;
-          MK.hrL.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
-            verified:gj.verified,exp,line:HRL_LINE,lean:leanFor(exp,HRL_LINE,CONFIG.hrlEdge??0.4),
-            edge:Math.round((exp-HRL_LINE)*100)/100,reasons:[
-              {t:'Sum of '+ids.length+' batters’ expected HR (power, split, pitcher, park each priced in)',k:'info'}],
-            math:'Σ expected HR '+exp+' vs '+HRL_LINE});
-        }
-      }
+      /* GAME K TOTAL and GAME HR LINE were removed: they graded against
+         fabricated "standard" lines (16.5 K / 2.5 HR) that no sportsbook
+         actually posts — accuracy against a bet nobody can place is false
+         accuracy. Every remaining O/U market grades vs a REAL DraftKings
+         line or vs the box score itself. */
     });
     MK.gm.sort((a,b)=>(b.conf||0)-(a.conf||0));
     ['hr'].forEach(m=>MK[m].sort((a,b)=>b.prob-a.prob));
-    ['kP','kB','bbP','bbB','tb','gmK','hrL'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
+    ['kP','kB','bbP','bbB','tb'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
     // LOCK RULE: any row that was VERIFIED in an earlier run (local or league Firebase)
     // keeps its original score — refresh only overrides unverified/projected rows.
     prog('Checking earlier runs…');
@@ -1702,7 +1674,7 @@ function showCached(){
 // game that day went Final — partial days regrade on the next Load.
 
 function dayTallies(rows,mk,res,dbgDate,quiet){
-  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmK:{w:0,l:0,p:0},hrL:{w:0,l:0,p:0}};
+  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
     if(!r.verified||calGrade('gm',(r.conf||0)*100)<(CONFIG.gmLock||0)*100)return;
     const g=res['g'+r.id];
@@ -1733,7 +1705,7 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
       t[m].n++;if((o[stat]||0)>=1)t[m].h++;
     });
   });
-  ['kP','bbP','tb','gmK','hrL'].forEach(m=>{
+  ['kP','bbP','tb'].forEach(m=>{
     ((mk&&mk[m])||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag)return;
       const gr=lineGrade(r,MK_ACTUAL[m](res[r.id]||res[String(r.id)]));
@@ -2204,9 +2176,7 @@ const PB_META={
   gm:{tag:'GAME PREDICTIONS',what:'our pick wins the game',kind:'conf'},
   kP:{tag:'PITCHER K',what:'the pitcher goes OVER/UNDER his DraftKings strikeout line',kind:'edge',th:'kEdge'},
   bbP:{tag:'PITCHER BB',what:'the pitcher goes OVER/UNDER his DraftKings walk line',kind:'edge',th:'bbEdge'},
-  tb:{tag:'TOTAL BASES',what:'the batter goes OVER/UNDER his DraftKings total-bases line',kind:'edge',th:'tbEdge'},
-  gmK:{tag:'GAME K',what:'combined strikeouts go OVER/UNDER the standard 16.5 line',kind:'edge',th:'gkEdge'},
-  hrL:{tag:'GAME HRS',what:'combined homers go OVER/UNDER the standard 2.5 line',kind:'edge',th:'hrlEdge'}
+  tb:{tag:'TOTAL BASES',what:'the batter goes OVER/UNDER his DraftKings total-bases line',kind:'edge',th:'tbEdge'}
 };
 function pbLockOf(m){
   if(m==='hits')return Math.round(CONFIG.lock*100);
@@ -2353,10 +2323,10 @@ function wirePbNav(el){
    the same number — and they move the moment a threshold changes. */
 window.__AT=null;
 try{window.__AT=JSON.parse(localStorage.getItem('fablehits_at')||'null');}catch(e){}
-function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gkEdge','hrlEdge'].map(k=>CONFIG[k]));}
+function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge'].map(k=>CONFIG[k]));}
 function atTalliesFor(D){
   const mk=D.mk||{},fm={...mk};
-  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge'],['gmK','gkEdge'],['hrL','hrlEdge']].forEach(([m,k])=>{
+  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge']].forEach(([m,k])=>{
     const th=CONFIG[k]??0;
     fm[m]=(mk[m]||[]).filter(r=>r.line!=null&&r.exp!=null&&Math.abs(r.exp-r.line)>=th)
       .map(r=>({...r,lean:(r.exp-r.line)>=0?'OVER':'UNDER'}));
@@ -2785,7 +2755,7 @@ async function runLabPrem(){
           await cfgPull();
           await pullLabCfgPrem();
           premShadowUpdate();
-          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
+          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
           if(oldHash!==cfgHash){
@@ -2861,8 +2831,9 @@ async function runLabPrem(){
         let c={};
         try{const doc=await withTO(FBH.db.collection('app_settings').doc('dk_auto').get(),8000);if(doc.exists)c=doc.data();}catch(e){}
         const on=c.premiumOn!==false; // default ON until the Board says otherwise
-        // No day/hour schedule: fetchDKPropsAndPush only pulls games within ~2h
-        // of first pitch, once each, so the hourly cron self-paces with zero waste.
+        // No day/hour schedule: fetchDKPropsAndPush only pulls games entering the
+        // 10\u201345-minute pre-pitch window, once each \u2014 the half-hourly cron
+        // self-paces with zero waste and freezes lines closest to gametime.
         if(!on){window.__cronStatus='dk: skipped — auto pull is OFF in Board settings';}
         else{
           const r=await fetchDKPropsAndPush(todayStr(),m=>{window.__cronStatus='dk: '+String(m||'working…');});
@@ -2956,7 +2927,7 @@ async function runLabPrem(){
     else {setTxt('hs14','—');setTxt('hs14N','no graded picks');}
   }
 
-  const MKL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',gmK:'GAME K',hrL:'GAME HRs'};
+  const MKL={gm:'GAME PREDICTIONS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
   let VIEW='14d', MKT='gm', EXP=null;
   const DAYC={};
   window.__stat={

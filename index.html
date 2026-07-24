@@ -391,7 +391,7 @@ var SITES = [
 ];
 
 /* Friendly market labels (internal keys -> what members read) */
-var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks', gm: 'Game predictions', tb: 'Total bases', gmK: 'Game strikeouts', hrL: 'Game HR line' };
+var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks', gm: 'Game predictions', tb: 'Total bases' };
 var MIN_N = 20; // sample floor before a market can be the headline number
 
 /* Brand logos, embedded so the hub stays a single self-contained file. */
@@ -1150,7 +1150,7 @@ var PREM_KNOBS = [
   ['gmLock','Game predictions \u00b7 lock \u2265 %',true],
   ['kbLock','Batter K \u00b7 lock \u2265 %',true],['bbbLock','Batter BB \u00b7 lock \u2265 %',true],
   ['kEdge','Pitcher K \u00b7 edge \u2265',false],['bbEdge','Pitcher BB \u00b7 edge \u2265',false],
-  ['tbEdge','Total bases \u00b7 edge \u2265',false],['gkEdge','Game K \u00b7 edge \u2265',false],['hrlEdge','Game HRs \u00b7 edge \u2265',false]
+  ['tbEdge','Total bases \u00b7 edge \u2265',false]
 ];
 var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs'],['bb','Batter walks'],['bbat','Batter strikeouts'],['k','Pitcher strikeouts'],['pbb','Pitcher walks'],['hrLine','HR line'],['gnoHR','No-HR game'],['gmultiHR','Multi-HR game']];
 var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1']];
@@ -1174,9 +1174,9 @@ async function listAllDocs(cfg, coll){
 }
 function premiumRates(days, cfg){
   var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
-  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{h:0,n:0}, bbB:{h:0,n:0}, gm:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmK:{w:0,l:0}, hrL:{w:0,l:0} };
-  var actual = { kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
-  var edgeKey = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
+  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{h:0,n:0}, bbB:{h:0,n:0}, gm:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0} };
+  var actual = { kP:'pk', bbP:'pbb', tb:'tb' };
+  var edgeKey = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge' };
   var p1 = function(r){ return r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null); };
   days.forEach(function(day){
     var res = day.data.results; if (!res) return;
@@ -1657,7 +1657,7 @@ async function openSettingsPanel(){
     try { nascarCfg = JSON.parse(nascarRaw.fields.data.stringValue); } catch (e) {}
   }
 
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
   var NBA_TH_DEF = { winner: 60, lines: 0, props: 0, dk: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
   var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
@@ -1765,6 +1765,7 @@ async function openSettingsPanel(){
     '<div id="stabbar" style="display:flex;gap:6px;margin:10px 0 14px">' +
       '<button class="stabbtn" data-stab="members" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid #c9a84c;background:transparent;color:#c9a84c;font-weight:800;cursor:pointer;font:inherit;font-size:13px">Members</button>' +
       '<button class="stabbtn" data-stab="thresholds" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Thresholds</button>' +
+      '<button class="stabbtn" data-stab="dk" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">DK Pulls</button>' +
       '<button class="stabbtn" data-stab="lab" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Model Lab</button>' +
     '</div>' +
     '<div id="stab-members">' +
@@ -1791,23 +1792,33 @@ async function openSettingsPanel(){
     '<input type="text" id="ad-cta" value="' + esc(adCfg.cta) + '" style="margin:2px 0 4px">' +
     '<button class="close" id="ad-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:8px">Preview the ad</button></div>' +
     '</div>' +
-    '<div id="stab-thresholds" style="display:none">' +
+    '<div id="stab-dk" style="display:none">' +
+    '<div class="sect"><div class="row"><span class="lbl">The pull schedule</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
+    '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once, 10\u201345 minutes before its start</b> \u2014 as close to gametime as possible for the freshest lines, while still leaving time to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
+    '<p class="sub" style="margin:0 0 8px;color:var(--dim2)"><b>What each app pulls when its games hit the window:</b><br>' +
+      '\u2022 <b>Diamond IQ Premium</b> \u2014 player props per game (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks). One API call per game.<br>' +
+      '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled (one call per game).<br>' +
+      '\u2022 <b>The Key</b> \u2014 moneyline, spread and total in one bulk call per wave.<br>' +
+      '\u2022 <b>Icing</b> \u2014 moneyline and total in one bulk call per wave.</p>' +
+    '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Diamond IQ Free and Pete\u2019s Picks never pull DraftKings (free tier / no motorsport odds).</p></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Pulls run themselves at the smart times below \u2014 each game is pulled once, close to start, so no API quota is wasted. Just flip a league on or off.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Just flip a league on or off \u2014 the schedule above handles the rest. Each game is pulled once, 10\u201345 minutes before it starts.</p>' +
     '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
     '<p class="sub" style="margin:0 0 12px">Master switch. Off = no DraftKings info (lines, edges, vs-DK records) is viewable in any app, for anyone.</p>' +
     '<div class="row"><span class="lbl">Diamond IQ \u00b7 props</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.premiumCalls, dkStat.premiumAt) +
-    '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s first pitch</b>, once per game that day.</div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201345 min before first pitch</b>, once per game.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nflCalls, dkStat.nflAt) +
-    '<div class="hint" style="margin:2px 0 4px">Fires <b>Sunday morning (9am PT)</b> and pulls <b>all of Sunday\u2019s games</b> at once. Non-Sunday games pull ~2 hours before kickoff.</div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before kickoff</b>, once per game (a Sunday wave lands in one bulk call).</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">The Key \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-bon"' + (dk.nbaOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nbaCalls, dkStat.nbaAt) +
-    '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s tip-off</b>, once per game that day.</div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before tip-off</b>, once per game.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Icing \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-hon"' + (dk.hockeyOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
-    '<div class="hint" style="margin:2px 0 4px">Fires <b>~2 hours before each game\u2019s puck drop</b>, once per game that day.</div></div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before puck drop</b>, once per game.</div></div>' +
+    '</div>' +
+    '<div id="stab-thresholds" style="display:none">' +
     lockSect('Lock grades \u00b7 Diamond IQ Premium',
       'Hits/HR are lock probabilities (0\u20131, e.g. 0.80). The rest are edge-vs-line margins. Preview = lock-tier success from real graded history.',
       PREM_KNOBS, 'pk-', premCfg, 'p-preview', 'p-prevout') +
@@ -1843,7 +1854,7 @@ async function openSettingsPanel(){
         x.style.color = on ? '#c9a84c' : 'var(--dim2)';
         x.style.fontWeight = on ? '800' : '700';
       });
-      ['members', 'thresholds', 'lab'].forEach(function(t){
+      ['members', 'thresholds', 'dk', 'lab'].forEach(function(t){
         var el = box.querySelector('#stab-' + t);
         if (el) el.style.display = t === want ? '' : 'none';
       });
@@ -2025,7 +2036,7 @@ async function openSettingsPanel(){
     if (!prop) throw new Error('Every field needs a number \u2265 0.');
     await ensurePrem();
     var cur = premiumRates(PREVIEW_CACHE.prem, premCfg), nxt = premiumRates(PREVIEW_CACHE.prem, prop);
-    var L = { hits:'Batter hits', hr:'Home runs', gm:'Game predictions', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmK:'Game K', hrL:'Game HRs' };
+    var L = { hits:'Batter hits', hr:'Home runs', gm:'Game predictions', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases' };
     return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -2096,8 +2107,8 @@ async function openSettingsPanel(){
   hookSolve('pk-', PREM_KNOBS, [], async function(target){
     var days = await ensurePrem();
     var pools = { lock: [], hrLock: [], gmLock: [], kbLock: [], bbbLock: [], kEdge: [], bbEdge: [], tbEdge: [], gkEdge: [], hrlEdge: [] };
-    var edgeOf = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmK:'gkEdge', hrL:'hrlEdge' };
-    var actual = { kP:'pk', bbP:'pbb', tb:'tb', gmK:'tk', hrL:'thr' };
+    var edgeOf = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge' };
+    var actual = { kP:'pk', bbP:'pbb', tb:'tb' };
     var p1 = function(r){ return r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null); };
     var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
     days.forEach(function(day){
@@ -2312,7 +2323,7 @@ async function slEnsure(key, coll, cfg, unitsField){
 async function slConfigs(){
   var premRaw = await fsGetRaw(ADMIN, 'fable_settings/config');
   var premCfgRaw = premRaw ? fsFields(premRaw.fields || {}) : null;
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gkEdge: 1.5, hrlEdge: 0.4 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45 };
   var prem = {}; Object.keys(PREM_DEF).forEach(function(k){ prem[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
   var readJson = async function(path){
     var raw = await fsGetRaw(NFLP, path);
@@ -2336,7 +2347,7 @@ async function slConfigs(){
 async function slPremiumLane(cfgs){
   var days = await slEnsure('prem', 'fable_hits', ADMIN, null);
   var qual = slQualified(premiumRates(days, cfgs.prem));
-  var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES', gmK: 'GAME K', hrL: 'GAME HRS' };
+  var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES' };
   var today = slTodayPT();
   var raw = await fsGetRaw(ADMIN, 'fable_hits/' + today);
   var day = raw ? fsFields(raw.fields || {}) : null;
@@ -2364,7 +2375,7 @@ async function slPremiumLane(cfgs){
           push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%');
       });
     });
-    var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmK: 'gkEdge', hrL: 'hrlEdge' };
+    var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge' };
     Object.keys(edgeKey).forEach(function(m){
       if (!qual[m]) return;
       (mk[m] || []).forEach(function(r){

@@ -1968,8 +1968,8 @@ async function pullDKOdds(reason, opts) {
         }
         const ptDay = d => d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
         const inWindow = allToday
-          ? ptDay(new Date(ev.commence_time)) === ptDay(new Date()) // Sunday-morning: any game today
-          : (st > nowMs && st <= nowMs + PROP_WIN);                 // else within 2h of kickoff
+          ? ptDay(new Date(ev.commence_time)) === ptDay(new Date()) // manual all-today pulls only
+          : (st > nowMs + 10 * 60 * 1000 && st <= nowMs + 45 * 60 * 1000); // auto: 10–45 min before kickoff, once
         if (!inWindow) continue;
         const pUrl = ODDS_API.base + '/sports/' + ODDS_API.sport + '/events/' + ev.id + '/odds' +
           '?regions=' + ODDS_API.region +
@@ -5742,28 +5742,25 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
         }
       } catch (e) {}
       const on = c.nflOn !== false;
-      const ptNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-      const etHour = ptNow.getHours(), ptDay = ptNow.getDay();
-      // NFL rule: Sunday morning (9am PT) pulls ALL of Sunday's games at once;
-      // any other game (Thu/Sat/Mon) pulls ~2h before its kickoff, once each.
-      const sundayMorning = (ptDay === 0 && etHour === 9);
-      let go = sundayMorning, within = 0;
-      if (on && !go) {
-        // Free events list (0 API cost) — is any game within 2h of kickoff?
+      // Unified pull window: each game's lines are frozen ONCE, 10–45 minutes
+      // before its kickoff — closest to gametime with time left to bet. The
+      // free events list (0 API cost) decides whether this half-hour has work.
+      let go = false, within = 0;
+      if (on) {
         try {
           const evRes = await fetch(ODDS_API.base + '/sports/' + ODDS_API.sport + '/events?apiKey=' + ODDS_API.key);
           if (evRes.ok) {
             const evs = await evRes.json();
-            const now = Date.now(), WIN = 2 * 3600 * 1000;
-            within = (evs || []).filter(e => { const st = new Date(e.commence_time).getTime(); return st > now && st <= now + WIN; }).length;
+            const now = Date.now();
+            within = (evs || []).filter(e => { const st = new Date(e.commence_time).getTime(); return st > now + 10 * 60 * 1000 && st <= now + 45 * 60 * 1000; }).length;
             go = within > 0;
           }
         } catch (e) {}
       }
       if (!on) { window.__cronStatus = 'dk: skipped — auto pull is OFF in Board settings'; }
-      else if (!go) { window.__cronStatus = 'dk: skipped — not Sunday 9am PT and no NFL game within 2h of kickoff'; }
+      else if (!go) { window.__cronStatus = 'dk: skipped — no NFL game entering the pull window (10–45 min before kickoff)'; }
       else {
-        await pullDKOdds('auto', { allToday: sundayMorning });
+        await pullDKOdds('auto');
         // publish remaining API quota so the Board can show it next to the toggle
         if (state.dkQuotaRemaining != null) {
           try {

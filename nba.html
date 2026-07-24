@@ -1412,7 +1412,7 @@ async function runCronDkPull(){
         c = { on: f.nbaOn ? f.nbaOn.booleanValue !== false : true }; }
     } catch (e) {}
     const on = c.on !== false;
-    // No day/hour schedule: only games within 2h of tip are pulled, once each.
+    // No day/hour schedule: each game's lines are frozen ONCE, 10\u201345 min before tip.
     if (!on){ window.__cronStatus = 'dk: skipped — NBA auto pull is OFF'; window.__cronDone = true; return; }
     const date = todayPT();
     window.__cronStatus = 'dk: building slate ' + date;
@@ -1422,14 +1422,14 @@ async function runCronDkPull(){
     // Pull only games within 2h of tip that we don't already have — once per game.
     let existing = {};
     try { const cur = await fbRead(FB_DK, date); if (cur && cur.games) existing = cur.games; } catch (e) {}
-    const now = Date.now(), WIN = 2 * 3600 * 1000;
+    const now = Date.now();
     const eligibleKeys = new Set();
     for (const g of games){
       const gm = g.away.abbr + '@' + g.home.abbr;
       const st = g.iso ? new Date(g.iso).getTime() : 0;
-      if (st > now && st <= now + WIN && !existing[gm]) eligibleKeys.add(gm);
+      if (st > now + 10 * 60 * 1000 && st <= now + 45 * 60 * 1000 && !existing[gm]) eligibleKeys.add(gm);
     }
-    if (!eligibleKeys.size){ window.__cronStatus = 'dk: skipped — no NBA games within 2h of tip that still need lines'; window.__cronDone = true; return; }
+    if (!eligibleKeys.size){ window.__cronStatus = 'dk: skipped — no NBA games entering the pull window (10–45 min before tip)'; window.__cronDone = true; return; }
     window.__cronStatus = 'dk: pulling DK lines for ' + eligibleKeys.size + ' game(s)';
     const res = await fetch(ODDS.gameLines(ODDS_KEY_SHARED));
     if (!res.ok) throw new Error('odds API ' + res.status);
