@@ -1025,7 +1025,9 @@ async function runCronDkPull(){
   window.__cronDone = true;
 }
 
-/* ═══ SECTION: MODEL LAB (?lab=1 — on-demand weight search, run from the Board) ═══ */
+/* ═══ SECTION: MODEL LAB (?lab=1 — on-demand weight search, run from the Board) ═══
+   v2: FORWARD-TESTED — weights chosen on the older ~70% of stored dates and
+   judged only on the newest dates they never saw; noGain when it doesn't hold. */
 async function runLab(){
   const say = m => { window.__labStatus = 'lab: ' + m; try { console.log('[ice lab] ' + m); } catch (e) {} };
   say('starting');
@@ -1035,11 +1037,11 @@ async function runLab(){
     const dates = allRecDates();
     if (dates.length < 15) throw new Error('only ' + dates.length + ' stored dates — need 15+ to learn from');
     await seedDkFromFB();
-    const evalW = async w => {
+    const evalW = async (w, dl) => {
       const old = MODEL_W; MODEL_W = Object.assign({}, MODEL_DEFAULTS, w);
       const cats = {}; LAB_CATS.forEach(c => { cats[c] = { hit: 0, n: 0 }; });
       try {
-        for (const d of dates){
+        for (const d of dl){
           const recs = loadRecs(d);
           if (!recs || !recs.length) continue;
           await new Promise(r => setTimeout(r, 0));
@@ -1057,30 +1059,61 @@ async function runLab(){
       for (const c in cats) cats[c].pct = cats[c].n ? Math.round(1000 * cats[c].hit / cats[c].n) / 10 : null;
       return cats;
     };
+    const cutN = Math.max(Math.floor(dates.length * 0.7), dates.length - 25);
+    let train = dates.slice(0, cutN), hold = dates.slice(cutN);
+    const fwdOK = hold.length >= 8 && train.length >= 15;
+    if (!fwdOK){ train = dates; hold = []; }
+    say(fwdOK ? 'training on ' + train.length + ' dates, holding out the newest ' + hold.length : 'not enough dates for a holdout — falling back to in-sample');
+    const baseAll = await evalW({}, dates);
     const GRID = [];
     for (const homeBump of [0, 0.12, 0.3])
       for (const pythEx of [1.8, 2.2, 2.8])
         for (const regressGp of [6, 12, 20]) GRID.push({ homeBump, pythEx, regressGp });
     const results = [];
     for (let i = 0; i < GRID.length; i++){
-      say('testing weight set ' + (i + 1) + '/' + GRID.length);
-      results.push({ w: GRID[i], cats: await evalW(GRID[i]) });
+      say('testing weight set ' + (i + 1) + '/' + GRID.length + ' (training window)');
+      results.push({ w: GRID[i], cats: await evalW(GRID[i], train) });
     }
-    const base = results.find(r => r.w.homeBump === MODEL_DEFAULTS.homeBump && r.w.pythEx === MODEL_DEFAULTS.pythEx && r.w.regressGp === MODEL_DEFAULTS.regressGp);
     const MIN_N = { winner: 30, total: 30, p1: 30, goal: 40, point: 40 };
-    const best = {};
+    const winners = {};
     for (const cat of LAB_CATS){
+      const minN = Math.max(10, Math.floor((MIN_N[cat] || 30) / (fwdOK ? 2 : 1)));
       let b = null;
       for (const r of results){
         const c = r.cats[cat];
-        if (!c || c.pct == null || c.n < (MIN_N[cat] || 30)) continue;
+        if (!c || c.pct == null || c.n < minN) continue;
         if (!b || c.pct > b.pct || (c.pct === b.pct && c.n > b.n)) b = { pct: c.pct, hit: c.hit, n: c.n, weights: r.w };
       }
-      if (b) best[cat] = b;
+      if (b) winners[cat] = b;
+    }
+    let fwdBase = null; const holdEval = {};
+    if (fwdOK){
+      say('forward-testing on the ' + hold.length + ' held-out dates');
+      fwdBase = await evalW({}, hold);
+      const distinct = {};
+      for (const cat in winners) distinct[JSON.stringify(winners[cat].weights)] = winners[cat].weights;
+      for (const key in distinct) holdEval[key] = await evalW(distinct[key], hold);
+    }
+    const best = {};
+    for (const cat in winners){
+      const w = winners[cat];
+      if (fwdOK){
+        const f = holdEval[JSON.stringify(w.weights)][cat];
+        const fb = fwdBase[cat];
+        const entry = { weights: w.weights, train: { pct: w.pct, hit: w.hit, n: w.n },
+          fwd: { base: fb && fb.n ? fb : null, tuned: f && f.n ? f : null } };
+        if (!f || !f.n || f.n < Math.max(10, Math.floor((MIN_N[cat] || 30) / 3)) || !fb || !fb.n || f.pct < fb.pct + 2){
+          entry.noGain = true;
+          entry.pct = f && f.pct != null ? f.pct : null; entry.hit = f ? f.hit : 0; entry.n = f ? f.n : 0;
+        } else { entry.pct = f.pct; entry.hit = f.hit; entry.n = f.n; }
+        best[cat] = entry;
+      } else {
+        best[cat] = { weights: w.weights, pct: w.pct, hit: w.hit, n: w.n, insample: true };
+      }
     }
     const th = {}; LAB_CATS.forEach(c => { th[c] = lockTh(CAT_META[c].th); });
     const report = { t: new Date().toISOString(), app: 'nhl', dates: dates.length, tried: GRID.length,
-      thresholds: th, defaults: MODEL_DEFAULTS, base: base ? base.cats : null, best: best };
+      fwdOK: fwdOK, holdout: hold.length, thresholds: th, defaults: MODEL_DEFAULTS, base: baseAll, best: best };
     await fbWrite(FB_NS, 'labReport', report);
     say('done — report published to nhl/labReport');
     window.__labDone = true;
@@ -1185,6 +1218,37 @@ async function runCronGrade(){
       }
       await fbWrite(FB_NS, 'today', { date: tdate, locks: tlocks });
       clog('published ' + tlocks.length + ' lock(s) to nhl/today for the Board');
+    /* CHAMPION vs CHALLENGER: with Lab weights applied, also grade the DEFAULT
+       model on everything since they were applied (admin-only, Model Lab tab). */
+    try {
+      if (LAB_CFG && LAB_CFG.cats && Object.keys(LAB_CFG.cats).length){
+        const since = String(LAB_CFG.savedAt || '').slice(0, 10) || '1970-01-01';
+        const tally = async useCfg => {
+          const saved = LAB_CFG; if (!useCfg) LAB_CFG = null;
+          const cats = {}; LAB_CATS.forEach(c => { cats[c] = { hit: 0, n: 0 }; });
+          try {
+            for (const d of allRecDates()){
+              if (d < since) continue;
+              const recs = loadRecs(d); if (!recs || !recs.length) continue;
+              await new Promise(r => setTimeout(r, 0));
+              const ctx = { rates: teamRates(priorRecords(d)), players: playerRates(priorRecords(d)) };
+              for (const rec of recs){
+                const proj = projectGame(rec, ctx);
+                if (!proj) continue;
+                for (const u of unitsFromRecord(rec, proj)){
+                  if (!cats[u.cat] || !unitQualifies(u)) continue;
+                  cats[u.cat].n++; if (unitHit(u)) cats[u.cat].hit++;
+                }
+              }
+            }
+          } finally { LAB_CFG = saved; }
+          return cats;
+        };
+        const shadow = { t: new Date().toISOString(), since: since, applied: Object.keys(LAB_CFG.cats), tuned: await tally(true), dflt: await tally(false) };
+        await fbWrite(FB_NS, 'labShadow', shadow);
+        clog('champion-vs-challenger shadow updated (since ' + since + ')');
+      }
+    } catch (e){ clog('shadow warn: ' + (e && e.message || e)); }
     } catch (e){ clog('today-locks publish warn: ' + (e && e.message || e)); }
     clog('done — ' + after + ' dates stored, ' + g.unitCount + ' units, ' + pushed + ' unit docs pushed, ' + mirrored + ' rec docs mirrored, nhl/allTime verified (' + summary.all.hit + '/' + summary.all.n + ' locks)');
   } catch (e){ window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }

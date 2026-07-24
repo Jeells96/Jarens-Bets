@@ -2597,6 +2597,43 @@ async function bootLeagueLoad(){
   maybeAutoPullDK();
 }
 
+/* CHAMPION vs CHALLENGER: with calibration applied, also grade the days since
+   it was applied WITHOUT it, so the Board's Model Lab (admin-only) can show
+   whether the calibration is still earning its keep. */
+async function premShadowUpdate(){
+  try{
+    if(!FBH.ready||!LAB_CFG||!LAB_CFG.cats||!Object.keys(LAB_CFG.cats).length)return;
+    const since=String(LAB_CFG.savedAt||'').slice(0,10)||'1970-01-01';
+    const snap=await withTO(FBH.db.collection('fable_hits').get(),45000);
+    const days=[];
+    snap.forEach(doc=>{
+      const d=doc.id;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||d<since||d>=todayStr())return;
+      const D=doc.data()||{};
+      if(!D.results||!Object.keys(D.results).length)return;
+      days.push(D);
+    });
+    const tally=useCfg=>{
+      const saved=LAB_CFG;if(!useCfg)LAB_CFG=null;
+      const cats={};LAB_CATS.forEach(c=>{cats[c]={hit:0,n:0};});
+      try{
+        for(const D of days){
+          const t=atTalliesFor(D);
+          for(const c of LAB_CATS){
+            const o=t[c];if(!o)continue;
+            if(o.h!=null){cats[c].hit+=o.h;cats[c].n+=o.n;}
+            else{cats[c].hit+=o.w||0;cats[c].n+=(o.w||0)+(o.l||0);}
+          }
+        }
+      }finally{LAB_CFG=saved;}
+      return cats;
+    };
+    const shadow={t:new Date().toISOString(),since:since,applied:Object.keys(LAB_CFG.cats),tuned:tally(true),dflt:tally(false)};
+    await withTO(FBH.db.collection('fable_settings').doc('labShadow').set({data:JSON.stringify(shadow),t:new Date().toISOString()}),10000);
+    console.log('[premium] champion-vs-challenger shadow updated (since '+since+')');
+  }catch(e){console.warn('[premium] shadow warn',e&&e.message||e);}
+}
+
 /* ═══ MODEL LAB RUNNER (?lab=1 — on-demand, run from the Board) ═══ */
 async function runLabPrem(){
   const say=m=>{window.__labStatus='lab: '+m;try{console.log('[premium lab] '+m);}catch(e){}};
@@ -2618,40 +2655,52 @@ async function runLabPrem(){
       (D.rows||[]).forEach(r=>{
         if(!r.verified||r.gradeFlag||r.prob==null)return;
         const o=res[r.id]||res[String(r.id)];if(!playedBat(o))return;
-        pairs.hits.push([r.prob*100,(o.h||0)>=1]);
+        pairs.hits.push([r.prob*100,(o.h||0)>=1,d]);
       });
       const mk=D.mk||{};
       (mk.hr||[]).forEach(r=>{
         if(!r.verified||r.gradeFlag||r.prob==null)return;
         const o=res[r.id]||res[String(r.id)];if(!playedBat(o))return;
-        pairs.hr.push([r.prob*100,(o.hr||0)>=1]);
+        pairs.hr.push([r.prob*100,(o.hr||0)>=1,d]);
       });
       [['kB','so'],['bbB','bb']].forEach(([m,stat])=>{
         (mk[m]||[]).forEach(r=>{
           if(!r.verified||r.gradeFlag)return;
           const p=p1of(r);if(p==null)return;
           const o=res[r.id]||res[String(r.id)];if(!playedBat(o))return;
-          pairs[m].push([p*100,(o[stat]||0)>=1]);
+          pairs[m].push([p*100,(o[stat]||0)>=1,d]);
         });
       });
       (mk.gm||[]).forEach(r=>{
         if(!r.verified||r.conf==null)return;
         const g=res['g'+r.id];if(!g||g.hs==null||g.as==null||g.hs===g.as)return;
-        pairs.gm.push([r.conf*100,(g.hs>g.as)===(r.pick===r.team)]);
+        pairs.gm.push([r.conf*100,(g.hs>g.as)===(r.pick===r.team),d]);
       });
     });
     const TH={hits:CONFIG.lock*100,hr:CONFIG.hrLock*100,kB:CONFIG.kbLock*100,bbB:CONFIG.bbbLock*100,gm:(CONFIG.gmLock||0)*100};
     const rate=arr=>{let h=0;arr.forEach(x=>{if(x[1])h++;});return arr.length?{hit:h,n:arr.length,pct:Math.round(1000*h/arr.length)/10}:null;};
-    const base={},best={};let totalRatings=0;
+    const base={},best={};let totalRatings=0;let anyFwd=false;
     for(const cat of LAB_CATS){
-      const P=pairs[cat];totalRatings+=P.length;
+      const P=pairs[cat].slice().sort((a,b)=>a[2]<b[2]?-1:a[2]>b[2]?1:0);totalRatings+=P.length;
       say(cat+': '+P.length+' placed ratings');
       const b=rate(P.filter(x=>x[0]>=TH[cat]));
       if(b)base[cat]=b;
-      const map=pavCalib(P,5,12);
+      const map=pavCalib(P,5,12); // full-data map — this is what gets APPLIED
       if(!map)continue;
       const c=rate(P.filter(x=>calApply(map,x[0])>=TH[cat]));
       if(!c||!c.n)continue;
+      // FORWARD TEST: learn only on the older 70%, judge on ratings never seen
+      let fwd=null,noGain=false;
+      const cut=Math.floor(P.length*0.7);
+      if(P.length-cut>=30&&cut>=60){
+        const mapTrain=pavCalib(P.slice(0,cut),5,12);
+        if(mapTrain){
+          const holdArr=P.slice(cut);
+          const fb=rate(holdArr.filter(x=>x[0]>=TH[cat]));
+          const ft=rate(holdArr.filter(x=>calApply(mapTrain,x[0])>=TH[cat]));
+          if(fb&&ft){anyFwd=true;fwd={base:fb,tuned:ft};noGain=!(ft.n>=15&&ft.pct>=fb.pct+2);}
+        }
+      }
       // the single most-miscalibrated learned bucket, in plain English
       let worst=null;
       for(const bin of map.bins){
@@ -2659,10 +2708,11 @@ async function runLabPrem(){
         if(worst==null||Math.abs(bin.rate-mid)>Math.abs(worst.rate-(worst.lo+Math.min(worst.hi,100))/2))worst=bin;
       }
       const note='Learned from '+P.length+' placed ratings (every candidate, not just locks). Biggest finding: ratings graded '+worst.lo+'–'+worst.hi+' have really hit '+worst.rate+'% — the Lab re-scores every rating to what its grade level actually hits, so what clears your bet line changes without touching the threshold.';
-      best[cat]={pct:c.pct,hit:c.hit,n:c.n,weights:map,note:note};
+      if(fwd){best[cat]={pct:fwd.tuned.pct,hit:fwd.tuned.hit,n:fwd.tuned.n,weights:map,note:note,fwd:fwd,noGain:noGain||undefined,insampleAll:{pct:c.pct,hit:c.hit,n:c.n}};}
+      else{best[cat]={pct:c.pct,hit:c.hit,n:c.n,weights:map,note:note,insample:true};}
     }
     const report={t:new Date().toISOString(),app:'mlb',kind:'calib',ratings:totalRatings,tried:'calibration',
-      thresholds:TH,defaults:{},base:base,best:best};
+      fwdOK:anyFwd,thresholds:TH,defaults:{},base:base,best:best};
     await withTO(FBH.db.collection('fable_settings').doc('labReport').set({data:JSON.stringify(report),t:new Date().toISOString()}),10000);
     say('done — report published ('+totalRatings+' ratings learned from)');
     window.__labDone=true;
@@ -2704,6 +2754,7 @@ async function runLabPrem(){
         try{
           await cfgPull();
           await pullLabCfgPrem();
+          premShadowUpdate();
           const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gkEdge,CONFIG.hrlEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';

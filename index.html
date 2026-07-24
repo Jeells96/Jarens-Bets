@@ -1366,15 +1366,15 @@ function rateRow(label, cur, prop){
    members feel zero slowdown. Default is always one tap away, and the report
    always shows exactly what default vs tuned does to the success rate. */
 var LAB_APPS = [
-  { ns: 'nascar', file: 'nascar.html', name: 'Pete’s Picks (NASCAR)', kind: 'weights', proj: 'NFLP', reportPath: 'nascar/labReport', cfgPath: 'nascar/lab_cfg',
+  { ns: 'nascar', file: 'nascar.html', name: 'Pete’s Picks (NASCAR)', kind: 'weights', proj: 'NFLP', reportPath: 'nascar/labReport', cfgPath: 'nascar/lab_cfg', shadowPath: 'nascar/labShadow',
     cats: { winner: 'Winner', top5: 'Top 5', top10: 'Top 10', top15: 'Top 15', h2h: 'Matchup' } },
-  { ns: 'mlb', file: 'premium.html', name: 'Diamond IQ Premium (MLB)', kind: 'calib', proj: 'ADMIN', reportPath: 'fable_settings/labReport', cfgPath: 'fable_settings/lab_cfg',
+  { ns: 'mlb', file: 'premium.html', name: 'Diamond IQ Premium (MLB)', kind: 'calib', proj: 'ADMIN', reportPath: 'fable_settings/labReport', cfgPath: 'fable_settings/lab_cfg', shadowPath: 'fable_settings/labShadow',
     cats: { hits: 'Batter hits', hr: 'Home runs', kB: 'Batter K', bbB: 'Batter BB', gm: 'Game winner' } },
-  { ns: 'nfl', file: 'nfl.html', name: 'Gridline (NFL)', kind: 'calib', proj: 'NFLP', reportPath: 'accuracy/labReport', cfgPath: 'accuracy/lab_cfg',
+  { ns: 'nfl', file: 'nfl.html', name: 'Gridline (NFL)', kind: 'calib', proj: 'NFLP', reportPath: 'accuracy/labReport', cfgPath: 'accuracy/lab_cfg', shadowPath: 'accuracy/labShadow',
     cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD' } },
-  { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)', kind: 'weights', proj: 'NFLP', reportPath: 'nba/labReport', cfgPath: 'nba/lab_cfg',
+  { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)', kind: 'weights', proj: 'NFLP', reportPath: 'nba/labReport', cfgPath: 'nba/lab_cfg', shadowPath: 'nba/labShadow',
     cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Player rebounds', playerAst: 'Player assists' } },
-  { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)', kind: 'weights', proj: 'NFLP', reportPath: 'nhl/labReport', cfgPath: 'nhl/lab_cfg',
+  { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)', kind: 'weights', proj: 'NFLP', reportPath: 'nhl/labReport', cfgPath: 'nhl/lab_cfg', shadowPath: 'nhl/labShadow',
     cats: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorers', point: 'Point scorers' } }
 ];
 function labProj(app){ return app.proj === 'ADMIN' ? ADMIN : NFLP; }
@@ -1389,10 +1389,10 @@ var KNOB_PHRASE = {
   pythEx: { down: 'goal edge converts softer', up: 'goal edge converts harder into win odds' },
   regressGp: { down: 'player hot streaks trusted more', up: 'player rates pulled harder to league average' }
 };
-var LAB = { reports: {}, cfgs: {}, wired: false, running: false };
+var LAB = { reports: {}, cfgs: {}, shadows: {}, wired: false, running: false };
 function labRead(app, which){
   var pr = labProj(app);
-  var path = which === 'report' ? app.reportPath : app.cfgPath;
+  var path = which === 'report' ? app.reportPath : which === 'shadow' ? app.shadowPath : app.cfgPath;
   return fetch(FS + pr.p + '/databases/(default)/documents/' + path + '?key=' + pr.k)
     .then(function(r){ return r.ok ? r.json() : null; })
     .then(function(j){
@@ -1421,6 +1421,7 @@ function labTabHtml(){
   return '<div class="sect"><div class="row"><span class="lbl">Model Lab</span><span class="hint">weekly · on-demand only</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">The Lab teaches each app to <b>read its stats better</b> — it never touches your lock thresholds, and nothing loads until you tap a button here. The Sunday-morning ritual: <b>Run this week’s scan</b>, read the numbers, flip on what helps. Default is always one tap away.</p>' +
     '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">Two kinds of learning. <b>Re-weighting</b> (Pete’s Picks, The Key, Icing): the whole stored season is replayed under 27 different stat weightings — recent form vs old, track/home factors, decisiveness. <b>Calibration</b> (Diamond IQ Premium, Gridline): every rating ever placed — locks and non-locks — is grouped by its stated grade to learn what each grade level <b>really</b> hits; ratings are then re-scored to those real numbers, which is exactly how a bad rating gets caught.</p>' +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)"><b>Every gain is forward-tested:</b> the Lab learns only from older games, then measures the tuned version on the newest games it never saw while learning. If a tuning doesn’t hold up on unseen games it’s flagged and can’t be applied. And once you DO apply something, both versions keep being graded in parallel — the “Since you applied” box shows whether the tuning is still earning its keep, and warns you when it isn’t.</p>' +
     '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">Why sample sizes differ between rows: the record counts <b>picks that cleared your bet line</b>, and a different weighting (or re-scored grades) puts a different set of picks over that same line — so the denominator moves with the weighting, never the threshold.</p>' +
     '<div style="display:flex;gap:8px;margin-bottom:10px">' +
       '<button class="go" id="lab-run" style="flex:1;margin:0">Run this week’s scan</button>' +
@@ -1435,19 +1436,57 @@ function labCatRowHtml(app, cat, rep, cfg){
   var best = rep && rep.best && rep.best[cat];
   var applied = !!(cfg && cfg.cats && cfg.cats[cat]);
   var fmt = function(o){ return o && o.n ? '<b>' + o.pct + '%</b> <span class="hint">(' + o.hit + '/' + o.n + ')</span>' : '<span class="hint">—</span>'; };
+  var fwd = best && best.fwd;
+  var noGain = best && (best.noGain === true || (!fwd && base && best.n && best.pct <= base.pct));
   var delta = '';
-  if (base && best && base.n && best.n){
-    var d = Math.round((best.pct - base.pct) * 10) / 10;
+  if (fwd && fwd.base && fwd.tuned){
+    var d = Math.round((fwd.tuned.pct - fwd.base.pct) * 10) / 10;
     delta = d > 0 ? '<b style="color:#7fd99a">+' + d + '</b>' : d < 0 ? '<b style="color:#ff7a7a">' + d + '</b>' : '<b style="color:var(--dim2)">±0</b>';
+  } else if (base && best && base.n && best.n){
+    var d2 = Math.round((best.pct - base.pct) * 10) / 10;
+    delta = d2 > 0 ? '<b style="color:#7fd99a">+' + d2 + '</b>' : d2 < 0 ? '<b style="color:#ff7a7a">' + d2 + '</b>' : '<b style="color:var(--dim2)">±0</b>';
   }
-  var noGain = best && base && best.pct <= base.pct;
+  var canApply = best && !noGain;
+  var fwdRows = '';
+  if (fwd){
+    fwdRows = '<div class="hint" style="margin:6px 0 2px;color:var(--bone);font-weight:700">Forward test — games it had never seen while learning:</div>' +
+      '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">default on those games</span><span>' + fmt(fwd.base) + '</span></div>' +
+      '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + (best.note ? 're-scored grades on those games' : 'tuned weighting on those games') + '</span><span>' + fmt(fwd.tuned) + ' ' + delta + '</span></div>';
+  } else if (best) {
+    fwdRows = '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + (best.note ? 'with re-scored (calibrated) grades' : 'best tuned weighting') + ' <b style="color:#ffb454">(in-sample — not forward-tested yet, season too short)</b></span><span>' + fmt(best) + ' ' + delta + '</span></div>';
+  }
   return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px">' +
     '<div class="row" style="margin-bottom:4px"><span class="lbl" style="font-size:13.5px">' + esc(app.cats[cat]) + '</span>' +
-      (best ? '<label class="tog" title="use the tuned weighting for this bet type"><input type="checkbox" class="lab-use" data-ns="' + app.ns + '" data-cat="' + cat + '"' + (applied ? ' checked' : '') + '><span></span></label>' : '<span class="hint">not enough graded picks</span>') + '</div>' +
-    '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">default (what you have now)</span><span>' + fmt(base) + '</span></div>' +
-    (best ? '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + (best.note ? 'with re-scored (calibrated) grades' : 'best tuned weighting') + '</span><span>' + fmt(best) + ' ' + delta + '</span></div>' +
-      '<div class="hint" style="margin-top:4px;line-height:1.5">' + (best.note ? esc(best.note) : 'What changes: ' + esc(labWeightDesc(rep.defaults, best.weights))) + (noGain ? ' · <b>no gain over default — leave it off</b>' : '') + '</div>' : '') +
-    (applied ? '<div class="hint" style="margin-top:4px;color:#c9a84c">Tuned weighting is LIVE for this bet type. Switching it off returns it to the default row above.</div>' : '') +
+      (best ? (canApply || applied
+        ? '<label class="tog" title="use the tuned version for this bet type"><input type="checkbox" class="lab-use" data-ns="' + app.ns + '" data-cat="' + cat + '"' + (applied ? ' checked' : '') + '><span></span></label>'
+        : '<span class="hint" style="color:#ffb454">didn’t hold up on unseen games — not applyable</span>')
+        : '<span class="hint">not enough graded picks</span>') + '</div>' +
+    '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">default (what you have now, all stored games)</span><span>' + fmt(base) + '</span></div>' +
+    fwdRows +
+    (best ? '<div class="hint" style="margin-top:4px;line-height:1.5">' + (best.note ? esc(best.note) : 'What changes: ' + esc(labWeightDesc(rep.defaults, best.weights))) + (noGain ? ' · <b>no real gain on unseen games — leave it off</b>' : '') + '</div>' : '') +
+    (applied ? '<div class="hint" style="margin-top:4px;color:#c9a84c">Tuned version is LIVE for this bet type. Switching it off returns it to the default row above.</div>' : '') +
+    '</div>';
+}
+function labShadowStrip(app){
+  var sh = LAB.shadows[app.ns], cfg = LAB.cfgs[app.ns];
+  if (!sh || !cfg || !cfg.cats || !Object.keys(cfg.cats).length || !sh.tuned) return '';
+  var rows = [], warn = false;
+  for (var cat in cfg.cats){
+    var t = sh.tuned[cat], df = sh.dflt && sh.dflt[cat];
+    if (!t || !t.n || !df || !df.n) continue;
+    var tp = Math.round(1000 * t.hit / t.n) / 10, dp = Math.round(1000 * df.hit / df.n) / 10;
+    var d = Math.round((tp - dp) * 10) / 10;
+    if (dp - tp >= 3 && t.n >= 20) warn = true;
+    rows.push('<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(app.cats[cat] || cat) + '</span>' +
+      '<span class="hint">tuned <b style="color:var(--bone)">' + tp + '%</b> (' + t.hit + '/' + t.n + ') · default would be <b>' + dp + '%</b> (' + df.hit + '/' + df.n + ') ' +
+      (d > 0 ? '<b style="color:#7fd99a">+' + d + '</b>' : d < 0 ? '<b style="color:#ff7a7a">' + d + '</b>' : '±0') + '</span></div>');
+  }
+  if (!rows.length) return '';
+  return '<div style="border:1px solid ' + (warn ? '#ffb454' : 'var(--hair2)') + ';border-radius:9px;padding:9px;margin-bottom:8px">' +
+    '<div class="row"><span class="lbl" style="font-size:13.5px">Since you applied' + (sh.since ? ' (' + esc(sh.since) + ')' : '') + '</span><span class="hint">updates every grading run</span></div>' +
+    '<div class="hint" style="margin:4px 0 6px">Both versions keep being graded in parallel — this is the tuned setting vs what the default would have done on the same games.</div>' +
+    rows.join('') +
+    (warn ? '<div class="hint" style="margin-top:6px;color:#ffb454"><b>⚠ A tuned setting has stopped helping</b> — the default is ahead on real games since you applied it. Consider Back to default.</div>' : '') +
     '</div>';
 }
 function labAppCardHtml(app){
@@ -1456,7 +1495,7 @@ function labAppCardHtml(app){
     '<span class="hint">' + (rep ? 'scanned ' + esc(String(rep.t || '').slice(0, 10)) + ' · ' + (rep.kind === 'calib' ? (rep.ratings || 0) + ' ratings learned from' : (rep.tried || 27) + ' weightings') : 'no report yet') + '</span></div>';
   if (!rep) return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px">' + head +
     '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">Run a scan (or load the last report) to see what re-weighting does here.</p></div>';
-  var body = Object.keys(app.cats).map(function(c){ return labCatRowHtml(app, c, rep, cfg); }).join('');
+  var body = labShadowStrip(app) + Object.keys(app.cats).map(function(c){ return labCatRowHtml(app, c, rep, cfg); }).join('');
   return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px" data-labapp="' + app.ns + '">' + head +
     '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">' + (rep.kind === 'calib'
       ? 'Numbers = every placed rating, judged at your current bet line. Calibration re-scores each rating to what its grade level has really hit — flip a switch to apply it to that bet type only.'
@@ -1517,6 +1556,7 @@ async function labLoadReports(box){
     var a = LAB_APPS[i];
     LAB.reports[a.ns] = await labRead(a, 'report');
     LAB.cfgs[a.ns] = await labRead(a, 'cfg');
+    LAB.shadows[a.ns] = await labRead(a, 'shadow');
   }
   st.textContent = 'Reports loaded.';
   labRenderBody(box);
@@ -1546,7 +1586,8 @@ function labRunScan(box){
       try { fr.remove(); } catch (e) {}
       if (!ok) st.textContent = app.name + ': ' + (msg || 'scan failed') + ' — moving on.';
       labRead(app, 'report').then(function(r){ LAB.reports[app.ns] = r; return labRead(app, 'cfg'); })
-        .then(function(c){ LAB.cfgs[app.ns] = c; labRenderBody(box); runNext(); });
+        .then(function(c){ LAB.cfgs[app.ns] = c; return labRead(app, 'shadow'); })
+        .then(function(sh){ LAB.shadows[app.ns] = sh; labRenderBody(box); runNext(); });
     };
     var onMsg = function(ev){
       var d = ev && ev.data;

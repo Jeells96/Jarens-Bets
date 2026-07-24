@@ -1409,6 +1409,45 @@ async function pullLabCfg() {
     return !!LAB_CFG;
   } catch (e) { return false; }
 }
+/* CHAMPION vs CHALLENGER: with calibration applied, also grade everything since
+   it was applied WITHOUT it (admin-only — surfaces in the Board's Model Lab). */
+async function nflShadowUpdate() {
+  try {
+    if (!LAB_CFG || !LAB_CFG.cats || !Object.keys(LAB_CFG.cats).length) return;
+    // stamp the apply point in season/week terms once, so 'since' survives doc rewrites
+    if (!LAB_CFG.sinceOrd && state.season && state.week) {
+      LAB_CFG.sinceOrd = state.season * 100 + state.week;
+      try { await fsSetDoc('accuracy/lab_cfg', { data: JSON.stringify(LAB_CFG), t: new Date().toISOString() }); } catch (e) {}
+    }
+    const sinceOrd = LAB_CFG.sinceOrd || 0;
+    const docs = await fsListDocs('accuracy', 300);
+    const unitDocs = docs.filter(d => /_units$/.test(d.id) && ((d.data.season || 0) * 100 + (d.data.week || 0)) >= sinceOrd);
+    if (!unitDocs.length) return;
+    const tally = useCfg => {
+      const saved = LAB_CFG; if (!useCfg) LAB_CFG = null;
+      const cats = {}; LAB_CATS.forEach(c => { cats[c] = { hit: 0, n: 0 }; });
+      try {
+        for (const d of unitDocs) {
+          let units = [];
+          try { units = JSON.parse(d.data.units || '[]'); } catch (e) {}
+          for (const u of units) {
+            const lab = FINE2LAB[u.c];
+            if (!lab || u.m == null) continue;
+            if (!unitQualifies({ cat: u.c, metric: u.m })) continue;
+            const tolKey = TOL_KEY_BY_CAT[u.c];
+            const hit = u.a != null && tolKey ? (u.a <= hitTol(tolKey)) : !!u.h;
+            cats[lab].n++; if (hit) cats[lab].hit++;
+          }
+        }
+      } finally { LAB_CFG = saved; }
+      return cats;
+    };
+    const shadow = { t: new Date().toISOString(), since: String(LAB_CFG.savedAt || '').slice(0, 10), sinceOrd: sinceOrd,
+      applied: Object.keys(LAB_CFG.cats), tuned: tally(true), dflt: tally(false) };
+    await fsSetDoc('accuracy/labShadow', { data: JSON.stringify(shadow), t: new Date().toISOString() });
+    console.log('[nfl] champion-vs-challenger shadow updated');
+  } catch (e) { console.log('[nfl] shadow warn: ' + (e && e.message || e)); }
+}
 async function runLab() {
   const say = m => { window.__labStatus = 'lab: ' + m; try { console.log('[nfl lab] ' + m); } catch (e) {} };
   say('starting');
@@ -1423,38 +1462,52 @@ async function runLab() {
     for (const d of unitDocs) {
       let units = [];
       try { units = JSON.parse(d.data.units || '[]'); } catch (e) {}
+      const ord = (d.data.season || 0) * 100 + (d.data.week || 0);
       for (const u of units) {
         const lab = FINE2LAB[u.c];
         if (!lab || u.m == null) continue;
         const tolKey = TOL_KEY_BY_CAT[u.c];
         const hit = u.a != null && tolKey ? (u.a <= hitTol(tolKey)) : !!u.h;
-        pairs[lab].push([u.m, hit]);
+        pairs[lab].push([u.m, hit, ord]);
         totalRatings++;
       }
     }
     const TH = { winner: lockTh('winner'), total: lockTh('lines'), teamPts: lockTh('lines'), teamYds: lockTh('lines'),
       playerYds: lockTh('yards'), anytimeTd: lockTh('anytimeTd'), firstTd: lockTh('firstTd') };
     const rate = arr => { let h = 0; arr.forEach(x => { if (x[1]) h++; }); return arr.length ? { hit: h, n: arr.length, pct: Math.round(1000 * h / arr.length) / 10 } : null; };
-    const base = {}, best = {};
+    const base = {}, best = {}; let anyFwd = false;
     for (const cat of LAB_CATS) {
-      const P = pairs[cat];
+      const P = pairs[cat].slice().sort((a, b) => a[2] - b[2]);
       say(cat + ': ' + P.length + ' placed ratings');
       const b = rate(P.filter(x => x[0] >= TH[cat]));
       if (b) base[cat] = b;
-      const map = pavCalib(P, 5, 12);
+      const map = pavCalib(P, 5, 12); // full-data map — this is what gets APPLIED
       if (!map) continue;
       const c = rate(P.filter(x => calApply(map, x[0]) >= TH[cat]));
       if (!c || !c.n) continue;
+      // FORWARD TEST: learn only on the older 70%, judge on ratings never seen
+      let fwd = null, noGain = false;
+      const cut = Math.floor(P.length * 0.7);
+      if (P.length - cut >= 30 && cut >= 60) {
+        const mapTrain = pavCalib(P.slice(0, cut), 5, 12);
+        if (mapTrain) {
+          const holdArr = P.slice(cut);
+          const fb = rate(holdArr.filter(x => x[0] >= TH[cat]));
+          const ft = rate(holdArr.filter(x => calApply(mapTrain, x[0]) >= TH[cat]));
+          if (fb && ft) { anyFwd = true; fwd = { base: fb, tuned: ft }; noGain = !(ft.n >= 15 && ft.pct >= fb.pct + 2); }
+        }
+      }
       let worst = null;
       for (const bin of map.bins) {
         const mid = (bin.lo + Math.min(bin.hi, 100)) / 2;
         if (worst == null || Math.abs(bin.rate - mid) > Math.abs(worst.rate - (worst.lo + Math.min(worst.hi, 100)) / 2)) worst = bin;
       }
       const note = 'Learned from ' + P.length + ' placed ratings (every candidate, not just locks). Biggest finding: ratings graded ' + worst.lo + '–' + worst.hi + ' have really hit ' + worst.rate + '% — the Lab re-scores every rating to what its grade level actually hits, so what clears your bet line changes without touching the threshold.';
-      best[cat] = { pct: c.pct, hit: c.hit, n: c.n, weights: map, note: note };
+      if (fwd) { best[cat] = { pct: fwd.tuned.pct, hit: fwd.tuned.hit, n: fwd.tuned.n, weights: map, note: note, fwd: fwd, noGain: noGain || undefined, insampleAll: { pct: c.pct, hit: c.hit, n: c.n } }; }
+      else { best[cat] = { pct: c.pct, hit: c.hit, n: c.n, weights: map, note: note, insample: true }; }
     }
     const report = { t: new Date().toISOString(), app: 'nfl', kind: 'calib', ratings: totalRatings, tried: 'calibration',
-      thresholds: TH, defaults: {}, base: base, best: best };
+      fwdOK: anyFwd, thresholds: TH, defaults: {}, base: base, best: best };
     await fsSetDoc('accuracy/labReport', { data: JSON.stringify(report), t: new Date().toISOString() });
     say('done — report published (' + totalRatings + ' ratings learned from)');
     window.__labDone = true;
@@ -5636,6 +5689,7 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
         await fsSetDoc('gridline/todayLocks', { date: ptToday, locks: JSON.stringify(tlocks), t: Date.now() });
         console.log('[nfl] published ' + tlocks.length + ' lock(s) to gridline/todayLocks');
       } catch (e) { console.log('[nfl] today-locks publish warn: ' + (e && e.message || e)); }
+      try { await nflShadowUpdate(); } catch (e) {}
       console.log('[nfl] scan finished: ' + weeks + ' weeks, ~' + graded + ' graded results');
       window.__cronStatus = 'cron: done — season ' + state.season + ' scanned (' + weeks + ' weeks, ~' + graded + ' results), accuracy synced';
     } catch (e) { window.__cronStatus = 'cron: ERROR — ' + (e && e.message || e); }
