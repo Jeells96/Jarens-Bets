@@ -61,14 +61,14 @@ nav .ico{font-size:21px}
   <span class="pill" id="verBadge"></span>
 </header>
 <main>
-  <section id="tab-games"></section>
-  <section id="tab-bets" class="hidden"></section>
+  <section id="tab-games" class="hidden"></section>
+  <section id="tab-bets"></section>
   <section id="tab-facts" class="hidden"></section>
   <section id="tab-settings" class="hidden"></section>
 </main>
 <nav>
-  <button data-tab="games" class="on"><span class="ico">&#127954;</span>Today</button>
-  <button data-tab="bets"><span class="ico">&#128274;</span>Bets</button>
+  <button data-tab="bets" class="on"><span class="ico">&#128274;</span>Bets</button>
+  <button data-tab="games"><span class="ico">&#127954;</span>Today</button>
   <button data-tab="facts"><span class="ico">&#128202;</span>Results</button>
   <button data-tab="settings"><span class="ico">&#9881;&#65039;</span>Settings</button>
 </nav>
@@ -108,7 +108,7 @@ const HOME_BUMP = 0.12;   // home-ice goals bump
 const PYTH_EX = 2.2;      // hockey Pythagorean exponent
 const REGRESS_GP = 12;    // player-rate regression games
 const state = {
-  tab: 'games', slateDate: null, slate: null, projections: {},
+  tab: 'bets', slateDate: null, slate: null, projections: {},
   seasonUnits: {}, settings: { lockThresholds: {}, hitTol: {} },
   scan: { running: false, stop: false }, factsCat: 'allLocks', factsOpen: null, dkByDate: {}
 };
@@ -555,7 +555,9 @@ function toast(msg, ms){
   toast._h = setTimeout(() => t.classList.add('hidden'), ms || 2800);
 }
 function todayPT(){
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })).toISOString().slice(0, 10);
+  // en-CA formats YYYY-MM-DD directly in PT — never bounced through UTC
+  // (which rolled the date to tomorrow every evening).
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 }
 function addDays(d, n){
   const dt = new Date(d + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n);
@@ -566,13 +568,18 @@ function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&
 async function loadSlate(date){
   state.slateDate = date; state.slate = null; state.projections = {};
   renderGames('<div class="muted small">Loading ' + esc(date) + '… <span class="spin"></span></div>');
+  renderBets();
   let games = [];
   try { games = parseScoreboard(await fetchJSON(ESPN.scoreboard(date))); }
-  catch (e){ renderGames('<div class="muted small">ESPN unreachable — try again.</div>'); return; }
+  catch (e){ renderGames('<div class="muted small">ESPN unreachable — try again.</div>'); renderBets(); return; }
   state.slate = { date, games };
+  if (state.dkByDate[date] === undefined){
+    try { state.dkByDate[date] = (await fbRead(FB_DK, date)) || null; } catch (e){ state.dkByDate[date] = null; }
+  }
   const prior = priorRecords(date);
   if (prior.length < 100){
     renderGames('<div class="muted small">Not enough stored history to project (needs the season built). Cloud sync runs automatically — if this persists, run the grading autopilot once from the Actions tab.</div>');
+    renderBets();
     return;
   }
   const ctx = { rates: teamRates(prior), players: playerRates(prior) };
@@ -634,63 +641,178 @@ function catStripHtml(){
   if (!chips.length) return '';
   return '<div class="card" style="padding:8px 10px"><div class="small dim" style="margin-bottom:4px">Success rate by bet type · all-time, graded</div>' + chips.join(' ') + '</div>';
 }
-function renderBets(){
-  const el = $id('tab-bets');
-  const th = '<div class="small dim" style="margin-top:4px">Thresholds: winner ≥' + lockTh('winner') + '% · lines ≥' + lockTh('lines') + '% · players ≥' + lockTh('props') + '% · tol ±' + hitTol('goals') + ' goals / ±' + hitTol('p1') + ' 1st-period</div>';
-  if (!state.slate){
-    el.innerHTML = '<div class="card"><h2>Locks</h2><div class="muted small">Load a slate on Games first.</div>' + th + '</div>';
-    return;
-  }
-  let hitN = 0, gradedN = 0;
-  const bets = [];
+/* ═══ BETS FRONT PAGE — Pete's Picks format ═══════════════════════════════
+   Official header card + one card per bet type ordered by its REAL all-time
+   success rate (the autopilot re-grades those records at the current
+   thresholds). Collapsed card = qualifying locks; tap a card = every
+   candidate with a hard BET LINE divider. Tap a NAME = why. */
+const HB = { open: {}, why: null };
+const HB_META = {
+  winner: { tag: 'WINNER',           what: 'our pick wins the game', th: 'winner' },
+  total:  { tag: 'GAME TOTAL',       what: 'the combined goals land within the tolerance of our number', th: 'lines' },
+  p1:     { tag: '1ST PERIOD TOTAL', what: 'first-period goals land within the tolerance of our number', th: 'lines' },
+  goal:   { tag: 'GOAL SCORERS',     what: 'the player scores a goal', th: 'props' },
+  point:  { tag: 'POINT SCORERS',    what: 'the player records at least one point', th: 'props' },
+  dkML:   { tag: 'DK MONEYLINE VALUE', what: 'our pick wins where our odds beat DraftKings’ implied price', th: 'dk', dk: true },
+  dkTotal:{ tag: 'DK TOTAL O/U',     what: 'our OVER/UNDER lean beats DraftKings’ posted total', th: 'dk', dk: true }
+};
+function hbName(n, tok){ return '<b class="hbname" data-tok="' + tok + '" style="cursor:pointer;border-bottom:1px dotted var(--dim,#8593a1)">' + esc(n) + '</b>'; }
+function hbMark(ok, extra){ if (ok == null) return ''; return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (extra != null ? esc(String(extra)) + ' ' : '') + (ok ? '✓' : '✗') + '</span>'; }
+function hbRows(k){
+  const rows = [];
+  const recs = loadRecs(state.slate.date) || [];
+  const dkSnap = state.dkByDate[state.slate.date];
   for (const g of state.slate.games){
     const proj = state.projections[g.id];
     if (!proj) continue;
-    const gTag = '<span class="dim">' + esc(g.away.ab) + '@' + esc(g.home.ab) + '</span> ';
+    const gm = g.away.ab + '@' + g.home.ab;
     const fin = g.completed && g.home.g != null;
     let rec = null;
-    if (fin){
-      const recs = loadRecs(state.slate.date) || [];
-      rec = recs.find(r => String(r.id) === String(g.id)) || { id: g.id, home: g.home, away: g.away, players: [] };
-    }
-    const mark = ok => { gradedN++; if (ok) hitN++; return ' <span class="' + (ok ? 'rate-good' : 'rate-bad') + '">' + (ok ? '✓' : '✗') + '</span>'; };
-    if (proj.winMetric >= lockTh('winner')){
-      let m = '';
-      if (rec && rec.home.g != null) m = mark((rec.home.g > rec.away.g ? rec.home.ab : rec.away.ab) === proj.winAb);
-      bets.push({ conf: proj.winMetric, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Winner: <b>' + esc(proj.winAb) + '</b>' + m + '</div><div class="lock">' + proj.winMetric + '% 🔒</div></div>' });
-    }
-    if (proj.winMetric >= lockTh('lines')){
-      let m = '', m1 = '';
-      if (rec && rec.home.g != null){
-        m = mark(Math.abs((rec.home.g + rec.away.g) - proj.total) <= hitTol('goals'));
-        if (rec.home.p1 != null && rec.away.p1 != null) m1 = mark(Math.abs((rec.home.p1 + rec.away.p1) - proj.p1) <= hitTol('p1'));
-      }
-      bets.push({ conf: proj.winMetric, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + 'Total ' + proj.total + ' ±' + hitTol('goals') + m + '</div><div class="lock">' + proj.winMetric + '% 🔒</div></div>' });
-      bets.push({ conf: proj.winMetric - 1, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + '1st period ' + proj.p1 + ' ±' + hitTol('p1') + m1 + '</div><div class="lock">' + proj.winMetric + '% 🔒</div></div>' });
-    }
-    const byPid = {};
-    if (rec) for (const pl of (rec.players || [])) byPid[pl[0]] = pl;
-    for (const pr of proj.props){
-      if (pr.goalConf >= lockTh('props')){
-        let m = '';
+    if (fin) rec = recs.find(function(r){ return String(r.id) === String(g.id); }) || { id: g.id, home: g.home, away: g.away, players: [] };
+    const scored = rec && rec.home.g != null;
+    if (k === 'winner'){
+      const tok = 'winner|' + g.id;
+      const mark = scored ? ((rec.home.g > rec.away.g ? rec.home.ab : rec.away.ab) === proj.winAb) : null;
+      rows.push({ tok: tok, html: hbName(gm, tok) + ' — winner <b>' + esc(proj.winAb) + '</b>' + hbMark(mark), grade: proj.winMetric,
+        why: 'Model win probability for <b>' + esc(proj.winAb) + '</b>: ' + proj.winMetric + ' — walk-forward from each side’s goals for/against and home ice. Projected score ' + esc(g.away.ab) + ' ' + proj.eA + ' @ ' + esc(g.home.ab) + ' ' + proj.eH + '.' });
+    } else if (k === 'total'){
+      const tok = 'total|' + g.id;
+      let mark = null, extra = null;
+      if (scored){ const aTot = rec.home.g + rec.away.g; mark = Math.abs(aTot - proj.total) <= hitTol('goals'); extra = aTot; }
+      rows.push({ tok: tok, html: hbName(gm, tok) + ' — total ' + proj.total + ' ±' + hitTol('goals') + hbMark(mark, extra), grade: proj.winMetric,
+        why: 'Projected combined goals <b>' + proj.total + '</b>; the bet hits within ±' + hitTol('goals') + '. Grade = model confidence in this game’s script.' });
+    } else if (k === 'p1'){
+      const tok = 'p1|' + g.id;
+      let mark = null, extra = null;
+      if (scored && rec.home.p1 != null && rec.away.p1 != null){ const a1 = rec.home.p1 + rec.away.p1; mark = Math.abs(a1 - proj.p1) <= hitTol('p1'); extra = a1; }
+      rows.push({ tok: tok, html: hbName(gm, tok) + ' — 1st period ' + proj.p1 + ' ±' + hitTol('p1') + hbMark(mark, extra), grade: proj.winMetric,
+        why: 'Projected first-period goals <b>' + proj.p1 + '</b> from each team’s early-game scoring share; hits within ±' + hitTol('p1') + '.' });
+    } else if (k === 'goal' || k === 'point'){
+      const byPid = {};
+      if (rec) for (const pl of (rec.players || [])) byPid[pl[0]] = pl;
+      for (const pr of proj.props){
+        const conf = k === 'goal' ? pr.goalConf : pr.pointConf;
+        if (conf == null) continue;
+        const tok = k + '|' + g.id + '|' + pr.pid;
         const pl = byPid[pr.pid];
-        if (pl) m = mark(pl[3] >= 1);
-        bets.push({ conf: pr.goalConf, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(pr.name) + ' anytime goal' + m + '</div><div class="lock">' + pr.goalConf + '% 🔒</div></div>' });
+        const mark = pl ? (k === 'goal' ? pl[3] >= 1 : (pl[3] + pl[4]) >= 1) : null;
+        rows.push({ tok: tok, html: hbName(pr.name, tok) + ' — ' + (k === 'goal' ? 'anytime goal' : '1+ point') + hbMark(mark), sub: gm, grade: conf,
+          why: 'The model’s odds (' + conf + ') that ' + esc(pr.name) + (k === 'goal' ? ' scores' : ' records a point') + ' — from their season goal/assist rates, line usage and this matchup’s expected goals.' });
       }
-      if (pr.pointConf >= lockTh('props')){
-        let m = '';
-        const pl = byPid[pr.pid];
-        if (pl) m = mark((pl[3] + pl[4]) >= 1);
-        bets.push({ conf: pr.pointConf, html: '<div class="row small" style="padding:4px 0"><div class="grow">' + gTag + esc(pr.name) + ' 1+ point' + m + '</div><div class="lock">' + pr.pointConf + '% 🔒</div></div>' });
+    } else if (dkSnap && dkSnap.games && dkSnap.games[gm]){
+      const e = dkSnap.games[gm];
+      if (k === 'dkML' && e.mlHome != null && e.mlAway != null){
+        const imp = function(p2){ return p2 < 0 ? (-p2) / ((-p2) + 100) : 100 / (p2 + 100); };
+        const pickHome = proj.winAb === g.home.ab;
+        const dkP = imp(pickHome ? e.mlHome : e.mlAway);
+        if ((proj.winMetric / 100) > dkP + 0.03){
+          const tok = 'dkML|' + g.id;
+          const mark = scored ? ((rec.home.g > rec.away.g ? rec.home.ab : rec.away.ab) === proj.winAb) : null;
+          rows.push({ tok: tok, html: hbName(gm, tok) + ' — ML <b>' + esc(proj.winAb) + '</b> vs DK ' + Math.round(dkP * 100) + '%' + hbMark(mark), grade: proj.winMetric,
+            why: 'We give ' + esc(proj.winAb) + ' <b>' + proj.winMetric + '%</b>; DraftKings’ price implies only ' + Math.round(dkP * 100) + '%. We only list ML bets with a real edge over the book.' });
+        }
+      } else if (k === 'dkTotal' && e.total != null){
+        const lean = proj.total > e.total ? 'OVER' : 'UNDER';
+        const tok = 'dkTotal|' + g.id;
+        let mark = null, extra = null;
+        if (scored){ const aTot = rec.home.g + rec.away.g; if (aTot !== e.total){ mark = lean === 'OVER' ? aTot > e.total : aTot < e.total; extra = aTot; } }
+        rows.push({ tok: tok, html: hbName(gm, tok) + ' — <b>' + lean + '</b> ' + e.total + hbMark(mark, extra), sub: 'proj ' + proj.total, grade: proj.winMetric,
+          why: 'Our projected total is <b>' + proj.total + '</b> against DraftKings’ posted ' + e.total + ' — lean ' + lean + '.' });
       }
     }
   }
-  bets.sort((a, b) => b.conf - a.conf);
-  const head = '<div class="card"><h2>Locks · ' + esc(state.slate.date) + '</h2><div class="small">' + bets.length + ' qualifying bets' +
-    (gradedN ? ' · completed so far: <b>' + hitN + '/' + gradedN + '</b>' : '') + '</div>' + th + '</div>';
-  el.innerHTML = catStripHtml() + (bets.length
-    ? head + '<div class="card"><h2>All bets · highest confidence first</h2>' + bets.map(b => b.html).join('') + '</div>'
-    : head + '<div class="card muted small">Nothing clears the current thresholds — that is the system working. Lower thresholds from the Board settings for more (weaker) bets.</div>');
+  rows.sort(function(a, b){ return b.grade - a.grade; });
+  return rows;
+}
+function hbRowHtml(row, grey){
+  return '<div class="row small" style="padding:6px 0;border-top:1px solid rgba(255,255,255,.06)"><div class="grow"' + (grey ? ' style="color:var(--dim,#8593a1)"' : '') + '>' + row.html + (row.sub ? ' <span class="dim" style="font-size:.85em">' + esc(row.sub) + '</span>' : '') + '</div>' +
+    '<div style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'var(--dim,#8593a1)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</div></div>' +
+    (HB.why === row.tok ? '<div class="small" style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;color:var(--dim,#8593a1);line-height:1.5">' + row.why + '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
+}
+function hbShiftDay(n){
+  const cur = state.slateDate || todayPT();
+  HB.open = {}; HB.why = null;
+  loadSlate(n === 0 ? todayPT() : addDays(cur, n));
+}
+function renderBets(){
+  const el = $id('tab-bets');
+  const ds = state.slateDate || todayPT();
+  const today = todayPT();
+  const kick = ds === today ? 'Tonight’s slate · NHL' : (ds < today ? 'Earlier slate · NHL' : 'Upcoming slate · NHL');
+  const pretty = (function(){ try { return new Date(ds + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }); } catch (e){ return ds; } })();
+  const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:var(--text,#e8edf4);border-radius:9px;padding:7px 0;font-size:.72rem;font-weight:700;cursor:pointer';
+  let h = '<div class="card" style="border-color:rgba(255,93,93,.35)">' +
+    '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:#ff5d5d;text-transform:uppercase">' + kick + '</div>' +
+    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + pretty + '</div>' +
+    '<div class="small dim">Icing · every pick graded walk-forward</div>' +
+    '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px" class="small dim">' +
+      '<span><b style="color:#ff5d5d">##</b> = confidence grade</span>' +
+      '<span>ranked by real success rate</span>' +
+      '<span>tap a <b style="color:var(--text,#e8edf4)">name</b> — why</span>' +
+      '<span>tap a <b style="color:var(--text,#e8edf4)">card</b> — bet line</span>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button class="hbnav" data-n="-1" style="' + btn + '">‹ prev day</button>' +
+      (ds !== today ? '<button class="hbnav" data-n="0" style="' + btn + ';border-color:rgba(255,93,93,.5);color:#ff5d5d;font-weight:800">today</button>' : '') +
+      '<button class="hbnav" data-n="1" style="' + btn + '">next day ›</button>' +
+    '</div></div>';
+  const wire = function(){
+    el.querySelectorAll('.hbnav').forEach(function(b){ b.addEventListener('click', function(){ hbShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    el.querySelectorAll('.hbhead').forEach(function(hd){ hd.addEventListener('click', function(){ const k = hd.getAttribute('data-k'); HB.open[k] = !HB.open[k]; renderBets(); }); });
+    el.querySelectorAll('.hbname').forEach(function(nm){ nm.addEventListener('click', function(e){ e.stopPropagation(); const tok = nm.getAttribute('data-tok'); HB.why = HB.why === tok ? null : tok; renderBets(); }); });
+  };
+  if (!state.slate || state.slate.date !== ds){
+    el.innerHTML = h + '<div class="card muted small">' + (state.slateDate === ds ? 'Loading the slate… <span class="spin"></span>' : 'Use the arrows above to load this slate.') + '</div>';
+    wire(); return;
+  }
+  if (!state.slate.games.length){
+    el.innerHTML = h + '<div class="card muted small">No NHL games on this date.</div>';
+    wire(); return;
+  }
+  if (!Object.keys(state.projections).length){
+    el.innerHTML = h + '<div class="card muted small">No projections for this date yet — the model needs the season built (cloud sync runs automatically).</div>';
+    wire(); return;
+  }
+  const keys = Object.keys(HB_META).filter(function(k){ return !(HB_META[k].dk && (typeof window !== 'undefined' && window.__DK_OK === false)); });
+  const order = keys.map(function(k){ const r = catRate(k); return { k: k, pct: r ? r.pct : -1 }; }).sort(function(a, b){ return b.pct - a.pct; });
+  let any = false;
+  for (const ok2 of order){
+    const k = ok2.k, meta = HB_META[k];
+    const all = hbRows(k);
+    if (!all.length) continue;
+    any = true;
+    const th2 = lockTh(meta.th);
+    const locks = all.filter(function(r){ return r.grade >= th2; });
+    const rate = catRate(k);
+    const open = !!HB.open[k];
+    h += '<div class="card">' +
+      '<div class="hbhead" data-k="' + k + '" style="cursor:pointer">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+          '<div style="font-size:.76rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d">' + meta.tag + ' <span class="dim" style="font-weight:600;font-size:.66rem">' + (open ? '▴' : '▾') + '</span></div>' +
+          (rate ? '<span class="small dim">this bet type has hit <b style="color:var(--text,#e8edf4)">' + rate.pct + '%</b> of the time (' + rate.hit + '/' + rate.n + ')</span>' : '') + '</div>' +
+        '<div class="small dim" style="margin:2px 0 5px">Bet = ' + meta.what + ' · bet line: confidence <b style="color:var(--text,#e8edf4)">' + th2 + '+</b></div>' +
+      '</div>';
+    if (!open){
+      if (locks.length) h += locks.map(function(r){ return hbRowHtml(r, false); }).join('');
+      else h += '<div class="small dim" style="padding:3px 0">No picks clear the bet line — tap to see every candidate.</div>';
+    } else {
+      let lineDrawn = false;
+      h += all.map(function(r){
+        const q = r.grade >= th2;
+        let pre = '';
+        if (!q && !lineDrawn){
+          lineDrawn = true;
+          pre = '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed #ff5d5d"></div><span style="font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d;white-space:nowrap">BET LINE · ' + th2 + ' — bet above, skip below</span><div style="flex:1;border-top:2px dashed #ff5d5d"></div></div>';
+        }
+        return pre + hbRowHtml(r, !q);
+      }).join('');
+      if (!lineDrawn) h += '<div class="small dim" style="padding:3px 0 0">Everyone shown clears the bet line.</div>';
+    }
+    h += '</div>';
+  }
+  if (!any) h += '<div class="card muted small">Projections ran but produced no bet candidates for this date.</div>';
+  el.innerHTML = h;
+  wire();
 }
 function renderFacts(){
   const el = $id('tab-facts');
@@ -962,7 +1084,8 @@ async function runCronGrade(){
   pullSharedLockCfg().then(got => { if (got && state.tab === 'facts') renderFacts(); }).catch(() => {});
   loadCatRecords(); // per-category success rates for the bet lists
   renderGames();
-  // auto-load today's slate if we already have history; otherwise Facts builds it
+  renderBets();
+  // auto-load today's slate for the Bets front page (message if no history yet)
   if (allRecDates().length > 50) loadSlate(todayPT());
   // background: keep the record fresh + graded on open (seed → build → grade)
   setTimeout(() => { buildFactsBackground(); }, 1200);
