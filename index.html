@@ -1896,18 +1896,18 @@ async function openSettingsPanel(){
     '<div class="sect"><div class="row"><span class="lbl">The pull schedule</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
     '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once, 10\u201345 minutes before its start</b> \u2014 as close to gametime as possible for the freshest lines, while still leaving time to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
     '<p class="sub" style="margin:0 0 8px;color:var(--dim2)"><b>What each app pulls when its games hit the window:</b><br>' +
-      '\u2022 <b>Diamond IQ Premium</b> \u2014 player props per game (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks). One API call per game.<br>' +
+      '\u2022 <b>Diamond IQ Premium</b> \u2014 <b>player props</b> (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks), one call per game, <b>plus MLB game lines</b> (moneyline + total) in one bulk call per wave \u2014 those feed Game Predictions and Game Totals.<br>' +
       '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled (one call per game).<br>' +
       '\u2022 <b>The Key</b> \u2014 moneyline, spread and total in one bulk call per wave.<br>' +
       '\u2022 <b>Icing</b> \u2014 moneyline and total in one bulk call per wave.</p>' +
-    '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Diamond IQ Free and Pete\u2019s Picks never pull DraftKings (free tier / no motorsport odds).</p></div>' +
+    '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Just flip a league on or off \u2014 the schedule above handles the rest. Each game is pulled once, 10\u201345 minutes before it starts.</p>' +
     '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
     '<p class="sub" style="margin:0 0 12px">Master switch. Off = no DraftKings info (lines, edges, vs-DK records) is viewable in any app, for anyone.</p>' +
-    '<div class="row"><span class="lbl">Diamond IQ \u00b7 props</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
+    '<div class="row"><span class="lbl">Diamond IQ \u00b7 props and game lines</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.premiumCalls, dkStat.premiumAt) +
-    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201345 min before first pitch</b>, once per game.</div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201345 min before first pitch</b> (one call per game), plus that wave\u2019s moneyline + total in a single bulk call. Once per game.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nflCalls, dkStat.nflAt) +
     '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before kickoff</b>, once per game (a Sunday wave lands in one bulk call).</div>' +

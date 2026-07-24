@@ -925,12 +925,12 @@ async function fetchDKPropsAndPush(date,onProg){
     const rem=evRes.headers.get('x-requests-remaining');
     if(rem!=null)DK_CALLS=parseInt(rem,10);
     const events=await evRes.json();
-    const dateEvents=events.filter(ev=>{
-      if(!ev.commence_time)return false;
-      const d=new Date(ev.commence_time);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`===date;
-    }).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now+10*60*1000&&st<=now+45*60*1000;}); // pull window: 10–45 min before first pitch — closest to gametime with time left to bet
-    if(!dateEvents.length)return{ok:false,reason:'no MLB games entering the pull window (10\u201345 min before first pitch)'};
+    /* Compare in PACIFIC, not the runner's local zone. On a GitHub runner (UTC)
+       a 7pm PT first pitch is 02:00 UTC the NEXT day, so a local-date compare
+       silently dropped every evening game — which is most of the slate. */
+    const ptDay=iso=>{ try { return new Date(iso).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'}); } catch(e){ return ''; } };
+    const dateEvents=events.filter(ev=>ev.commence_time&&ptDay(ev.commence_time)===date).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now+10*60*1000&&st<=now+45*60*1000;}); // pull window: 10–45 min before first pitch — closest to gametime with time left to bet
+    if(!dateEvents.length)return{ok:false,reason:'no MLB games entering the pull window (10\u201345 min before first pitch)',windowGames:[]};
     // QUOTA SAVER: player props cost one API call PER GAME. Read what we've
     // already pulled for this date and fetch ONLY games we don't have yet, so
     // repeated scheduled runs never re-pull the same game. Each game's props
@@ -944,7 +944,7 @@ async function fetchDKPropsAndPush(date,onProg){
     if(!toFetch.length){
       ODDSP={date,events:existing};
       say('');
-      return{ok:true,count:0,skipped:skipped,calls:DK_CALLS,reason:'all '+dateEvents.length+' games already pulled today'};
+      return{ok:true,count:0,skipped:skipped,calls:DK_CALLS,windowGames:dateEvents,reason:'all '+dateEvents.length+' games already pulled today'};
     }
     const results=Object.assign({},existing); // full set (existing + new) for this session
     const newOnly={};                           // only newly-fetched games, for a merge write
@@ -963,7 +963,7 @@ async function fetchDKPropsAndPush(date,onProg){
         results[ev.id]=rec; newOnly[ev.id]=rec; fetched++;
       }catch(e){}
     }
-    if(fetched===0)return{ok:true,count:0,skipped:skipped,total:Object.keys(existing).length,calls:DK_CALLS,reason:'no new games fetched'};
+    if(fetched===0)return{ok:true,count:0,skipped:skipped,total:Object.keys(existing).length,calls:DK_CALLS,windowGames:dateEvents,reason:'no new games fetched'};
     // MERGE write: adds the new games to the events map without touching the rest
     if(FBH.ready){
       try{await withTO(FBH.db.collection('app_settings').doc('props_'+date).set({date,events:newOnly,fetchedAt:Date.now(),updatedAt:Date.now()},{merge:true}),10000);}catch(e){}
@@ -974,11 +974,46 @@ async function fetchDKPropsAndPush(date,onProg){
       try{await withTO(FBH.db.collection('app_settings').doc('dk_status').set({premiumCalls:DK_CALLS,premiumAt:Date.now()},{merge:true}),6000);}catch(e){}
     }
     say('');
-    return{ok:true,count:fetched,skipped:skipped,total:Object.keys(results).length,calls:DK_CALLS};
+    return{ok:true,count:fetched,skipped:skipped,total:Object.keys(results).length,calls:DK_CALLS,windowGames:dateEvents};
   }catch(e){
     say('');
     return{ok:false,reason:e.message};
   }
+}
+
+/* GAME LINES (moneyline + totals) — one bulk call covers every MLB game, so we
+   take it whenever a wave of games enters the pull window and store ONLY those
+   games' lines, leaving the rest for their own wave. Same rule as The Key and
+   Icing. Previously this lived exclusively in the FREE app behind a
+   "first person to open it after 9am" trigger: nobody opened it, nothing was
+   pulled, and Premium's Game Predictions and Game Totals had no DK line at all.
+   Writes the same app_settings/odds_{date} doc both apps already read. */
+async function fetchDKGameOddsAndPush(date,windowGames,onProg){
+  const say=onProg||(()=>{});
+  try{
+    if(!windowGames||!windowGames.length)return{ok:true,count:0,reason:'no games in the pull window'};
+    let existing=[];
+    if(FBH.ready){
+      try{const d=await withTO(FBH.db.collection('app_settings').doc('odds_'+date).get(),8000);if(d.exists)existing=(d.data().games)||[];}catch(e){}
+    }
+    const keyOf=g=>String(g.away_team||'')+'@'+String(g.home_team||'');
+    const have={};existing.forEach(g=>{have[keyOf(g)]=1;});
+    const want={};windowGames.forEach(ev=>{const k=keyOf(ev);if(!have[k])want[k]=1;});
+    if(!Object.keys(want).length)return{ok:true,count:0,reason:'window games already have lines'};
+    say('DK: game lines…');
+    const res=await fetch(`https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&bookmakers=draftkings&markets=h2h,totals&oddsFormat=american`);
+    const rem=res.headers.get('x-requests-remaining');
+    if(rem!=null)DK_CALLS=parseInt(rem,10);
+    if(!res.ok)throw new Error('odds API '+res.status);
+    const arr=await res.json();
+    const add=(arr||[]).filter(ev=>want[keyOf(ev)]);
+    if(!add.length)return{ok:true,count:0,reason:'no DK lines posted for those games yet'};
+    const games=existing.concat(add);
+    if(FBH.ready){
+      try{await withTO(FBH.db.collection('app_settings').doc('odds_'+date).set({date,games,fetchedAt:Date.now(),fetchedBy:'premium-cron'},{merge:true}),10000);}catch(e){}
+    }
+    return{ok:true,count:add.length,calls:DK_CALLS};
+  }catch(e){return{ok:false,reason:e.message};}
 }
 
 // First-login auto-pull rule (exactly as specified): pull ONLY when today's props
@@ -2982,8 +3017,10 @@ async function runLabPrem(){
         if(!on){window.__cronStatus='dk: skipped — auto pull is OFF in Board settings';}
         else{
           const r=await fetchDKPropsAndPush(todayStr(),m=>{window.__cronStatus='dk: '+String(m||'working…');});
-          if(r.ok)window.__cronStatus='dk: done — '+r.count+' games of props pulled ('+(r.calls??'?')+' API calls left)';
-          else window.__cronStatus='dk: nothing pulled — '+(r.reason||'unknown');
+          let gl={count:0};
+          try{ gl=await fetchDKGameOddsAndPush(todayStr(),r.windowGames||[],m=>{window.__cronStatus='dk: '+String(m||'working…');}); }catch(e){}
+          if(r.ok)window.__cronStatus='dk: done — '+r.count+' game(s) of props + '+(gl.count||0)+' game line(s) pulled ('+(r.calls??'?')+' API calls left)';
+          else window.__cronStatus='dk: nothing pulled — '+(r.reason||'unknown')+(gl.count?' (but '+gl.count+' game line(s) pulled)':'');
         }
       }catch(e){window.__cronStatus='dk: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;
