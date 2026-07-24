@@ -1736,14 +1736,18 @@ async function loadDay(){
     const mkCompact={};
     mkCompact.gm=MK.gm.map(r=>({id:r.id,name:r.name,team:r.team,opp:r.opp,pick:r.pick,
       hwp:r.hwp,conf:r.conf,eA:r.eA,eH:r.eH,total:r.total,
-      mlEdge:r.mlEdge,mlLean:r.mlLean,totLine:r.totLine,totLean:r.totLean,verified:!!r.verified}));
+      mlEdge:r.mlEdge,mlLean:r.mlLean,mlPrice:r.mlPrice??null,totLine:r.totLine,totLean:r.totLean,verified:!!r.verified}));
     Object.keys(MK).filter(m=>m!=='gm').forEach(m=>{
+      // pOver/pUnder ride along so cron regrades price units at REAL DK prices,
+      // and the run line keeps its spread for the member-facing side text.
       mkCompact[m]=MK[m].map(r=>({id:r.id,name:r.name,team:r.team,opp:r.opp,pit:r.pit||'',verified:!!r.verified,
         prob:r.prob!=null?Math.round(r.prob*1000)/1000:null,
         autoVerified:!!r.autoVerified,gradeFlag:!!r.gradeFlag,
         exp:r.exp!=null?Math.round(r.exp*100)/100:null,
         line:r.line??null,lean:r.lean??null,
-        edge:r.edge!=null?Math.round(r.edge*100)/100:null}));
+        edge:r.edge!=null?Math.round(r.edge*100)/100:null,
+        pOver:r.pOver??null,pUnder:r.pUnder??null,
+        ...(m==='gmR'?{hSpread:r.hSpread??null}:{})}));
     });
     await fbPush(date,{rows:compact,mk:mkCompact,ts:Date.now()});
     DAY_RESULTS=null;

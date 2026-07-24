@@ -391,7 +391,7 @@ var SITES = [
 ];
 
 /* Friendly market labels (internal keys -> what members read) */
-var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks', gm: 'Game predictions', tb: 'Total bases', gmT: 'Game totals (runs)' };
+var FABLE_LABELS = { hits: 'Batter hits', hr: 'Home runs', kP: 'Pitcher strikeouts', kB: 'Batter strikeouts', bbP: 'Pitcher walks', bbB: 'Batter walks', gm: 'Game predictions', tb: 'Total bases', gmT: 'Game totals (runs)', gmR: 'Run line', phA: 'Pitcher hits allowed' };
 var MIN_N = 20; // sample floor before a market can be the headline number
 
 /* Brand logos, embedded so the hub stays a single self-contained file. */
@@ -1151,13 +1151,14 @@ var PREM_KNOBS = [
   ['gmLock','Game predictions \u00b7 lock \u2265 %',true],
   ['kbLock','Batter K \u00b7 lock \u2265 %',true],['bbbLock','Batter BB \u00b7 lock \u2265 %',true],
   ['kEdge','Pitcher K \u00b7 edge \u2265',false],['bbEdge','Pitcher BB \u00b7 edge \u2265',false],
-  ['tbEdge','Total bases \u00b7 edge \u2265',false],['gtEdge','Game total (runs) \u00b7 edge \u2265',false]
+  ['tbEdge','Total bases \u00b7 edge \u2265',false],['gtEdge','Game total (runs) \u00b7 edge \u2265',false],
+  ['phEdge','Pitcher hits allowed \u00b7 edge \u2265',false],['grEdge','Run line \u00b7 edge \u2265',false]
 ];
 var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs'],['bb','Batter walks'],['bbat','Batter strikeouts'],['k','Pitcher strikeouts'],['pbb','Pitcher walks'],['hrLine','HR line'],['gnoHR','No-HR game'],['gmultiHR','Multi-HR game']];
-var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1']];
+var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1'],['cnt','Count tolerance \u00b1 (threes/steals/blocks)']];
 var ICE_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals \u00b7 lock \u2265 %'],['props','Goal/point scorers \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['goals','Total tolerance \u00b1'],['p1','1st-period tolerance \u00b1']];
 var NASCAR_KNOBS = [['winner','Race winner \u00b7 show \u2265 %'],['top5','Top 5 \u00b7 lock \u2265 %'],['top10','Top 10 \u00b7 lock \u2265 %'],['top15','Top 15 \u00b7 lock \u2265 %'],['h2h','Head-to-head \u00b7 lock \u2265 %']];
-var NFL_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['anytimeTd','Anytime TD \u00b7 lock \u2265 %'],['firstTd','First TD \u00b7 lock \u2265 %'],['lines','Totals/scores/team yds \u00b7 lock \u2265 %'],['yards','Player yards \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['yds','Yards tolerance \u00b1']];
+var NFL_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['anytimeTd','Anytime TD \u00b7 lock \u2265 %'],['firstTd','First TD \u00b7 lock \u2265 %'],['lines','Totals/scores/team yds \u00b7 lock \u2265 %'],['yards','Player yards/props \u00b7 lock \u2265 %'],['dk','ATS (DK spread) \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['yds','Yards tolerance \u00b1'],['cnt','Count tolerance \u00b1 (rec/pass TD)']];
 var PREVIEW_CACHE = {};
 async function listAllDocs(cfg, coll){
   var out = [], tok = '';
@@ -1175,10 +1176,10 @@ async function listAllDocs(cfg, coll){
 }
 function premiumRates(days, cfg){
   var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
-  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{h:0,n:0}, bbB:{h:0,n:0}, gm:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmT:{w:0,l:0} };
-  var actual = { kP:'pk', bbP:'pbb', tb:'tb', gmT:'__runs' };
-  var edgeKey = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmT:'gtEdge' };
-  var actOf = function(m, o){ if (!o) return null; if (m === 'gmT') return (o.hs != null && o.as != null) ? o.hs + o.as : null; return o[actual[m]]; };
+  var agg = { hits:{h:0,n:0}, hr:{h:0,n:0}, kB:{h:0,n:0}, bbB:{h:0,n:0}, gm:{w:0,l:0}, kP:{w:0,l:0}, bbP:{w:0,l:0}, tb:{w:0,l:0}, gmT:{w:0,l:0}, phA:{w:0,l:0}, gmR:{w:0,l:0} };
+  var actual = { kP:'pk', bbP:'pbb', tb:'tb', phA:'ph', gmT:'__runs', gmR:'__margin' };
+  var edgeKey = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmT:'gtEdge', phA:'phEdge', gmR:'grEdge' };
+  var actOf = function(m, o){ if (!o) return null; if (m === 'gmT') return (o.hs != null && o.as != null) ? o.hs + o.as : null; if (m === 'gmR') return (o.hs != null && o.as != null) ? o.hs - o.as : null; return o[actual[m]]; };
   var p1 = function(r){ return r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null); };
   days.forEach(function(day){
     var res = day.data.results; if (!res) return;
@@ -1255,8 +1256,8 @@ function freeRates(days, locks){
 // The Key: units [{cat, metric, adelta, hit}] per slate doc (nba_accuracy/{date},
 // stored as {data:<json>}). Mirrors nba.html unitQualifies/unitHit exactly.
 function nbaRates(units, th, tol){
-  var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' };
-  var TOLK = { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' };
+  var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', playerThr:'props', playerStl:'props', playerBlk:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' };
+  var TOLK = { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat', playerThr:'cnt', playerStl:'cnt', playerBlk:'cnt' };
   var agg = { allLocks:{h:0,n:0} };
   Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
   units.forEach(function(u){
@@ -1271,7 +1272,7 @@ function nbaRates(units, th, tol){
 // IceLine: units [{cat, metric, adelta, hit}] per date doc (nhl_accuracy/{date},
 // stored as {data:<json>}). Mirrors hockey.html unitQualifies/unitHit exactly.
 function iceRates(units, th, tol){
-  var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk' };
+  var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk', dkPuck:'dk' };
   var TOLK = { total:'goals', p1:'p1' };
   var agg = { allLocks:{h:0,n:0} };
   Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
@@ -1301,8 +1302,8 @@ function nascarRates(units, th){
 // Mirrors nfl.html unitQualifies/unitHit exactly.
 function nflRates(units, th, tol){
   var TH = { winner:'winner', total:'lines', awayPts:'lines', homePts:'lines', teamPass:'lines', teamRush:'lines',
-             playerPass:'yards', playerRush:'yards', playerRec:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd' };
-  var TOLK = { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds' };
+             playerPass:'yards', playerRush:'yards', playerRec:'yards', playerRecCnt:'yards', playerPassTd:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd', dkSpread:'dk' };
+  var TOLK = { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds', playerRecCnt:'cnt', playerPassTd:'cnt' };
   var agg = { allLocks:{h:0,n:0} };
   Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
   units.forEach(function(u){
@@ -1373,9 +1374,9 @@ var LAB_APPS = [
   { ns: 'mlb', file: 'premium.html', name: 'Diamond IQ Premium (MLB)', kind: 'calib', proj: 'ADMIN', reportPath: 'fable_settings/labReport', cfgPath: 'fable_settings/lab_cfg', shadowPath: 'fable_settings/labShadow',
     cats: { hits: 'Batter hits', hr: 'Home runs', kB: 'Batter K', bbB: 'Batter BB', gm: 'Game winner' } },
   { ns: 'nfl', file: 'nfl.html', name: 'Gridline (NFL)', kind: 'calib', proj: 'NFLP', reportPath: 'accuracy/labReport', cfgPath: 'accuracy/lab_cfg', shadowPath: 'accuracy/labShadow',
-    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD' } },
+    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)', playerRecCnt: 'Receptions', playerPassTd: 'QB pass TDs' } },
   { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)', kind: 'weights', proj: 'NFLP', reportPath: 'nba/labReport', cfgPath: 'nba/lab_cfg', shadowPath: 'nba/labShadow',
-    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Player rebounds', playerAst: 'Player assists' } },
+    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Player rebounds', playerAst: 'Player assists', playerThr: 'Player threes', playerStl: 'Player steals', playerBlk: 'Player blocks' } },
   { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)', kind: 'weights', proj: 'NFLP', reportPath: 'nhl/labReport', cfgPath: 'nhl/lab_cfg', shadowPath: 'nhl/labShadow',
     cats: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorers', point: 'Point scorers' } }
 ];
@@ -1742,10 +1743,10 @@ async function openSettingsPanel(){
     try { nascarCfg = JSON.parse(nascarRaw.fields.data.stringValue); } catch (e) {}
   }
 
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gtEdge: 0.6 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gtEdge: 0.6, phEdge: 0.9, grEdge: 0.75 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
-  var NBA_TH_DEF = { winner: 60, lines: 0, props: 0, dk: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3 };
-  var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
+  var NBA_TH_DEF = { winner: 60, lines: 0, props: 0, dk: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3, cnt: 1 };
+  var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0, dk: 55 }, NFL_TOL_DEF = { pts: 3, yds: 10, cnt: 1 };
   var ICE_TH_DEF = { winner: 58, lines: 0, props: 40, dk: 0 }, ICE_TOL_DEF = { goals: 1, p1: 1 };
   var NASCAR_TH_DEF = { winner: 0, top5: 45, top10: 58, top15: 68, h2h: 60 };
   var premCfg = {}; Object.keys(PREM_DEF).forEach(function(k){ premCfg[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
@@ -1896,10 +1897,10 @@ async function openSettingsPanel(){
     '<div class="sect"><div class="row"><span class="lbl">The pull schedule</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
     '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once, 10\u201345 minutes before its start</b> \u2014 as close to gametime as possible for the freshest lines, while still leaving time to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
     '<p class="sub" style="margin:0 0 8px;color:var(--dim2)"><b>What each app pulls when its games hit the window:</b><br>' +
-      '\u2022 <b>Diamond IQ Premium</b> \u2014 <b>player props</b> (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks), one call per game, <b>plus MLB game lines</b> (moneyline + total) in one bulk call per wave \u2014 those feed Game Predictions and Game Totals.<br>' +
+      '\u2022 <b>Diamond IQ Premium</b> \u2014 <b>player props</b> (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks), one call per game, <b>plus MLB game lines</b> (moneyline, total + run-line spread) in one bulk call per wave \u2014 those feed Game Predictions, Game Totals and the Run Line.<br>' +
       '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled (one call per game).<br>' +
       '\u2022 <b>The Key</b> \u2014 moneyline, spread and total in one bulk call per wave.<br>' +
-      '\u2022 <b>Icing</b> \u2014 moneyline and total in one bulk call per wave.</p>' +
+      '\u2022 <b>Icing</b> \u2014 moneyline, total and puck-line spread in one bulk call per wave.</p>' +
     '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Just flip a league on or off \u2014 the schedule above handles the rest. Each game is pulled once, 10\u201345 minutes before it starts.</p>' +
@@ -1907,7 +1908,7 @@ async function openSettingsPanel(){
     '<p class="sub" style="margin:0 0 12px">Master switch. Off = no DraftKings info (lines, edges, vs-DK records) is viewable in any app, for anyone.</p>' +
     '<div class="row"><span class="lbl">Diamond IQ \u00b7 props and game lines</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.premiumCalls, dkStat.premiumAt) +
-    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201345 min before first pitch</b> (one call per game), plus that wave\u2019s moneyline + total in a single bulk call. Once per game.</div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201345 min before first pitch</b> (one call per game), plus that wave\u2019s moneyline, total + run-line spread in a single bulk call. Once per game.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nflCalls, dkStat.nflAt) +
     '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before kickoff</b>, once per game (a Sunday wave lands in one bulk call).</div>' +
@@ -2139,7 +2140,7 @@ async function openSettingsPanel(){
     if (!prop) throw new Error('Every field needs a number \u2265 0.');
     await ensurePrem();
     var cur = premiumRates(PREVIEW_CACHE.prem, premCfg), nxt = premiumRates(PREVIEW_CACHE.prem, prop);
-    var L = { hits:'Batter hits', hr:'Home runs', gm:'Game predictions', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases' };
+    var L = { hits:'Batter hits', hr:'Home runs', gm:'Game predictions', kB:'Batter K', bbB:'Batter BB', kP:'Pitcher K', bbP:'Pitcher BB', tb:'Total bases', gmT:'Game totals', phA:'Pitcher hits allowed', gmR:'Run line' };
     return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.prem.length + ' stored days)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -2155,18 +2156,18 @@ async function openSettingsPanel(){
   hookPreview('b-preview', 'b-prevout', async function(){
     var all = readNums(NBA_KNOBS, 'bk-');
     if (!all) throw new Error('Every field needs a number \u2265 0.');
-    var sp = split2(all, ['pts','stat']);
+    var sp = split2(all, ['pts','stat','cnt']);
     await ensureNBA();
     if (!PREVIEW_CACHE.nba.units.length) throw new Error('No stored picks yet — the next NBA grading run uploads them (every 2h). Try again after it runs.');
     var cur = nbaRates(PREVIEW_CACHE.nba.units, nbaTh, nbaTol), nxt = nbaRates(PREVIEW_CACHE.nba.units, sp.th, sp.tol);
-    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', teamPts:'Team points', playerPts:'Player points', playerReb:'Player rebounds', playerAst:'Player assists', dkML:'vs DK ML value', dkTotal:'vs DK Total', dkSpread:'vs DK Spread' };
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', teamPts:'Team points', playerPts:'Player points', playerReb:'Player rebounds', playerAst:'Player assists', playerThr:'Player threes', playerStl:'Player steals', playerBlk:'Player blocks', dkML:'vs DK ML value', dkTotal:'vs DK Total', dkSpread:'vs DK Spread' };
     return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.nba.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
   hookPreview('g-preview', 'g-prevout', async function(){
     var all = readNums(NFL_KNOBS, 'gk-');
     if (!all) throw new Error('Every field needs a number \u2265 0.');
-    var sp = split2(all, ['pts','yds']);
+    var sp = split2(all, ['pts','yds','cnt']);
     if (!PREVIEW_CACHE.nfl){
       var docs = await listAllDocs(NFLP, 'accuracy');
       var units = [];
@@ -2180,7 +2181,7 @@ async function openSettingsPanel(){
     }
     if (!PREVIEW_CACHE.nfl.units.length) throw new Error('No stored picks yet — the next Gridline grading run uploads them (every 6h). Try again after it runs.');
     var cur = nflRates(PREVIEW_CACHE.nfl.units, nflTh, nflTol), nxt = nflRates(PREVIEW_CACHE.nfl.units, sp.th, sp.tol);
-    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', awayPts:'Away score', homePts:'Home score', teamPass:'Team pass yds', teamRush:'Team rush yds', playerPass:'Player pass yds', playerRush:'Player rush yds', playerRec:'Player rec yds', anytimeTd:'Anytime TD', firstTd:'First TD' };
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', awayPts:'Away score', homePts:'Home score', teamPass:'Team pass yds', teamRush:'Team rush yds', playerPass:'Player pass yds', playerRush:'Player rush yds', playerRec:'Player rec yds', playerRecCnt:'Receptions', playerPassTd:'QB pass TDs', anytimeTd:'Anytime TD', firstTd:'First TD', dkSpread:'ATS (DK spread)' };
     return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.nfl.weeks + ' stored weeks)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -2192,7 +2193,7 @@ async function openSettingsPanel(){
     await ensureICE();
     if (!PREVIEW_CACHE.ice.units.length) throw new Error('No stored picks yet — the next Icing grading run uploads them (every 2h). Try again after it runs.');
     var cur = iceRates(PREVIEW_CACHE.ice.units, iceTh, iceTol), nxt = iceRates(PREVIEW_CACHE.ice.units, sp.th, sp.tol);
-    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers', dkML:'vs DK ML value', dkTotal:'vs DK Total' };
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', p1:'1st-period total', goal:'Goal scorers', point:'Point scorers', dkML:'vs DK ML value', dkTotal:'vs DK Total', dkPuck:'vs DK Puck line' };
     return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.ice.days + ' stored slates)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -2209,10 +2210,10 @@ async function openSettingsPanel(){
 
   hookSolve('pk-', PREM_KNOBS, [], async function(target){
     var days = await ensurePrem();
-    var pools = { lock: [], hrLock: [], gmLock: [], kbLock: [], bbbLock: [], kEdge: [], bbEdge: [], tbEdge: [], gtEdge: [] };
-    var edgeOf = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmT:'gtEdge' };
-    var actual = { kP:'pk', bbP:'pbb', tb:'tb', gmT:'__runs' };
-    var actOf = function(m, o){ if (!o) return null; if (m === 'gmT') return (o.hs != null && o.as != null) ? o.hs + o.as : null; return o[actual[m]]; };
+    var pools = { lock: [], hrLock: [], gmLock: [], kbLock: [], bbbLock: [], kEdge: [], bbEdge: [], tbEdge: [], gtEdge: [], phEdge: [], grEdge: [] };
+    var edgeOf = { kP:'kEdge', bbP:'bbEdge', tb:'tbEdge', gmT:'gtEdge', phA:'phEdge', gmR:'grEdge' };
+    var actual = { kP:'pk', bbP:'pbb', tb:'tb', phA:'ph', gmT:'__runs', gmR:'__margin' };
+    var actOf = function(m, o){ if (!o) return null; if (m === 'gmT') return (o.hs != null && o.as != null) ? o.hs + o.as : null; if (m === 'gmR') return (o.hs != null && o.as != null) ? o.hs - o.as : null; return o[actual[m]]; };
     var p1 = function(r){ return r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null); };
     var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
     days.forEach(function(day){
@@ -2252,7 +2253,7 @@ async function openSettingsPanel(){
         });
       });
     });
-    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', gmLock:'Game predictions lock', kbLock:'Batter K lock', bbbLock:'Batter BB lock', kEdge:'Pitcher K edge', bbEdge:'Pitcher BB edge', tbEdge:'Total bases edge', gtEdge:'Game total edge' };
+    var L = { lock:'Batter hits lock', hrLock:'Home runs lock', gmLock:'Game predictions lock', kbLock:'Batter K lock', bbbLock:'Batter BB lock', kEdge:'Pitcher K edge', bbEdge:'Pitcher BB edge', tbEdge:'Total bases edge', gtEdge:'Game total edge', phEdge:'Pitcher hits allowed edge', grEdge:'Run line edge' };
     var f3 = function(v){ return (Math.round(v * 1000) / 1000); };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '%, set each knob to \u2265 the value shown</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k], target), f3); }).join('');
@@ -2280,10 +2281,10 @@ async function openSettingsPanel(){
   });
   hookSolve('bk-', NBA_KNOBS, ['pts','stat'], async function(target){
     await ensureNBA();
-    var tolVals = { pts: parseFloat(box.querySelector('#bk-pts').value) || 4, stat: parseFloat(box.querySelector('#bk-stat').value) || 3 };
+    var tolVals = { pts: parseFloat(box.querySelector('#bk-pts').value) || 4, stat: parseFloat(box.querySelector('#bk-stat').value) || 3, cnt: parseFloat(box.querySelector('#bk-cnt').value) || 1 };
     var pools = unitPools(PREVIEW_CACHE.nba.units,
-      { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' },
-      { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' },
+      { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', playerThr:'props', playerStl:'props', playerBlk:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' },
+      { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat', playerThr:'cnt', playerStl:'cnt', playerBlk:'cnt' },
       tolVals, 'metric', 'cat', 'adelta', 'hit');
     var L = { winner:'Winner lock %', lines:'Totals/team pts lock %', props:'Player props lock %', dk:'vs DK bets lock %' };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
@@ -2291,13 +2292,13 @@ async function openSettingsPanel(){
   });
   hookSolve('gk-', NFL_KNOBS, ['pts','yds'], async function(target){
     await ensureNFLC();
-    var tolVals = { pts: parseFloat(box.querySelector('#gk-pts').value) || 3, yds: parseFloat(box.querySelector('#gk-yds').value) || 10 };
+    var tolVals = { pts: parseFloat(box.querySelector('#gk-pts').value) || 3, yds: parseFloat(box.querySelector('#gk-yds').value) || 10, cnt: parseFloat(box.querySelector('#gk-cnt').value) || 1 };
     var pools = unitPools(PREVIEW_CACHE.nfl.units,
       { winner:'winner', total:'lines', awayPts:'lines', homePts:'lines', teamPass:'lines', teamRush:'lines',
-        playerPass:'yards', playerRush:'yards', playerRec:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd' },
-      { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds' },
+        playerPass:'yards', playerRush:'yards', playerRec:'yards', playerRecCnt:'yards', playerPassTd:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd', dkSpread:'dk' },
+      { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds', playerRecCnt:'cnt', playerPassTd:'cnt' },
       tolVals, 'm', 'c', 'a', 'h');
-    var L = { winner:'Winner lock %', lines:'Totals/scores/team yds lock %', yards:'Player yards lock %', anytimeTd:'Anytime TD lock %', firstTd:'First TD lock %' };
+    var L = { winner:'Winner lock %', lines:'Totals/scores/team yds lock %', yards:'Player yards/props lock %', dk:'ATS (DK spread) lock %', anytimeTd:'Anytime TD lock %', firstTd:'First TD lock %' };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
   });
@@ -2305,7 +2306,7 @@ async function openSettingsPanel(){
     await ensureICE();
     var tolVals = { goals: parseFloat(box.querySelector('#ik-goals').value) || 1, p1: parseFloat(box.querySelector('#ik-p1').value) || 1 };
     var pools = unitPools(PREVIEW_CACHE.ice.units,
-      { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk' },
+      { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk', dkPuck:'dk' },
       { total:'goals', p1:'p1' },
       tolVals, 'metric', 'cat', 'adelta', 'hit');
     var L = { winner:'Winner lock %', lines:'Totals lock %', props:'Goal/point scorers lock %', dk:'vs DK bets lock %' };
@@ -2350,13 +2351,13 @@ async function openSettingsPanel(){
       AD_CACHE = normalizeAd(adSave); // reflect the new copy immediately
       await adminSetDoc('fable_settings', 'config', premOut);
       await adminSetDoc('app_settings', 'locks', freeOut);
-      var nbaSp = split2(nbaOut, ['pts','stat']);
+      var nbaSp = split2(nbaOut, ['pts','stat','cnt']);
       var nbaPayload = { lockThresholds: nbaSp.th, hitTol: nbaSp.tol };
       await fetch(FS + NFLP.p + '/databases/(default)/documents/nba/lockcfg?key=' + NFLP.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify(nbaPayload) }, t: { stringValue: new Date().toISOString() } } })
       }).then(function(r){ if (!r.ok) throw new Error('NBA config save failed (HTTP ' + r.status + ')'); });
-      var nflSp = split2(nflOut, ['pts','yds']);
+      var nflSp = split2(nflOut, ['pts','yds','cnt']);
       await fsPatch(NFLP, 'accuracy/config_locks', { lockThresholds: nflSp.th, hitTol: nflSp.tol, updatedAt: Date.now() });
       var iceSp = split2(iceOut, ['goals','p1']);
       await fetch(FS + NFLP.p + '/databases/(default)/documents/nhl/lockcfg?key=' + NFLP.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
@@ -2368,8 +2369,8 @@ async function openSettingsPanel(){
         body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify({ lockThresholds: nascarOut }) }, t: { stringValue: new Date().toISOString() } } })
       }).then(function(r){ if (!r.ok) throw new Error('NASCAR config save failed (HTTP ' + r.status + ')'); });
       premCfg = premOut; freeCfg = freeOut;
-      var nb2 = split2(nbaOut, ['pts','stat']); nbaTh = nb2.th; nbaTol = nb2.tol;
-      var nf2 = split2(nflOut, ['pts','yds']); nflTh = nf2.th; nflTol = nf2.tol;
+      var nb2 = split2(nbaOut, ['pts','stat','cnt']); nbaTh = nb2.th; nbaTol = nb2.tol;
+      var nf2 = split2(nflOut, ['pts','yds','cnt']); nflTh = nf2.th; nflTol = nf2.tol;
       var ic2 = split2(iceOut, ['goals','p1']); iceTh = ic2.th; iceTol = ic2.tol;
       nascarTh = nascarOut;
       // Re-evaluate this device against the list just saved, so member/access
@@ -2441,7 +2442,7 @@ async function slEnsure(key, coll, cfg, unitsField){
 async function slConfigs(){
   var premRaw = await fsGetRaw(ADMIN, 'fable_settings/config');
   var premCfgRaw = premRaw ? fsFields(premRaw.fields || {}) : null;
-  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gtEdge: 0.6 };
+  var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gtEdge: 0.6, phEdge: 0.9, grEdge: 0.75 };
   var prem = {}; Object.keys(PREM_DEF).forEach(function(k){ prem[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
   var readJson = async function(path){
     var raw = await fsGetRaw(NFLP, path);
@@ -2454,18 +2455,18 @@ async function slConfigs(){
   return {
     prem: prem,
     nbaTh: Object.assign({ winner: 60, lines: 0, props: 0, dk: 0 }, (nbaCfg && nbaCfg.lockThresholds) || {}),
-    nbaTol: Object.assign({ pts: 4, stat: 3 }, (nbaCfg && nbaCfg.hitTol) || {}),
+    nbaTol: Object.assign({ pts: 4, stat: 3, cnt: 1 }, (nbaCfg && nbaCfg.hitTol) || {}),
     iceTh: Object.assign({ winner: 58, lines: 0, props: 40, dk: 0 }, (iceCfg && iceCfg.lockThresholds) || {}),
     iceTol: Object.assign({ goals: 1, p1: 1 }, (iceCfg && iceCfg.hitTol) || {}),
-    nflTh: Object.assign({ winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0 }, (nflCfg && nflCfg.lockThresholds) || {}),
-    nflTol: Object.assign({ pts: 3, yds: 10 }, (nflCfg && nflCfg.hitTol) || {}),
+    nflTh: Object.assign({ winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0, dk: 55 }, (nflCfg && nflCfg.lockThresholds) || {}),
+    nflTol: Object.assign({ pts: 3, yds: 10, cnt: 1 }, (nflCfg && nflCfg.hitTol) || {}),
     nascarTh: Object.assign({ winner: 0, top5: 45, top10: 58, top15: 68, h2h: 60 }, (nascarCfg && nascarCfg.lockThresholds) || {})
   };
 }
 async function slPremiumLane(cfgs){
   var days = await slEnsure('prem', 'fable_hits', ADMIN, null);
   var qual = slQualified(premiumRates(days, cfgs.prem));
-  var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES', gmT: 'GAME TOTALS' };
+  var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES', gmT: 'GAME TOTALS', phA: 'PITCHER HITS', gmR: 'RUN LINE' };
   var today = SL_DATE || slTodayPT();
   var raw = await fsGetRaw(ADMIN, 'fable_hits/' + today);
   var day = raw ? fsFields(raw.fields || {}) : null;
@@ -2504,7 +2505,7 @@ async function slPremiumLane(cfgs){
         }
       });
     });
-    var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmT: 'gtEdge' };
+    var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmT: 'gtEdge', phA: 'phEdge', gmR: 'grEdge' };
     Object.keys(edgeKey).forEach(function(m){
       if (!qual[m]) return;
       (mk[m] || []).forEach(function(r){
@@ -2513,9 +2514,16 @@ async function slPremiumLane(cfgs){
         var lean = d >= th ? 'OVER' : d <= -th ? 'UNDER' : null;
         if (!lean) return;
         var oe = res ? res[r.id] : null;
-        var act = oe ? (m === 'gmT' ? (oe.hs != null && oe.as != null ? oe.hs + oe.as : null) : oe[{ kP: 'pk', bbP: 'pbb', tb: 'tb' }[m]]) : null;
+        var act = oe ? (m === 'gmT' ? (oe.hs != null && oe.as != null ? oe.hs + oe.as : null)
+          : m === 'gmR' ? (oe.hs != null && oe.as != null ? oe.hs - oe.as : null)
+          : oe[{ kP: 'pk', bbP: 'pbb', tb: 'tb', phA: 'ph' }[m]]) : null;
         var eh = act == null || act === r.line ? null : (act > r.line ? lean === 'OVER' : lean === 'UNDER');
-        push(m, r.name + ' (' + (r.team || '') + ') — ' + lean + ' ' + r.line, 'exp ' + r.exp, eh);
+        var desc = r.name + ' (' + (r.team || '') + ') — ' + lean + ' ' + r.line;
+        if (m === 'gmR' && r.hSpread != null){
+          var sgn = function(v){ return (v > 0 ? '+' : '') + v; };
+          desc = (lean === 'OVER' ? (r.team || '') + ' ' + sgn(r.hSpread) : (r.opp || '') + ' ' + sgn(-r.hSpread)) + ' covers the run line (' + r.name + ')';
+        }
+        push(m, desc, 'exp ' + r.exp, eh);
       });
     });
   }
@@ -2601,20 +2609,20 @@ async function refreshSuperLocks(force){
       slPremiumLane(cfgs),
       slUnitsLane(cfgs, { cacheKey: 'nba', coll: 'nba_accuracy', todayDoc: 'nba/today', name: 'The Key', key: 'nba',
         rates: function(u){ return nbaRates(u, cfgs.nbaTh, cfgs.nbaTol); },
-        qualifies: function(u){ var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.nbaTh[TH[u.cat]]; },
-        hitOf: function(u){ var TOLK = { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' }; var tk = TOLK[u.cat]; return (tk && u.adelta != null) ? (u.adelta <= cfgs.nbaTol[tk]) : !!u.hit; },
-        labels: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Rebounds', playerAst: 'Assists', dkML: 'vs DK ML', dkTotal: 'vs DK total', dkSpread: 'vs DK spread' },
+        qualifies: function(u){ var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', playerThr:'props', playerStl:'props', playerBlk:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.nbaTh[TH[u.cat]]; },
+        hitOf: function(u){ var TOLK = { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat', playerThr:'cnt', playerStl:'cnt', playerBlk:'cnt' }; var tk = TOLK[u.cat]; return (tk && u.adelta != null) ? (u.adelta <= cfgs.nbaTol[tk]) : !!u.hit; },
+        labels: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Rebounds', playerAst: 'Assists', playerThr: 'Threes', playerStl: 'Steals', playerBlk: 'Blocks', dkML: 'vs DK ML', dkTotal: 'vs DK total', dkSpread: 'vs DK spread' },
         season: 'NBA runs Oct–Jun' }),
       slUnitsLane(cfgs, { cacheKey: 'ice', coll: 'nhl_accuracy', todayDoc: 'nhl/today', name: 'Icing', key: 'hockey',
         rates: function(u){ return iceRates(u, cfgs.iceTh, cfgs.iceTol); },
-        qualifies: function(u){ var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.iceTh[TH[u.cat]]; },
+        qualifies: function(u){ var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk', dkPuck:'dk' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.iceTh[TH[u.cat]]; },
         hitOf: function(u){ var TOLK = { total:'goals', p1:'p1' }; var tk = TOLK[u.cat]; return (tk && u.adelta != null) ? (u.adelta <= cfgs.iceTol[tk]) : !!u.hit; },
-        labels: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorer', point: 'Point scorer', dkML: 'vs DK ML', dkTotal: 'vs DK total' },
+        labels: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorer', point: 'Point scorer', dkML: 'vs DK ML', dkTotal: 'vs DK total', dkPuck: 'vs DK puck line' },
         season: 'NHL runs Oct–Jun' }),
       slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', key: 'nfl', unitsField: 'units', maxAgeDays: 6,
         rates: function(u){ return nflRates(u, cfgs.nflTh, cfgs.nflTol); },
         qualifies: function(){ return false; }, hitOf: function(){ return null; },
-        labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', anytimeTd: 'Anytime TD', firstTd: 'First TD' },
+        labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', playerRecCnt: 'Receptions', playerPassTd: 'Pass TDs', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)' },
         season: 'NFL runs Sep–Feb' }),
       slUnitsLane(cfgs, { cacheKey: 'nascar', coll: 'nascar_accuracy', todayDoc: 'nascar/today', name: "Pete's Picks", key: 'nascar', maxAgeDays: 6,
         rates: function(u){ return nascarRates(u, cfgs.nascarTh); },
