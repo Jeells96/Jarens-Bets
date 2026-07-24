@@ -1109,8 +1109,8 @@ body{font-size:16px}
 </div>
 
 <div class="tabs">
-  <button class="tab active" data-tab="games">Today</button>
-  <button class="tab" data-tab="gamebets">Bets</button>
+  <button class="tab active" data-tab="gamebets">Bets</button>
+  <button class="tab" data-tab="games">Today</button>
   <button class="tab" data-tab="facts">Results</button>
 </div>
 
@@ -1529,7 +1529,7 @@ const state = {
   weather: {},           // eventId -> { wind, precip, dome, summary }
   loading: false,
   loaded: false,
-  activeTab: 'games',
+  activeTab: 'gamebets',
   openGameId: null,
   openSections: {},
   expandedRows: {},
@@ -4803,156 +4803,184 @@ function gatherAllProps() {
 // Game Bets tab — TD predictions (anytime locks + first TD) with results,
 // plus winner accuracy and the model error summary (formerly "Model").
 // ============================================================================
+/* ═══ BETS FRONT PAGE — Pete's Picks format ═══════════════════════════════
+   One card per bet type, ordered by its REAL all-time success rate. Collapsed
+   card = qualifying locks; tap the card = every candidate with a hard BET
+   LINE divider. Tap a NAME = why. Red numbers are confidence grades. */
+const GB = { open: {}, why: null };
+const GB_META = {
+  winner:   { tag: 'WINNER',      what: 'our pick wins the game', th: 'winner', rateKeys: ['winner'] },
+  total:    { tag: 'GAME TOTAL',  what: 'the combined score lands within the tolerance of our number', th: 'lines', rateKeys: ['total'] },
+  teamPts:  { tag: 'TEAM POINTS', what: 'that team’s points land within the tolerance of our number', th: 'lines', rateKeys: ['awayPts', 'homePts'] },
+  teamYds:  { tag: 'TEAM YARDS',  what: 'that team’s pass/rush yards land within the tolerance', th: 'lines', rateKeys: ['teamPass', 'teamRush'] },
+  playerYds:{ tag: 'PLAYER YARDS', what: 'the player’s yards land within the tolerance of our projection', th: 'yards', rateKeys: ['playerPass', 'playerRush', 'playerRec'] },
+  anytimeTd:{ tag: 'ANYTIME TD',  what: 'the player scores a touchdown', th: 'anytimeTd', rateKeys: ['anytimeTd'] },
+  firstTd:  { tag: 'FIRST TD',    what: 'the player scores the game’s first touchdown', th: 'firstTd', rateKeys: ['firstTd'] }
+};
+function gbRate(keys) {
+  const cats = state.fsAccuracy && state.fsAccuracy.cats;
+  if (!cats) return null;
+  let h = 0, n = 0;
+  for (const k of keys) { const c = cats[k]; if (c) { h += c.hit || 0; n += c.n || 0; } }
+  return n ? { pct: Math.round(100 * h / n), h, n } : null;
+}
+function gbMark(ok) { return ok == null ? '' : (ok ? ' <span style="color:var(--green,#3ddc84);font-weight:800">✓</span>' : ' <span style="color:#ff5d73;font-weight:800">✗</span>'); }
+function gbName(name, tok) { return '<b class="gbname" data-tok="' + tok + '" style="cursor:pointer;border-bottom:1px dotted rgba(255,255,255,.35)">' + escapeHtml(name) + '</b>'; }
+function gbRows(key) {
+  const rows = [];
+  const push = (tok, html, sub, grade, mark, why) => rows.push({ tok, html, sub, grade, mark, why });
+  if (key === 'playerYds') {
+    for (const r of gatherAllProps()) {
+      const tok = 'playerYds|' + r.name + '|' + r.stat + '|' + r.gameId;
+      push(tok, gbName(r.name, tok) + ' — ' + escapeHtml(r.statType) + ' ' + Math.round(r.projYds) + ' ±' + hitTol('yds'),
+        r.abbr + ' vs ' + r.oppAbbr + (r.inj === 'questionable' ? ' · Q' : ''), r.conf,
+        r.completed ? r.hit : null,
+        'Projected <b>' + Math.round(r.projYds) + ' ' + escapeHtml(r.statType) + '</b> from usage volume, matchup and recent form' + (r.inj === 'questionable' ? ' (damped — listed questionable)' : '') + '.' + (r.actual != null ? ' Actual: ' + r.actual + ' (' + fmtSigned(r.delta, 0) + ').' : ''));
+    }
+  } else {
+    for (const g of state.games) {
+      const proj = projectGame(g);
+      if (!proj) continue;
+      const gm = g.away.abbr + '@' + g.home.abbr;
+      if (key === 'winner') {
+        const pickProb = Math.round(Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100);
+        const pickAb = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
+        let mark = null;
+        if (g.completed && g.home.score != null) {
+          const aw = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
+          if (aw !== 'tie') mark = proj.projWinner === aw;
+        }
+        const tok = 'winner|' + g.id;
+        push(tok, gbName(gm, tok) + ' — winner <b>' + pickAb + '</b>', '', pickProb, mark,
+          'Model win probability for <b>' + pickAb + '</b>: ' + pickProb + '. Built from team offense/defense ratings, home-field and rest — open the game on the Today tab for the full breakdown.');
+      } else if (key === 'total') {
+        const tok = 'total|' + g.id;
+        let mark = null;
+        if (g.completed && g.home.score != null) mark = Math.abs((g.away.score + g.home.score) - proj.total) <= hitTol('pts');
+        push(tok, gbName(gm, tok) + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), '', proj.conf, mark,
+          'Projected combined score <b>' + proj.total.toFixed(1) + '</b>; the bet hits when the real total lands within ±' + hitTol('pts') + '. Grade = model confidence in this game’s script.');
+      } else if (key === 'teamPts') {
+        for (const side of ['away', 'home']) {
+          const ab = g[side].abbr, pts = side === 'away' ? proj.awayPts : proj.homePts;
+          const tok = 'teamPts|' + g.id + '|' + side;
+          let mark = null;
+          if (g.completed && g[side].score != null) mark = Math.abs(g[side].score - pts) <= hitTol('pts');
+          push(tok, gbName(ab, tok) + ' — team points ' + pts.toFixed(1) + ' ±' + hitTol('pts'), gm, proj.conf, mark,
+            'Projected <b>' + pts.toFixed(1) + '</b> points for ' + ab + ' from the same game script as the total.');
+        }
+      } else if (key === 'teamYds') {
+        for (const item of [[g.away.abbr, proj.awayPassYds, 'pass'], [g.home.abbr, proj.homePassYds, 'pass'], [g.away.abbr, proj.awayRushYds, 'rush'], [g.home.abbr, proj.homeRushYds, 'rush']]) {
+          if (item[1] == null) continue;
+          const tok = 'teamYds|' + g.id + '|' + item[0] + item[2];
+          push(tok, gbName(item[0], tok) + ' — team ' + item[2] + ' yards ' + Math.round(item[1]) + ' ±' + hitTol('yds'), gm, proj.conf, null,
+            'Projected <b>' + Math.round(item[1]) + '</b> ' + item[2] + ' yards from each side’s yard profiles vs this defense.');
+        }
+      } else if (key === 'anytimeTd') {
+        const cands = buildTDCandidates(g, proj).slice(0, 6);
+        for (const c of cands) {
+          const tok = 'anytimeTd|' + g.id + '|' + c.name;
+          push(tok, gbName(c.name, tok) + ' — anytime TD', c.abbr + ' · ' + gm + (c._inj === 'questionable' ? ' · Q' : ''), c._td.prob,
+            g.completed ? !!c._scored : null,
+            'TD odds from expected usage near the goal line (λ ' + ((c._td.lambda || 0)).toFixed(2) + ') vs this defense' + (c._td.injNote ? ' · ' + c._td.injNote : '') + '.');
+        }
+      } else if (key === 'firstTd') {
+        const cands = buildTDCandidates(g, proj);
+        const first = cands[0];
+        if (first) {
+          const totalLambda = cands.reduce((s2, c) => s2 + (c._td.lambda || 0), 0);
+          const pFirst = totalLambda > 0 ? Math.round(((first._td.lambda || 0) / totalLambda) * (1 - Math.exp(-totalLambda)) * 100) : 0;
+          const tok = 'firstTd|' + g.id;
+          let mark = null;
+          if (g.completed) { const isF = isActualFirstTdScorer(first, g); if (isF !== null) mark = isF; }
+          push(tok, gbName(first.name, tok) + ' — first TD of the game', first.abbr + ' · ' + gm, pFirst, mark,
+            'Most likely first scorer: their share of the game’s total TD expectation (' + pFirst + ').');
+        }
+      }
+    }
+  }
+  rows.sort((a, b) => b.grade - a.grade);
+  return rows;
+}
+function gbRowHtml(row, grey) {
+  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.82rem">' +
+    '<span style="flex:1;min-width:0;' + (grey ? 'color:rgba(255,255,255,.35)' : '') + '">' + row.html + (row.sub ? ' <span style="color:rgba(255,255,255,.35);font-size:.7rem">' + escapeHtml(row.sub) + '</span>' : '') + gbMark(row.mark) + '</span>' +
+    '<span style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'rgba(255,255,255,.35)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</span></div>' +
+    (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.74rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why + '</div>' : '');
+}
+function gbShiftWeek(n) {
+  state.week = Math.max(1, Math.min(18, (state.week || 1) + n));
+  const ws = document.getElementById('week');
+  if (ws) ws.value = state.week;
+  GB.open = {}; GB.why = null;
+  logEvent('info', 'ui', 'bets week → W' + state.week);
+  loadWeek();
+}
+function gbNavHtml() {
+  const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:9px;padding:7px 0;font-size:.7rem;font-weight:700;cursor:pointer';
+  return '<div style="display:flex;gap:8px;margin-top:10px">' +
+    '<button class="gbnav" data-n="-1" style="' + btn + '">‹ prev week</button>' +
+    '<button class="gbnav" data-n="1" style="' + btn + '">next week ›</button>' +
+    '</div>';
+}
+function gbWireNav(main) {
+  main.querySelectorAll('.gbnav').forEach(b => b.addEventListener('click', () => gbShiftWeek(parseInt(b.getAttribute('data-n'), 10))));
+}
 function renderGameBets(main) {
+  let html = '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(212,255,58,.35);border-radius:13px;padding:15px 16px 12px;margin-bottom:11px">' +
+    '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:var(--accent);text-transform:uppercase">Game week · NFL</div>' +
+    '<div style="font-weight:900;font-size:1.4rem;letter-spacing:-.01em;margin:3px 0 1px">' + state.season + ' · Week ' + state.week + '</div>' +
+    '<div style="font-size:.74rem;color:rgba(255,255,255,.5)">Gridline · every pick graded walk-forward</div>' +
+    '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px;font-size:.7rem;color:rgba(255,255,255,.5)">' +
+      '<span><b style="color:#ff5d5d">##</b> = confidence grade</span>' +
+      '<span>ranked by real success rate</span>' +
+      '<span>tap a <b style="color:#fff">name</b> — why</span>' +
+      '<span>tap a <b style="color:#fff">card</b> — bet line</span>' +
+    '</div>' + gbNavHtml() + '</div>';
   if (!state.games.length) {
-    main.innerHTML = '<div class="hint"><div class="title">No games</div></div>';
+    main.innerHTML = html + '<div class="hint"><div class="title">No games loaded for this week</div>Use the arrows above (or Load Week in the header) to pull a slate.</div>';
+    gbWireNav(main);
     return;
   }
-
-  // --- Aggregate accuracy across completed games ---
-  let winN = 0, winHit = 0;
-  let lockN = 0, lockHit = 0;
-  let firstN = 0, firstHit = 0;
-  let totErr = 0, totHitCount = 0, gradedGames = 0;
-
-  const gameEntries = state.games.map(g => {
-    const proj = projectGame(g);
-    if (!proj) return null;
-    const cands = buildTDCandidates(g, proj);
-    const locks = cands.filter(c => c._td.prob >= lockTh('anytimeTd'));
-    const firstPick = cands[0] || null;
-
-    // tallies — only LOCKS count (same thresholds as the graded record)
-    if (g.completed) {
-      gradedGames++;
-      const pickProb = Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100;
-      if (pickProb >= lockTh('winner')) {
-        const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
-        winN++;
-        if (actualWinner !== 'tie' && proj.projWinner === actualWinner) winHit++;
-      }
-      const actualTotal = g.away.score + g.home.score;
-      totErr += Math.abs(actualTotal - proj.total);
-      if (Math.abs(actualTotal - proj.total) <= hitTol('pts')) totHitCount++;
-      for (const c of locks) { lockN++; if (c._scored) lockHit++; }
-      if (firstPick) {
-        const totalLambda = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
-        const pFirst = totalLambda > 0 ? ((firstPick._td.lambda || 0) / totalLambda) * (1 - Math.exp(-totalLambda)) * 100 : 0;
-        const isFirst = isActualFirstTdScorer(firstPick, g);
-        if (isFirst !== null && pFirst >= lockTh('firstTd')) { firstN++; if (isFirst) firstHit++; }
-      }
-    }
-
-    // winner badge — shown ONLY when the pick qualifies as a lock
-    const winProbPct = Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100;
-    const projWinAbbr = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
-    const winnerIsLock = winProbPct >= lockTh('winner');
-    let winBadge = '';
-    if (winnerIsLock) {
-      if (g.completed) {
-        const actualWinner = g.home.score > g.away.score ? 'home' : (g.away.score > g.home.score ? 'away' : 'tie');
-        const correct = actualWinner !== 'tie' && proj.projWinner === actualWinner;
-        winBadge = '<span class="winner-tag ' + (correct ? 'correct' : 'wrong') + ' is-lock-tag">pick ' + escapeHtml(projWinAbbr) + ' ' + winProbPct.toFixed(0) + '%' + (correct ? ' ✓' : ' ✗') + '</span>';
-      } else {
-        winBadge = '<span class="winner-tag is-lock-tag">pick ' + escapeHtml(projWinAbbr) + ' ' + winProbPct.toFixed(0) + '%</span>';
-      }
-    }
-
-    // anytime TD lock rows (already threshold-filtered)
-    const lockRows = locks.length ? locks.map(c => {
-      const result = !g.completed ? '<span class="gb-result na">—</span>'
-        : c._scored ? '<span class="gb-result yes">✓ TD</span>' : '<span class="gb-result no">no</span>';
-      return '<div class="gb-pick-row">' +
-        '<span class="pos-tag pos-' + c.position + '">' + c.position + '</span>' +
-        '<span class="gb-star" style="visibility:hidden">★</span>' +
-        '<div class="prop-name">' + escapeHtml(c.name) + '<span class="prop-team">' + escapeHtml(c.abbr) + (!g.completed && c._inj === 'questionable' ? ' <span class="inj-tag">Q</span>' : '') + '</span></div>' +
-        '<div class="gb-prob">' + c._td.prob + '%</div>' +
-        result +
+  const order = Object.keys(GB_META).map(k => ({ k, pct: (gbRate(GB_META[k].rateKeys) || {}).pct ?? -1 })).sort((a, b) => b.pct - a.pct);
+  for (const { k } of order) {
+    const meta = GB_META[k];
+    const all = gbRows(k);
+    if (!all.length) continue;
+    const th = lockTh(meta.th);
+    const locks = all.filter(r => r.grade >= th);
+    const rate = gbRate(meta.rateKeys);
+    const open = !!GB.open[k];
+    html += '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.09);border-radius:13px;padding:12px 13px;margin-bottom:11px">' +
+      '<div class="gbhead" data-k="' + k + '" style="cursor:pointer">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+          '<div style="font-size:.78rem;font-weight:800;letter-spacing:.08em;color:var(--accent)">' + meta.tag + ' <span style="color:rgba(255,255,255,.35);font-weight:600;font-size:.66rem">' + (open ? '▴' : '▾') + '</span></div>' +
+          (rate ? '<span style="font-size:.68rem;color:rgba(255,255,255,.5)">this bet type has hit <b style="color:#fff">' + rate.pct + '%</b> of the time (' + rate.h + '/' + rate.n + ')</span>' : '') + '</div>' +
+        '<div style="font-size:.7rem;color:rgba(255,255,255,.4);margin:2px 0 5px">Bet = ' + meta.what + ' · bet line: confidence <b style="color:#fff">' + th + '+</b></div>' +
       '</div>';
-    }).join('') : '';
-
-    // first TD pick — shown ONLY when P(first) meets its lock threshold
-    let firstRow = '';
-    if (firstPick) {
-      const totalLambda = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
-      const pAnyTd = 1 - Math.exp(-totalLambda);
-      const pFirst = totalLambda > 0 ? Math.round(((firstPick._td.lambda || 0) / totalLambda) * pAnyTd * 100) : 0;
-      if (pFirst >= lockTh('firstTd')) {
-        const isFirst = g.completed ? isActualFirstTdScorer(firstPick, g) : null;
-        let result;
-        if (!g.completed) result = '<span class="gb-result na">—</span>';
-        else if (isFirst === null) result = '<span class="gb-result na">n/a</span>';
-        else if (isFirst) result = '<span class="gb-result yes">✓ 1st</span>';
-        else result = '<span class="gb-result no">no</span>';
-        const actualNote = g.completed && g.firstTdScorer ? '<span class="gb-actual-first">actual 1st: ' + escapeHtml(g.firstTdScorer.name || '?') + '</span>' : '';
-        firstRow =
-          '<div class="gb-sub">First TD Pick · P(first) from λ share' + catRateTag('firstTd') + '</div>' +
-          '<div class="gb-firsttd">' +
-            '<span class="gb-star">★</span>' +
-            '<div class="prop-name">' + escapeHtml(firstPick.name) + '<span class="prop-team">' + escapeHtml(firstPick.abbr) + '</span> <span class="pl-vs">' + firstPick.position + '</span>' + actualNote + '</div>' +
-            '<div class="gb-prob">' + pFirst + '%</div>' +
-            result +
-          '</div>';
-      }
+    if (!open) {
+      if (locks.length) html += locks.map(r => gbRowHtml(r, false)).join('');
+      else html += '<div style="font-size:.72rem;color:rgba(255,255,255,.4);padding:3px 0">No picks clear the bet line this week — tap to see every candidate.</div>';
+    } else {
+      let lineDrawn = false;
+      html += all.map(r => {
+        const q = r.grade >= th;
+        let pre = '';
+        if (!q && !lineDrawn) {
+          lineDrawn = true;
+          pre = '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed #ff5d5d"></div><span style="font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d;white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span><div style="flex:1;border-top:2px dashed #ff5d5d"></div></div>';
+        }
+        return pre + gbRowHtml(r, !q);
+      }).join('');
+      if (!lineDrawn) html += '<div style="font-size:.7rem;color:rgba(255,255,255,.4);padding:3px 0 0">Everyone shown clears the bet line.</div>';
     }
-
-    // Locks-only view: a game with no qualifying locks gets one compact line
-    const hasAnyLock = !!(winBadge || lockRows || firstRow);
-    // strongest qualifying lock in this game — drives the strongest-first sort below
-    let bestConf = -1;
-    if (winnerIsLock) bestConf = Math.max(bestConf, winProbPct);
-    for (const c of locks) bestConf = Math.max(bestConf, c._td.prob);
-    if (firstRow){
-      const tl = cands.reduce((s, c) => s + (c._td.lambda || 0), 0);
-      if (firstPick && tl > 0) bestConf = Math.max(bestConf, ((firstPick._td.lambda || 0) / tl) * (1 - Math.exp(-tl)) * 100);
-    }
-    const cardHtml = '<div class="gb-game">' +
-      '<div class="gb-head">' +
-        '<div class="gb-teams">' + escapeHtml(g.away.abbr) + '<span class="at">@</span>' + escapeHtml(g.home.abbr) + '</div>' +
-        (winBadge ? winBadge + catRateTag('winner') : '') +
-      '</div>' +
-      (hasAnyLock
-        ? (lockRows ? '<div class="gb-sub">Anytime TD Locks (≥' + lockTh('anytimeTd') + '%, rush/rec only)' + catRateTag('anytimeTd') + '</div>' + lockRows : '') + firstRow
-        : '<div class="gb-empty">No locks for this game at current thresholds.</div>') +
-    '</div>';
-    return { conf: bestConf, html: cardHtml };
-  }).filter(Boolean);
-  // strongest games first; games with no qualifying locks sink to the bottom
-  gameEntries.sort((a, b) => b.conf - a.conf);
-  const gameCards = gameEntries.map(e => e.html).join('');
-
-  // --- Summary card at top ---
-  const mae = gradedGames ? (totErr / gradedGames).toFixed(1) : '—';
-  const totHitRate = gradedGames ? Math.round(100 * totHitCount / gradedGames) : 0;
-  const winRate = winN ? Math.round(100 * winHit / winN) : 0;
-  const lockRate = lockN ? Math.round(100 * lockHit / lockN) : 0;
-  const firstRate = firstN ? Math.round(100 * firstHit / firstN) : 0;
-  // All Locks — every qualifying lock across every category (same as Facts)
-  const allLocksCat = gradedGames ? aggregateUnits(gradeWeek().units).allLocks : { hit: 0, n: 0 };
-  const allLocksRate = allLocksCat.n ? Math.round(100 * allLocksCat.hit / allLocksCat.n) : 0;
-
-  const summaryCard =
-    '<div class="gb-summary-card">' +
-      '<div class="gb-sub" style="border-bottom:1px solid var(--line)">This week\'s results · locks only</div>' +
-      '<div class="summary-grid" style="padding:14px">' +
-        '<div class="stat"><div class="val" style="color:var(--accent)">' + (allLocksCat.n ? allLocksRate + '%' : '—') + '</div><div class="lbl">All Locks (' + allLocksCat.hit + '/' + allLocksCat.n + ')</div></div>' +
-        '<div class="stat"><div class="val">' + (winN ? winRate + '%' : '—') + '</div><div class="lbl">Winners (' + winHit + '/' + winN + ')</div></div>' +
-        '<div class="stat"><div class="val">' + (lockN ? lockRate + '%' : '—') + '</div><div class="lbl">TD Locks (' + lockHit + '/' + lockN + ')</div></div>' +
-        '<div class="stat"><div class="val">' + (firstN ? firstRate + '%' : '—') + '</div><div class="lbl">1st TD (' + firstHit + '/' + firstN + ')</div></div>' +
-        '<div class="stat"><div class="val">' + mae + '</div><div class="lbl">Avg total miss (pts)</div></div>' +
-      '</div>' +
-      '<div class="setting-note" style="padding:0 14px 14px;margin:0">' +
-        '<b style="color:var(--ink)">Avg total miss</b> = on average, the projected combined score was off by this many points (was labeled “Total MAE”). ' +
-        '±' + hitTol('pts') + ' hit rate this week: ' + totHitRate + '%.' +
-      '</div>' +
-    '</div>';
-
-  main.innerHTML = '<div class="gamebets">' + summaryCard + gameCards + '</div>';
+    html += '</div>';
+  }
+  main.innerHTML = html;
+  gbWireNav(main);
+  main.querySelectorAll('.gbhead').forEach(h => h.addEventListener('click', () => { const k = h.getAttribute('data-k'); GB.open[k] = !GB.open[k]; render(); }));
+  main.querySelectorAll('.gbname').forEach(nm => nm.addEventListener('click', e => { e.stopPropagation(); const tok = nm.getAttribute('data-tok'); GB.why = GB.why === tok ? null : tok; render(); }));
 }
 
-// ============================================================================
-// Wire up
-// ============================================================================
 function populateSeasonDropdown() {
   const sel = document.getElementById('season');
   if (!sel) return;
