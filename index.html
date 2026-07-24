@@ -2370,6 +2370,20 @@ async function openSettingsPanel(){
    No filler — an empty day means nothing cleared the bar, and that's honest. */
 var SL_MIN_PCT = 80, SL_MIN_N = 20;
 var SL_CACHE = null;
+var SL_DATE = null; // null = today (live). A past date switches to results mode.
+function slAddDays(d, n){ var dt = new Date(d + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0, 10); }
+function slShiftDay(n){
+  var cur = SL_DATE || slTodayPT();
+  var next = n === 0 ? null : slAddDays(cur, n);
+  if (next && next > slTodayPT()) return;       // never past today — nothing is graded yet
+  SL_DATE = (next === slTodayPT()) ? null : next;
+  SL_CACHE = null;
+  refreshSuperLocks(true);
+}
+function slPrettyDate(d){
+  try { return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }); }
+  catch (e){ return d; }
+}
 function slPct(o){ // rate engines emit {h,n} or {w,l}
   if (!o) return null;
   var n = o.n != null ? o.n : ((o.w || 0) + (o.l || 0));
@@ -2426,31 +2440,42 @@ async function slPremiumLane(cfgs){
   var days = await slEnsure('prem', 'fable_hits', ADMIN, null);
   var qual = slQualified(premiumRates(days, cfgs.prem));
   var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES', gmT: 'GAME TOTALS' };
-  var today = slTodayPT();
+  var today = SL_DATE || slTodayPT();
   var raw = await fsGetRaw(ADMIN, 'fable_hits/' + today);
   var day = raw ? fsFields(raw.fields || {}) : null;
   var locks = [];
   if (day){
-    var push = function(m, desc, metric){ locks.push({ cat: L[m] || m, catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric }); };
+    var res = day.results || null;
+    var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
+    var push = function(m, desc, metric, hit){ locks.push({ cat: L[m] || m, catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric, hit: hit }); };
     if (qual.hits) (day.rows || []).forEach(function(r){
-      if (r.verified && !r.gradeFlag && r.prob != null && r.prob >= cfgs.prem.lock)
-        push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', Math.round(r.prob * 100) + '%');
+      if (r.verified && !r.gradeFlag && r.prob != null && r.prob >= cfgs.prem.lock){
+        var o = res ? res[r.id] : null;
+        push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', Math.round(r.prob * 100) + '%', played(o) ? ((o.h || 0) >= 1) : null);
+      }
     });
     var mk = day.mk || {};
     if (qual.gm) (mk.gm || []).forEach(function(r){
-      if (r.verified && (r.conf || 0) >= (cfgs.prem.gmLock || 0))
-        push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — pick ' + r.pick, r.conf != null ? Math.round(r.conf) + '%' : '');
+      if (r.verified && (r.conf || 0) >= (cfgs.prem.gmLock || 0)){
+        var g = res ? res['g' + r.id] : null;
+        var gh = (g && g.hs != null && g.as != null && g.hs !== g.as) ? ((g.hs > g.as) === (r.pick === r.team)) : null;
+        push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — pick ' + r.pick, r.conf != null ? Math.round(r.conf) + '%' : '', gh);
+      }
     });
     if (qual.hr) (mk.hr || []).forEach(function(r){
-      if (r.verified && !r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock)
-        push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%');
+      if (r.verified && !r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock){
+        var oh = res ? res[r.id] : null;
+        push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%', played(oh) ? ((oh.hr || 0) >= 1) : null);
+      }
     });
     [['kB', 'so', 'kbLock', '1+ strikeout'], ['bbB', 'bb', 'bbbLock', '1+ walk']].forEach(function(c){
       if (!qual[c[0]]) return;
       (mk[c[0]] || []).forEach(function(r){
         var p = r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null);
-        if (r.verified && !r.gradeFlag && p != null && p >= cfgs.prem[c[2]])
-          push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%');
+        if (r.verified && !r.gradeFlag && p != null && p >= cfgs.prem[c[2]]){
+          var ob = res ? res[r.id] : null;
+          push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%', played(ob) ? ((ob[c[1]] || 0) >= 1) : null);
+        }
       });
     });
     var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmT: 'gtEdge' };
@@ -2461,18 +2486,44 @@ async function slPremiumLane(cfgs){
         var d = r.exp - r.line, th = cfgs.prem[edgeKey[m]];
         var lean = d >= th ? 'OVER' : d <= -th ? 'UNDER' : null;
         if (!lean) return;
-        push(m, r.name + ' (' + (r.team || '') + ') — ' + lean + ' ' + r.line, 'exp ' + r.exp);
+        var oe = res ? res[r.id] : null;
+        var act = oe ? (m === 'gmT' ? (oe.hs != null && oe.as != null ? oe.hs + oe.as : null) : oe[{ kP: 'pk', bbP: 'pbb', tb: 'tb' }[m]]) : null;
+        var eh = act == null || act === r.line ? null : (act > r.line ? lean === 'OVER' : lean === 'UNDER');
+        push(m, r.name + ' (' + (r.team || '') + ') — ' + lean + ' ' + r.line, 'exp ' + r.exp, eh);
       });
     });
   }
   var note = !Object.keys(qual).length ? 'No Diamond IQ category is at 80%+ yet.'
-    : !day ? 'Today’s board isn’t saved yet — it lands during the daily picks run.'
-    : !locks.length ? 'No confirmed locks in an 80%+ category today.' : '';
-  return { name: 'Diamond IQ Premium', locks: locks, note: note };
+    : !day ? (SL_DATE ? 'No board was saved for this date.' : 'Today’s board isn’t saved yet — it lands during the daily picks run.')
+    : !locks.length ? 'No confirmed locks in an 80%+ category' + (SL_DATE ? ' that day.' : ' today.') : '';
+  return { name: 'Diamond IQ Premium', key: 'mlb', locks: locks, note: note };
 }
 async function slUnitsLane(cfgs, opts){
   var data = await slEnsure(opts.cacheKey, opts.coll, NFLP, opts.unitsField || 'data');
   var qual = slQualified(opts.rates(data.units));
+  /* PAST DATE — read that date's own graded units (they carry the pick text and
+     the real outcome), so a past day shows exactly what the Super Locks were
+     and whether they hit. Gridline stores by week, not by day, so it opts out. */
+  if (SL_DATE){
+    if (opts.unitsField === 'units'){
+      return { name: opts.name, key: opts.key, locks: [], note: opts.name + ' stores its record by week, not by day — no per-day history.' };
+    }
+    var praw = await fsGetRaw(NFLP, opts.coll + '/' + SL_DATE);
+    var punits = [];
+    if (praw && praw.fields && praw.fields.data && praw.fields.data.stringValue){
+      try { punits = JSON.parse(praw.fields.data.stringValue) || []; } catch (e) {}
+    }
+    var plocks = [];
+    punits.forEach(function(u){
+      var q = qual[u.cat];
+      if (!q) return;
+      if (!opts.qualifies(u)) return;
+      plocks.push({ cat: (opts.labels[u.cat] || u.cat).toUpperCase(), catPct: q.pct, catN: q.n,
+        desc: u.desc || '', metric: u.metric != null ? u.metric + '%' : '', hit: opts.hitOf(u) });
+    });
+    return { name: opts.name, key: opts.key, locks: plocks,
+      note: !punits.length ? 'No graded slate stored for this date.' : (!plocks.length ? 'No locks in an 80%+ category that day.' : '') };
+  }
   var raw = await fsGetRaw(NFLP, opts.todayDoc);
   var td = null;
   if (raw && raw.fields){
@@ -2503,7 +2554,7 @@ async function slUnitsLane(cfgs, opts){
     : !Object.keys(qual).length ? 'No ' + opts.name + ' category is at 80%+ yet.'
     : (!td || !fresh) ? 'No slate published for ' + (maxAge > 0 ? 'this week' : 'today') + (opts.season ? ' (' + opts.season + ')' : '') + '.'
     : !locks.length ? (maxAge > 0 ? 'This week’s' : 'Today’s') + ' locks aren’t in an 80%+ category.' : '';
-  return { name: opts.name, locks: locks, note: note };
+  return { name: opts.name, key: opts.key, locks: locks, note: note };
 }
 async function refreshSuperLocks(force){
   var el = document.getElementById('superlocks');
@@ -2512,67 +2563,116 @@ async function refreshSuperLocks(force){
   refreshSuperLocks._busy = true;
   // Every open pulls the freshest data: show the last result instantly (if any)
   // with an updating note, drop the caches, and re-read everything live.
-  delete PREVIEW_CACHE.prem; delete PREVIEW_CACHE.nba; delete PREVIEW_CACHE.ice; delete PREVIEW_CACHE.nfl;
-  if (SL_CACHE) el.innerHTML = '<div class="statusline" style="padding:0 0 10px">↻ Updating to the latest grades…</div>' + SL_CACHE;
+  delete PREVIEW_CACHE.prem; delete PREVIEW_CACHE.nba; delete PREVIEW_CACHE.ice; delete PREVIEW_CACHE.nfl; delete PREVIEW_CACHE.nascar;
+  if (SL_CACHE){
+    el.innerHTML = '<div class="statusline" style="padding:0 0 10px">↻ Updating to the latest grades…</div>' + SL_CACHE;
+    el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+  }
   else el.innerHTML = '<div class="statusline" style="padding:20px 0">Reading every app’s graded record… takes a few seconds.</div>';
   try {
     var cfgs = await slConfigs();
     var lanes = await Promise.all([
       slPremiumLane(cfgs),
-      slUnitsLane(cfgs, { cacheKey: 'nba', coll: 'nba_accuracy', todayDoc: 'nba/today', name: 'The Key',
+      slUnitsLane(cfgs, { cacheKey: 'nba', coll: 'nba_accuracy', todayDoc: 'nba/today', name: 'The Key', key: 'nba',
         rates: function(u){ return nbaRates(u, cfgs.nbaTh, cfgs.nbaTol); },
+        qualifies: function(u){ var TH = { winner:'winner', total:'lines', teamPts:'lines', playerPts:'props', playerReb:'props', playerAst:'props', dkML:'dk', dkTotal:'dk', dkSpread:'dk' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.nbaTh[TH[u.cat]]; },
+        hitOf: function(u){ var TOLK = { total:'pts', teamPts:'pts', playerPts:'stat', playerReb:'stat', playerAst:'stat' }; var tk = TOLK[u.cat]; return (tk && u.adelta != null) ? (u.adelta <= cfgs.nbaTol[tk]) : !!u.hit; },
         labels: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Rebounds', playerAst: 'Assists', dkML: 'vs DK ML', dkTotal: 'vs DK total', dkSpread: 'vs DK spread' },
         season: 'NBA runs Oct–Jun' }),
-      slUnitsLane(cfgs, { cacheKey: 'ice', coll: 'nhl_accuracy', todayDoc: 'nhl/today', name: 'Icing',
+      slUnitsLane(cfgs, { cacheKey: 'ice', coll: 'nhl_accuracy', todayDoc: 'nhl/today', name: 'Icing', key: 'hockey',
         rates: function(u){ return iceRates(u, cfgs.iceTh, cfgs.iceTol); },
+        qualifies: function(u){ var TH = { winner:'winner', total:'lines', p1:'lines', goal:'props', point:'props', dkML:'dk', dkTotal:'dk' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.iceTh[TH[u.cat]]; },
+        hitOf: function(u){ var TOLK = { total:'goals', p1:'p1' }; var tk = TOLK[u.cat]; return (tk && u.adelta != null) ? (u.adelta <= cfgs.iceTol[tk]) : !!u.hit; },
         labels: { winner: 'Winner', total: 'Game total', p1: '1st period', goal: 'Goal scorer', point: 'Point scorer', dkML: 'vs DK ML', dkTotal: 'vs DK total' },
         season: 'NHL runs Oct–Jun' }),
-      slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', unitsField: 'units', maxAgeDays: 6,
+      slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', key: 'nfl', unitsField: 'units', maxAgeDays: 6,
         rates: function(u){ return nflRates(u, cfgs.nflTh, cfgs.nflTol); },
+        qualifies: function(){ return false; }, hitOf: function(){ return null; },
         labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', anytimeTd: 'Anytime TD', firstTd: 'First TD' },
         season: 'NFL runs Sep–Feb' }),
-      slUnitsLane(cfgs, { cacheKey: 'nascar', coll: 'nascar_accuracy', todayDoc: 'nascar/today', name: "Pete's Picks", maxAgeDays: 6,
+      slUnitsLane(cfgs, { cacheKey: 'nascar', coll: 'nascar_accuracy', todayDoc: 'nascar/today', name: "Pete's Picks", key: 'nascar', maxAgeDays: 6,
         rates: function(u){ return nascarRates(u, cfgs.nascarTh); },
+        qualifies: function(u){ var TH = { winner:'winner', top5:'top5', top10:'top10', top15:'top15', h2h:'h2h' }; return TH[u.cat] && u.metric != null && u.metric >= cfgs.nascarTh[TH[u.cat]]; },
+        hitOf: function(u){ return !!u.hit; },
         labels: { winner: 'Race winner', top5: 'Top 5', top10: 'Top 10', top15: 'Top 15', h2h: 'Head-to-head' },
         season: 'NASCAR runs Feb–Nov' })
     ]);
     var total = lanes.reduce(function(s, a){ return s + a.locks.length; }, 0);
-    var html = '<div style="margin:4px 0 16px"><div style="font-weight:800;font-size:20px;letter-spacing:.04em">⚡ SUPER LOCKS · ' + total + ' live</div>' +
-      '<div class="statusline" style="margin-top:4px">Only locks from categories graded 80%+ all-time (min ' + SL_MIN_N + ' picks). Daily sports show today\u2019s slate; NFL and NASCAR show the whole week. Nothing else makes this list.</div></div>';
+    var past = !!SL_DATE, dShown = SL_DATE || slTodayPT();
+    var graded = 0, hits = 0;
+    lanes.forEach(function(a){ a.locks.forEach(function(l){ if (l.hit === true || l.hit === false){ graded++; if (l.hit) hits++; } }); });
+    var LANE_COL = { mlb: 'var(--mlb)', nfl: 'var(--nfl)', nba: 'var(--nba)', hockey: 'var(--nhl)', nascar: '#ff5d5d' };
+
+    /* ── HEADER: kicker, big date, day picker, and a live/results summary ── */
+    var navBtn = 'flex:1;background:var(--panel);border:1px solid var(--hair);color:var(--bone);border-radius:10px;padding:9px 0;font:600 12.5px/1 inherit;cursor:pointer';
+    var html = '<div style="background:linear-gradient(180deg,var(--panel),var(--face));border:1px solid ' + (past ? 'var(--hair)' : 'rgba(245,182,66,.45)') + ';border-radius:16px;padding:16px 17px 13px;margin:2px 0 14px">' +
+      '<div style="font:800 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.22em;text-transform:uppercase;color:' + (past ? 'var(--dim)' : 'var(--bulb)') + '">' +
+        (past ? 'Results · how the super locks did' : '⚡ Super Locks · live') + '</div>' +
+      '<div style="font-weight:900;font-size:24px;letter-spacing:-.01em;margin:5px 0 2px">' + esc(slPrettyDate(dShown)) + '</div>' +
+      '<div class="statusline" style="margin:0">' + (past
+        ? (graded ? '<b style="color:' + (hits * 2 >= graded ? '#7fd99a' : '#ff7a7a') + '">' + hits + '/' + graded + ' hit</b> · ' + Math.round(100 * hits / Math.max(1, graded)) + '% of that day’s super locks'
+                  : 'Nothing graded on this date.')
+        : '<b>' + total + '</b> live · only locks from categories graded 80%+ all-time (min ' + SL_MIN_N + ' picks)') + '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<button class="slnav" data-n="-1" style="' + navBtn + '">‹ prev day</button>' +
+        (past ? '<button class="slnav" data-n="0" style="' + navBtn + ';border-color:rgba(245,182,66,.5);color:var(--bulb);font-weight:800">today</button>' : '') +
+        '<button class="slnav" data-n="1" style="' + navBtn + (past ? '' : ';opacity:.35') + '">next day ›</button>' +
+      '</div></div>';
+
+    /* ── lane chips: jump-free at-a-glance counts ── */
+    if (!past){
+      html += '<div style="display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px">' + lanes.map(function(a){
+        var on = a.locks.length > 0, col = LANE_COL[a.key] || 'var(--dim)';
+        return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (on ? col : 'var(--hair2)') + ';border-radius:999px;padding:5px 11px;font:600 11.5px/1 inherit;color:' + (on ? 'var(--bone)' : 'var(--dim2)') + '">' +
+          '<span style="width:6px;height:6px;border-radius:999px;background:' + (on ? col : 'var(--hair)') + '"></span>' + esc(a.name) + ' <b style="color:' + (on ? col : 'var(--dim2)') + '">' + a.locks.length + '</b></span>';
+      }).join('') + '</div>';
+    }
+
     lanes.forEach(function(a){
-      html += '<div style="border:1px solid var(--hair);border-radius:14px;padding:14px 16px;margin-bottom:12px">' +
-        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
-        '<span style="font-weight:800">' + esc(a.name) + '</span>' +
-        '<span class="statusline" style="margin:0">' + (a.locks.length ? a.locks.length + ' super lock' + (a.locks.length > 1 ? 's' : '') : '—') + '</span></div>';
+      var col = LANE_COL[a.key] || 'var(--dim)';
+      var laneHits = 0, laneGraded = 0;
+      a.locks.forEach(function(l){ if (l.hit === true || l.hit === false){ laneGraded++; if (l.hit) laneHits++; } });
+      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-left:3px solid ' + (a.locks.length ? col : 'var(--hair2)') + ';border-radius:14px;padding:13px 15px;margin-bottom:11px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">' +
+        '<span style="font-weight:800;font-size:15px">' + esc(a.name) + '</span>' +
+        '<span class="statusline" style="margin:0">' + (a.locks.length
+          ? (laneGraded ? '<b style="color:' + (laneHits * 2 >= laneGraded ? '#7fd99a' : '#ff7a7a') + '">' + laneHits + '/' + laneGraded + ' hit</b>'
+                        : a.locks.length + ' super lock' + (a.locks.length > 1 ? 's' : ''))
+          : '—') + '</span></div>';
       if (a.locks.length){
-        // Group picks under one category header so the category's all-time rate
-        // is shown ONCE, and each row shows only that pick's own model odds.
         var groups = [], byCat = {};
         a.locks.forEach(function(l){
           if (!byCat[l.cat]){ byCat[l.cat] = { cat: l.cat, catPct: l.catPct, catN: l.catN, rows: [] }; groups.push(byCat[l.cat]); }
           byCat[l.cat].rows.push(l);
         });
         groups.forEach(function(g){
-          html += '<div style="border-top:1px solid var(--hair);padding-top:8px;margin-top:8px">' +
-            '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">' +
-            '<span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#7fd99a">' + esc(g.cat) + '</span>' +
-            '<span class="statusline" style="margin:0;font-size:11px">' + g.catPct + '% all-time' + (g.catN ? ' · ' + g.catN + ' graded' : '') + '</span></div>';
+          html += '<div style="margin-top:11px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px">' +
+            '<span style="font:800 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;color:' + col + '">' + esc(g.cat) + '</span>' +
+            '<span style="border:1px solid rgba(127,217,154,.35);border-radius:999px;padding:3px 8px;font:700 10.5px/1 ui-monospace,Menlo,monospace;color:#7fd99a;white-space:nowrap">' + g.catPct + '% all-time' + (g.catN ? ' · ' + g.catN : '') + '</span></div>';
           g.rows.forEach(function(l){
-            html += '<div style="display:flex;gap:10px;align-items:baseline;padding:5px 0">' +
-              '<span style="flex:1;font-size:14px">' + esc(l.desc) + '</span>' +
-              '<span style="flex:0 0 auto;font-size:13px;font-weight:700">' + esc(String(l.metric || '')) + '</span></div>';
+            var mark = l.hit === true ? '<span style="color:#7fd99a;font-weight:800;min-width:13px;text-align:center">✓</span>'
+                     : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;min-width:13px;text-align:center">✗</span>'
+                     : (past ? '<span style="color:var(--dim2);min-width:13px;text-align:center">—</span>' : '');
+            html += '<div style="display:flex;gap:9px;align-items:baseline;padding:6px 0;border-top:1px solid var(--hair2)">' + mark +
+              '<span style="flex:1;font-size:14px;min-width:0">' + esc(l.desc) + '</span>' +
+              '<span style="flex:0 0 auto;font:800 13px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span></div>';
           });
         });
       } else {
-        html += '<div class="statusline" style="margin:0">' + esc(a.note || 'Nothing today.') + '</div>';
+        html += '<div class="statusline" style="margin:8px 0 0">' + esc(a.note || 'Nothing today.') + '</div>';
       }
       html += '</div>';
     });
-    html += '<div class="statusline" style="margin-top:4px">Each green heading = that bet type’s all-time graded hit rate (why it earned a spot). The number beside each pick = that specific pick’s model odds today.</div>';
+    html += '<div class="statusline" style="margin-top:6px;line-height:1.6">Green pill = that bet type’s all-time graded hit rate (why it earned a spot). The coloured number = that pick’s own model odds. ' +
+      (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') + '</div>';
     SL_CACHE = html;
     el.innerHTML = html;
+    el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
   } catch (e){
-    el.innerHTML = '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the tab again to retry.</div>';
+    el.innerHTML = '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the tab again to retry.</div>' +
+      (SL_DATE ? '<button class="slnav" data-n="0" style="width:100%;background:var(--panel);border:1px solid var(--hair);color:var(--bulb);border-radius:10px;padding:9px 0;font:700 12.5px/1 inherit;cursor:pointer">back to today</button>' : '');
+    el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
   } finally { refreshSuperLocks._busy = false; }
 }
 function showView(which){
