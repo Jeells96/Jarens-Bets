@@ -282,7 +282,7 @@ function showView(v){
 
 /* ── config (lock threshold), PIN, and access gate ── */
 const PIN='2325';
-const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kbLock:0.75,bbbLock:0.45,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gtEdge:0.6,gkEdge:1.5,hrlEdge:0.4};
+const CONFIG={lock:0.78,hrLock:0.10,gmLock:0,kbLock:0.75,bbbLock:0.45,kEdge:0.45,bbEdge:0.25,tbEdge:0.45,gtEdge:0.6,phEdge:0.9,grEdge:0.75,gkEdge:1.5,hrlEdge:0.4};
 // P(1+) from an expected count (Poisson) — lets batter K/BB grade like hits, no DK line needed
 const p1of=r=>r&&r.prob!=null?r.prob:(r&&r.exp!=null?1-Math.exp(-r.exp):null);window.p1of=p1of;
 /* Flat 1-unit profit at an American price: -130 win pays +0.769u, +120 pays
@@ -296,7 +296,7 @@ function unitsWon(price,won){
 }
 try{
   const c=JSON.parse(localStorage.getItem('fablehits_cfg')||'null');
-  if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
+  if(c)['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge','phEdge','grEdge'].forEach(k=>{if(typeof c[k]==='number')CONFIG[k]=c[k];});
 }catch(e){}
 window.CONFIG=CONFIG; // shared with the standalone stats engine
 /* ═══ MODEL LAB — grade calibration ══════════════════════════════════════════
@@ -346,14 +346,14 @@ async function cfgPull(){
     const doc=await withTO(FBH.db.collection('fable_settings').doc('config').get(),6000);
     if(doc.exists){
       const d=doc.data();
-      ['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
+      ['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge','phEdge','grEdge'].forEach(k=>{if(typeof d[k]==='number')CONFIG[k]=d[k];});
     }
     cfgSave();
   }catch(e){}
 }
 async function cfgPush(){
   if(!FBH.ready)return;
-  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gtEdge:CONFIG.gtEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
+  try{await withTO(FBH.db.collection('fable_settings').doc('config').set({lock:CONFIG.lock,hrLock:CONFIG.hrLock,gmLock:CONFIG.gmLock,kEdge:CONFIG.kEdge,bbEdge:CONFIG.bbEdge,tbEdge:CONFIG.tbEdge,gtEdge:CONFIG.gtEdge,phEdge:CONFIG.phEdge,grEdge:CONFIG.grEdge,updatedAt:Date.now()},{merge:true}),6000);}catch(e){}
 }
 
 const nameKey=n=>n.trim().toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,'_');
@@ -460,7 +460,7 @@ async function saveThresholds(){
   cfgSave();
   await cfgPush();
   // re-lean already-computed K/BB rows against the new edges (no refetch needed)
-  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge],['gmT',CONFIG.gtEdge]].forEach(([m,th])=>{
+  [['kB',CONFIG.kEdge],['kP',CONFIG.kEdge],['bbB',CONFIG.bbEdge],['bbP',CONFIG.bbEdge],['tb',CONFIG.tbEdge],['gmT',CONFIG.gtEdge],['phA',CONFIG.phEdge],['gmR',CONFIG.grEdge]].forEach(([m,th])=>{
     (MK[m]||[]).forEach(r=>{if(r.line!=null){r.lean=leanFor(r.exp,r.line,th);}});
   });
   if(ROWS.length)render(null);
@@ -520,7 +520,7 @@ const PARK_HR={
  'Fenway Park':0.96,'Busch Stadium':0.93,'Comerica Park':0.92,'T-Mobile Park':0.92,
  'Petco Park':0.92,'Kauffman Stadium':0.88,'Oracle Park':0.85
 };
-const LG_HR_PA=0.032,LG_K=0.222,LG_BB=0.085;
+const LG_HR_PA=0.032,LG_K=0.222,LG_BB=0.085,LG_HA=0.218; // LG_HA = league hits allowed per batter faced
 const LG_RPG=4.45,LG_FIP=4.10,LG_XWOBA=0.315;
 const PARK_RUNS={
  'Coors Field':1.28,'Great American Ball Park':1.12,'Fenway Park':1.08,'Kauffman Stadium':1.06,
@@ -578,10 +578,10 @@ let TEAM_PITCH={};   // teamId -> {k,bb,hr,ip} season aggregate (bullpen proxy)
 let TEAM_OAA={};     // team full name -> outs above average (Savant, advanced defense)
 let OAA_OK=null;
 let GAMEODDS=[];     // DK game lines from Diamond IQ's odds_{date} doc
-let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gmT:[],gmK:[],hrL:[]};
+let MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],phA:[],gmT:[],gmR:[],gmK:[],hrL:[]};
 let MARKET='hits'; // first tab you see = Hits
 let AUTO_REFRESH=false; // true while the on-open background reload is running
-const MK_LABEL={gm:'GAME PREDICTIONS',gmT:'GAME TOTALS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+const MK_LABEL={gm:'GAME PREDICTIONS',gmT:'GAME TOTALS',gmR:'RUN LINE',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',phA:'PITCHER HITS'};
 // Every remaining O/U market grades vs a REAL DraftKings line — never
 // DraftKings. Label their lines honestly so nobody thinks DK posted them.
 const STD_LINE_MK={}; // (empty — fabricated 'standard line' markets were removed)
@@ -694,7 +694,7 @@ async function fetchPitcher(pid){
     }
   });
   const st=se?.stats?.[0]?.splits?.[0]?.stat||{};
-  o.overall={ip:parseIP(st.inningsPitched),avg:sf(st.avg),
+  o.overall={ip:parseIP(st.inningsPitched),avg:sf(st.avg),h:nn(st.hits),
     k:nn(st.strikeOuts),bb:nn(st.baseOnBalls),hr:nn(st.homeRuns),
     bf:nn(st.battersFaced),gs:nn(st.gamesStarted)};
   (sp?.stats?.[0]?.splits||[]).forEach(s=>{
@@ -845,7 +845,7 @@ async function fetchDayScores(date,onProg){
         const pi=p?.stats?.pitching;
         if(pi&&pi.strikeOuts!=null){
           out[p.person.id]=Object.assign(out[p.person.id]||{},
-            {pk:nn(pi.strikeOuts),pbb:nn(pi.baseOnBalls)});
+            {pk:nn(pi.strikeOuts),pbb:nn(pi.baseOnBalls),ph:nn(pi.hits)});
         }
       });
     });
@@ -891,7 +891,7 @@ async function fetchLeagueGameOdds(date){
     if(!doc.exists)return;
     (doc.data().games||[]).forEach(g=>{
       const markets=g.bookmakers?.[0]?.markets||g.markets||[];
-      const out={home_team:g.home_team,away_team:g.away_team,ml:null,total:null};
+      const out={home_team:g.home_team,away_team:g.away_team,ml:null,total:null,spread:null};
       markets.forEach(m=>{
         if(m.key==='h2h'){
           const h=(m.outcomes||[]).find(o=>o.name===g.home_team);
@@ -900,6 +900,10 @@ async function fetchLeagueGameOdds(date){
         }else if(m.key==='totals'){
           const ov=(m.outcomes||[]).find(o=>o.name==='Over');
           out.total={point:ov?.point??null};
+        }else if(m.key==='spreads'){
+          const h=(m.outcomes||[]).find(o=>o.name===g.home_team);
+          const a=(m.outcomes||[]).find(o=>o.name===g.away_team);
+          if(h&&h.point!=null)out.spread={home:h.point,hPrice:h.price??null,aPrice:a?.price??null};
         }
       });
       GAMEODDS.push(out);
@@ -1001,7 +1005,7 @@ async function fetchDKGameOddsAndPush(date,windowGames,onProg){
     const want={};windowGames.forEach(ev=>{const k=keyOf(ev);if(!have[k])want[k]=1;});
     if(!Object.keys(want).length)return{ok:true,count:0,reason:'window games already have lines'};
     say('DK: game lines…');
-    const res=await fetch(`https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&bookmakers=draftkings&markets=h2h,totals&oddsFormat=american`);
+    const res=await fetch(`https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&bookmakers=draftkings&markets=h2h,totals,spreads&oddsFormat=american`);
     const rem=res.headers.get('x-requests-remaining');
     if(rem!=null)DK_CALLS=parseInt(rem,10);
     if(!res.ok)throw new Error('odds API '+res.status);
@@ -1385,27 +1389,27 @@ function gameModel(ctx){
   return {hWP,eA:A.runs,eH:Hm.runs,total,reasons,math};
 }
 
-/* ── Pitcher K / BB totals: expected count over estimated batters faced ── */
+/* ── Pitcher K / BB / hits-allowed totals: expected count over estimated batters faced ── */
 function pitcherLine(pit,oppBatters,kind){
   const o=pit.overall;
   if(!o||!(o.bf>0))return null;
   const reasons=[];
-  const lg=kind==='k'?LG_K:LG_BB;
+  const lg=kind==='k'?LG_K:kind==='h'?LG_HA:LG_BB;
   const ipEst=clampN(o.gs>0?o.ip/o.gs:5.4,3.5,7.2);
   const bfEst=ipEst*4.28;
-  const rate=regressV(((kind==='k'?o.k:o.bb)||0)/o.bf,lg,o.bf,150);
+  const rate=regressV(((kind==='k'?o.k:kind==='h'?o.h:o.bb)||0)/o.bf,lg,o.bf,150);
   let sum=0,n=0;
   oppBatters.forEach(b=>{
     const bo=b?.overall;
     if(!bo||!bo.pa)return;
-    sum+=regressV(((kind==='k'?bo.so:bo.bb)||0)/bo.pa,lg,bo.pa,100);n++;
+    sum+=regressV(((kind==='k'?bo.so:kind==='h'?bo.h:bo.bb)||0)/bo.pa,lg,bo.pa,100);n++;
   });
   const oMult=n?clampN((sum/n)/lg,0.85,1.18):1;
   const exp=bfEst*rate*oMult;
   reasons.push({t:'~'+ipEst.toFixed(1)+' IP expected \u00b7 '+(o.gs||'?')+' starts this year',k:'info'});
-  reasons.push({t:'Season rate: '+(rate*100).toFixed(1)+'% of batters '+(kind==='k'?'struck out':'walked'),k:'info'});
-  if(oMult>=1.08)reasons.push({t:'Opposing lineup '+(kind==='k'?'whiffs':'walks')+' a lot (\u00d7'+oMult.toFixed(2)+')',k:'good'});
-  else if(oMult<=0.92)reasons.push({t:'Opposing lineup rarely '+(kind==='k'?'strikes out':'walks')+' (\u00d7'+oMult.toFixed(2)+')',k:'bad'});
+  reasons.push({t:'Season rate: '+(rate*100).toFixed(1)+'% of batters '+(kind==='k'?'struck out':kind==='h'?'got a hit':'walked'),k:'info'});
+  if(oMult>=1.08)reasons.push({t:'Opposing lineup '+(kind==='k'?'whiffs':kind==='h'?'hits':'walks')+' a lot (\u00d7'+oMult.toFixed(2)+')',k:'good'});
+  else if(oMult<=0.92)reasons.push({t:'Opposing lineup rarely '+(kind==='k'?'strikes out':kind==='h'?'gets hits':'walks')+' (\u00d7'+oMult.toFixed(2)+')',k:'bad'});
   return{exp,rate,oMult,ipEst,bfEst,reasons};
 }
 
@@ -1447,7 +1451,7 @@ async function loadDay(){
   CUR_DATE=date;
   const btn=$('loadBtn');btn.disabled=true;btn.textContent='Loading…';
   const prevBoard={rows:ROWS,mk:MK,pending:PENDING}; // restore point for a failed background refresh
-  ROWS=[];PENDING=[];MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmT:[],gmK:[],hrL:[]};const PITJOBS=[];const GAMEJOBS=[];
+  ROWS=[];PENDING=[];MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],phA:[],gm:[],gmT:[],gmR:[],gmK:[],hrL:[]};const PITJOBS=[];const GAMEJOBS=[];
   const EXPHR={},SPKEXP={}; // per-batter expected HR count / per-starter expected K — feed the game-level markets
   try{
     prog('Fetching schedule…');
@@ -1588,7 +1592,7 @@ async function loadDay(){
       const pit=PIT[pj.pid];
       if(!pit)return;
       const oppB=pj.oppIds.map(id=>BAT[id]).filter(Boolean);
-      [['k','kP','pitcher_strikeouts',CONFIG.kEdge],['bb','bbP','pitcher_walks',CONFIG.bbEdge]].forEach(([kind,mk,mkt,th])=>{
+      [['k','kP','pitcher_strikeouts',CONFIG.kEdge],['bb','bbP','pitcher_walks',CONFIG.bbEdge],['h','phA','pitcher_hits_allowed',CONFIG.phEdge]].forEach(([kind,mk,mkt,th])=>{
         const pl=pitcherLine(pit,oppB,kind);
         if(!pl)return;
         if(kind==='k')SPKEXP[pj.pid]=pl.exp;
@@ -1635,12 +1639,24 @@ async function loadDay(){
         eA:Math.round(g.eA*10)/10,eH:Math.round(g.eH*10)/10,total:g.total,
         mlEdge:mlEdge!=null?Math.round(mlEdge*1000)/1000:null,mlLean,mlPrice,
         totLine,totLean,verified:gj.verified,reasons:g.reasons,math:g.math});
-      // GAME TOTALS — full model total vs the REAL DraftKings run line
+      // GAME TOTALS — full model total vs the REAL DraftKings run total
       if(totLine!=null){
         MK.gmT.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
           verified:gj.verified,exp:g.total,line:totLine,
           lean:leanFor(g.total,totLine,CONFIG.gtEdge??0.6),
           edge:Math.round((g.total-totLine)*100)/100,reasons:g.reasons,math:g.math});
+      }
+      // RUN LINE — projected home margin vs the REAL DraftKings spread (\u00b11.5).
+      // Stored as line = -(home spread) so OVER = home covers and UNDER = the
+      // other side covers; lineGrade then grades unchanged vs the actual home margin.
+      if(od?.spread?.home!=null){
+        const rl=-od.spread.home;
+        const margin=Math.round((g.eH-g.eA)*100)/100;
+        MK.gmR.push({id:'g'+gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,pit:'',
+          verified:gj.verified,exp:margin,line:rl,hSpread:od.spread.home,
+          pOver:od.spread.hPrice??null,pUnder:od.spread.aPrice??null,
+          lean:leanFor(margin,rl,CONFIG.grEdge??0.75),
+          edge:Math.round((margin-rl)*100)/100,reasons:g.reasons,math:g.math});
       }
       /* GAME K TOTAL and GAME HR LINE were removed: they graded against
          fabricated "standard" lines (16.5 K / 2.5 HR) that no sportsbook
@@ -1650,7 +1666,7 @@ async function loadDay(){
     });
     MK.gm.sort((a,b)=>(b.conf||0)-(a.conf||0));
     ['hr'].forEach(m=>MK[m].sort((a,b)=>b.prob-a.prob));
-    ['kP','kB','bbP','bbB','tb','gmT'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
+    ['kP','kB','bbP','bbB','tb','phA','gmT','gmR'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
     // LOCK RULE: any row that was VERIFIED in an earlier run (local or league Firebase)
     // keeps its original score — refresh only overrides unverified/projected rows.
     prog('Checking earlier runs…');
@@ -1779,7 +1795,7 @@ function showCached(){
 // game that day went Final — partial days regrade on the next Load.
 
 function dayTallies(rows,mk,res,dbgDate,quiet){
-  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmT:{w:0,l:0,p:0}};
+  const t={hits:{h:0,n:0},hr:{h:0,n:0},kB:{h:0,n:0},bbB:{h:0,n:0},kP:{w:0,l:0,p:0},bbP:{w:0,l:0,p:0},gm:{w:0,l:0,p:0},tb:{w:0,l:0,p:0},gmT:{w:0,l:0,p:0},phA:{w:0,l:0,p:0},gmR:{w:0,l:0,p:0}};
   ((mk&&mk.gm)||[]).forEach(r=>{
     if(!r.verified||calGrade('gm',(r.conf||0)*100)<(CONFIG.gmLock||0)*100)return;
     const g=res['g'+r.id];
@@ -1812,7 +1828,7 @@ function dayTallies(rows,mk,res,dbgDate,quiet){
       t[m].n++;if((o[stat]||0)>=1)t[m].h++;
     });
   });
-  ['kP','bbP','tb','gmT'].forEach(m=>{
+  ['kP','bbP','tb','gmT','phA','gmR'].forEach(m=>{
     ((mk&&mk[m])||[]).forEach(r=>{
       if(!r.verified||r.gradeFlag)return;
       const gr=lineGrade(r,MK_ACTUAL[m](res[r.id]||res[String(r.id)]));
@@ -1962,7 +1978,7 @@ function lineGrade(r,actual){
   if(actual<r.line)return r.lean==='UNDER'?'W':'L';
   return 'P';
 }
-const MK_ACTUAL={kB:o=>o?.so??null,bbB:o=>o?.bb??null,kP:o=>o?.pk??null,bbP:o=>o?.pbb??null,tb:o=>o?.tb??null,gmT:o=>(o&&o.hs!=null&&o.as!=null)?o.hs+o.as:null,gmK:o=>o?.tk??null,hrL:o=>o?.thr??null};
+const MK_ACTUAL={kB:o=>o?.so??null,bbB:o=>o?.bb??null,kP:o=>o?.pk??null,bbP:o=>o?.pbb??null,tb:o=>o?.tb??null,phA:o=>o?.ph??null,gmT:o=>(o&&o.hs!=null&&o.as!=null)?o.hs+o.as:null,gmR:o=>(o&&o.hs!=null&&o.as!=null)?o.hs-o.as:null,gmK:o=>o?.tk??null,hrL:o=>o?.thr??null};
 window.MK_ACTUAL=MK_ACTUAL;window.playedBat=playedBat;
 
 async function loadStoredDay(date){
@@ -2339,7 +2355,9 @@ const PB_META={
   kP:{tag:'PITCHER K',what:'the pitcher goes OVER/UNDER his DraftKings strikeout line',kind:'edge',th:'kEdge'},
   bbP:{tag:'PITCHER BB',what:'the pitcher goes OVER/UNDER his DraftKings walk line',kind:'edge',th:'bbEdge'},
   tb:{tag:'TOTAL BASES',what:'the batter goes OVER/UNDER his DraftKings total-bases line',kind:'edge',th:'tbEdge'},
-  gmT:{tag:'GAME TOTALS',what:'combined runs go OVER/UNDER the DraftKings total',kind:'edge',th:'gtEdge'}
+  gmT:{tag:'GAME TOTALS',what:'combined runs go OVER/UNDER the DraftKings total',kind:'edge',th:'gtEdge'},
+  gmR:{tag:'RUN LINE',what:'the picked side covers the DraftKings run line (spread)',kind:'edge',th:'grEdge'},
+  phA:{tag:'PITCHER HITS',what:'the pitcher goes OVER/UNDER his DraftKings hits-allowed line',kind:'edge',th:'phEdge'}
 };
 function pbLockOf(m){
   if(m==='hits')return Math.round(CONFIG.lock*100);
@@ -2363,7 +2381,14 @@ function pbRows(m,Dt){
     (mk[m]||[]).forEach(r=>{
       if(r.gradeFlag||r.line==null||r.exp==null)return;
       const d=r.exp-r.line;
-      out.push({id:r.id,name:r.name,sub:(STD_LINE_MK[m]?'std':'DK')+' line '+r.line+' · exp '+r.exp,grade:Math.round(Math.abs(d)*10)/10,lean:d>=0?'OVER':'UNDER',r:r,txt:'',w:!r.verified});
+      const row={id:r.id,name:r.name,sub:(STD_LINE_MK[m]?'std':'DK')+' line '+r.line+' · exp '+r.exp,grade:Math.round(Math.abs(d)*10)/10,lean:d>=0?'OVER':'UNDER',r:r,txt:'',w:!r.verified};
+      if(m==='gmR'&&r.hSpread!=null){
+        // members see the SIDE that covers, not the OVER/UNDER encoding
+        const sgn=v=>(v>0?'+':'')+v;
+        row.txt='<b>'+(d>=0?r.team+' '+sgn(r.hSpread):r.opp+' '+sgn(-r.hSpread))+'</b> covers the run line';
+        row.sub='DK run line · model margin '+(r.exp>=0?'+':'')+r.exp;
+      }
+      out.push(row);
     });
   }
   out.sort((a,b)=>b.grade-a.grade);
@@ -2493,10 +2518,10 @@ function wirePbNav(el){
    the same number — and they move the moment a threshold changes. */
 window.__AT=null;
 try{window.__AT=JSON.parse(localStorage.getItem('fablehits_at')||'null');}catch(e){}
-function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge'].map(k=>CONFIG[k]));}
+function atSig(){return JSON.stringify(['lock','hrLock','gmLock','kbLock','bbbLock','kEdge','bbEdge','tbEdge','gtEdge','phEdge','grEdge'].map(k=>CONFIG[k]));}
 function atTalliesFor(D){
   const mk=D.mk||{},fm={...mk};
-  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge'],['gmT','gtEdge']].forEach(([m,k])=>{
+  [['kP','kEdge'],['bbP','bbEdge'],['tb','tbEdge'],['gmT','gtEdge'],['phA','phEdge'],['gmR','grEdge']].forEach(([m,k])=>{
     const th=CONFIG[k]??0;
     fm[m]=(mk[m]||[]).filter(r=>r.line!=null&&r.exp!=null&&Math.abs(r.exp-r.line)>=th)
       .map(r=>({...r,lean:(r.exp-r.line)>=0?'OVER':'UNDER'}));
@@ -2576,8 +2601,8 @@ function drawCurrent(rowsOverride){
     drawGames(rows);
   }else{
     const withLine=rows.filter(r=>r.line!=null).length;
-    const unit=MARKET==='tb'?'total bases':MARKET==='gmT'?'combined runs':MARKET==='gmK'?'combined strikeouts':MARKET==='hrL'?'combined home runs':MARKET.startsWith('k')?'strikeouts':'walks';
-    const who=(MARKET==='gmT'||MARKET==='gmK'||MARKET==='hrL')?'games':MARKET.endsWith('P')?'pitchers':'batters';
+    const unit=MARKET==='tb'?'total bases':MARKET==='gmT'?'combined runs':MARKET==='gmR'?'home margin vs the spread':MARKET==='phA'?'hits allowed':MARKET==='gmK'?'combined strikeouts':MARKET==='hrL'?'combined home runs':MARKET.startsWith('k')?'strikeouts':'walks';
+    const who=(MARKET==='gmT'||MARKET==='gmK'||MARKET==='hrL'||MARKET==='gmR')?'games':(MARKET.endsWith('P')||MARKET==='phA')?'pitchers':'batters';
     const lineNote=(MARKET==='gmK'||MARKET==='hrL')?`<span class="chip">graded vs the standard ${MARKET==='gmK'?'16.5':'2.5'} line</span>`:`<span class="chip"><b>${withLine}</b> with DK lines${withLine?'':' — pull props on Diamond IQ main first'}</span>`;
     head.innerHTML=`<div class="chips">${rateChip(MARKET)}<span class="chip"><b>${rows.length}</b> ${who} · expected ${unit}</span>${lineNote}</div>`;
     drawLineList(rows);
@@ -2671,7 +2696,13 @@ function drawLineList(rows){
     let dk;
     if(r.line!=null){
       const cls=r.lean==='OVER'?'t-lock':r.lean==='UNDER'?'t-strong':'t-pass';
-      dk=`<div style="text-align:right"><span class="tier ${cls}">${r.lean==='—'?'NO EDGE':r.lean}</span><div style="font-size:.6rem;color:var(--mt2);margin-top:3px">${lineTag(MARKET)} ${r.line} · ${r.edge>=0?'+':''}${(r.edge??0).toFixed(1)}</div></div>`;
+      let leanTxt=r.lean==='—'?'NO EDGE':r.lean,lineNote=lineTag(MARKET)+' '+r.line;
+      if(MARKET==='gmR'&&r.hSpread!=null){ // show the SIDE that covers, not the O/U encoding
+        const sgn=v=>(v>0?'+':'')+v;
+        leanTxt=r.lean==='OVER'?r.team+' '+sgn(r.hSpread):r.lean==='UNDER'?r.opp+' '+sgn(-r.hSpread):'NO EDGE';
+        lineNote='DK run line';
+      }
+      dk=`<div style="text-align:right"><span class="tier ${cls}">${leanTxt}</span><div style="font-size:.6rem;color:var(--mt2);margin-top:3px">${lineNote} · ${r.edge>=0?'+':''}${(r.edge??0).toFixed(1)}</div></div>`;
     }else{
       dk=`<span class="tier t-pass">NO LINE</span>`;
     }
@@ -2703,7 +2734,7 @@ function applyFilter(){
    only overrides unconfirmed matchups (confirmed ones are locked). */
 function hydrateCompact(remote){
   ROWS=(remote.rows||[]).map(r=>({...r,locked:!!r.verified,reasons:null,pAB:0,ab:0,splitMult:1,pitMult:1,ptMult:1,parkF:1}));
-  MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],gm:[],gmT:[],gmK:[],hrL:[]};
+  MK={hr:[],tb:[],kP:[],kB:[],bbP:[],bbB:[],phA:[],gm:[],gmT:[],gmR:[],gmK:[],hrL:[]};
   if(remote.mk)Object.keys(MK).forEach(m=>{MK[m]=(remote.mk[m]||[]).map(r=>({...r,reasons:null}));});
   PENDING=[];
 }
@@ -2926,7 +2957,7 @@ async function runLabPrem(){
           await cfgPull();
           await pullLabCfgPrem();
           premShadowUpdate();
-          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gtEdge]);
+          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gtEdge,CONFIG.phEdge,CONFIG.grEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
           if(oldHash!==cfgHash){
@@ -3109,7 +3140,7 @@ async function runLabPrem(){
     else {setTxt('hs14','—');setTxt('hs14N','no graded picks');}
   }
 
-  const MKL={gm:'GAME PREDICTIONS',gmT:'GAME TOTALS',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB'};
+  const MKL={gm:'GAME PREDICTIONS',gmT:'GAME TOTALS',gmR:'RUN LINE',hits:'HITS',tb:'TOTAL BASES',hr:'HR',kP:'PITCHER K',kB:'BATTER K',bbP:'PITCHER BB',bbB:'BATTER BB',phA:'PITCHER HITS'};
   let VIEW='14d', MKT='gm', EXP=null;
   const DAYC={};
   window.__stat={
