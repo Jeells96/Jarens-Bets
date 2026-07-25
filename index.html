@@ -238,11 +238,12 @@ body{
   border-radius:0; box-sizing:border-box; padding:0 16px calc(30px + env(safe-area-inset-bottom)); }
 @media (min-width:820px){ #adminovl .box{ max-width:780px !important; border-left:1px solid var(--hair2); border-right:1px solid var(--hair2); } }
 #adminovl #sethead{ position:sticky; top:0; z-index:7; display:flex; align-items:center; justify-content:space-between;
-  gap:10px; background:var(--panel); margin:0 -16px; padding:14px 16px 10px; border-bottom:1px solid var(--hair2); }
+  gap:10px; background:var(--panel); margin:0 -16px; border-bottom:1px solid var(--hair2);
+  padding:calc(14px + env(safe-area-inset-top)) 16px 10px; }
 #adminovl #sethead h3{ margin:0; font-size:18px; }
 #adminovl #sethead .xclose{ flex:0 0 auto; width:34px; height:34px; border-radius:9px; border:1px solid var(--hair);
   background:transparent; color:var(--dim); font-size:16px; cursor:pointer; }
-#adminovl #stabbar{ position:sticky; top:59px; z-index:6; background:var(--panel); margin:0 -16px 14px !important;
+#adminovl #stabbar{ position:sticky; top:calc(59px + env(safe-area-inset-top)); z-index:6; background:var(--panel); margin:0 -16px 14px !important;
   padding:10px 16px !important; border-bottom:1px solid var(--hair2); flex-wrap:wrap; }
 #adminovl #stabbar .stabbtn{ min-width:96px; }
 .newdot{ position:absolute; top:-6px; right:-6px; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
@@ -2996,6 +2997,14 @@ async function openSettingsPanel(){
       else gg = { ok: false };
       GRANTS = gg.ok ? (gg.apps ? new Set(gg.apps) : null) : new Set();
       try { markLockedCards(); } catch (e) {}
+      /* Someone you just handed a code is no longer waiting — refresh the gear
+         count and the sign-ins list right now instead of at the next reload. */
+      members = mems;
+      try {
+        var fsec = box.querySelector('#freesection');
+        if (fsec){ fsec.innerHTML = freeSectionHtml(); wireFree(); wirePromote(); wireDevices(); }
+      } catch (e) {}
+      try { refreshNewSignins(); } catch (e) {}
       var selfDenied = !gg.ok && sid && !(sid.code && adminPinOk(sid.code));
       msg.textContent = selfDenied
         ? '\u2713 Saved. Heads up: this device\u2019s sign-in is no longer on the list — it\u2019ll be blocked on next open (use your Owner PIN to get back in).'
@@ -3373,8 +3382,10 @@ document.addEventListener('DOMContentLoaded', function(){
      expired paidUntil), same as the apps. runGate is idempotent: access
      intact = nothing visible happens; access lost = the gate drops. */
   setInterval(function(){
+    if (document.hidden) return;
+    try { refreshNewSignins(); } catch (e) {}   // a code given elsewhere clears the dot here too
     var sm = savedMember();
-    if (document.hidden || !sm || (sm.code && adminPinOk(sm.code))) return;
+    if (!sm || (sm.code && adminPinOk(sm.code))) return;
     runGate();
   }, 90000);
   runGate().then(function(){ try { refreshNewSignins(); } catch (e) {} });
