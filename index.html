@@ -1089,8 +1089,8 @@ function regDevice(){
     var id = devId();
     if (!id) return;
     // key is versioned: v1 stamps came from the build whose writes were being
-    // rejected, and would have muted every device for six more hours
-    if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 6 * 3600 * 1000) return;
+    // rejected, and would have muted every device long past the repair
+    if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 2 * 60 * 1000) return;
     /* app_settings/devices, one map key per device (mask d.<id>), so devices
        never overwrite each other AND the write stays in a collection the
        database allows — a separate collection was rejected silently. */
@@ -1877,6 +1877,17 @@ async function openSettingsPanel(){
     });
     Object.keys(devByName).forEach(function(k){ devByName[k].sort(function(a, b){ return b.t - a.t; }); });
   } catch (e) {}
+  var APP_LABEL = { board: 'The Board', mlb: 'Diamond IQ Premium', mlbfree: 'Diamond IQ Free',
+    nfl: 'Gridline', nba: 'The Key', hockey: 'Icing', nascar: "Pete's Picks" };
+  var devAll = [];
+  Object.keys(devByName).forEach(function(n){
+    devByName[n].forEach(function(d){ devAll.push({ name: n, label: d.label, app: d.app, t: d.t }); });
+  });
+  devAll.sort(function(a, b){ return b.t - a.t; });
+  var prettyName = function(n){
+    if (n === 'admin') return 'You (owner PIN)';
+    return n.replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+  };
   var devAgo = function(t){
     if (!t) return 'unknown';
     var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
@@ -2015,6 +2026,17 @@ async function openSettingsPanel(){
       if (expired.length) bits.push('<div class="hint" style="color:#ff7a7a;margin:2px 0"><b>EXPIRED (locked out):</b> ' + esc(expired.join(', ')) + '</div>');
       if (expiring.length) bits.push('<div class="hint" style="color:#ffb454;margin:2px 0"><b>Expiring within 7 days:</b> ' + esc(expiring.join(', ')) + '</div>');
       return bits.length ? '<div style="border:1px solid var(--hair2);border-radius:9px;padding:8px 10px;margin-bottom:10px">' + bits.join('') + '</div>' : '';
+    })() +
+    (function(){
+      if (!devAll.length) return '<p class="sub" style="margin:6px 0 10px;color:var(--dim2)">No entries recorded yet \u2014 this fills in as people open the Board or any app.</p>';
+      return '<div class="sub" style="margin:8px 0 4px"><b>Recent entries</b> \u2014 every time someone enters the Board or an app, newest first</div>' +
+        devAll.slice(0, 12).map(function(e){
+          return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(prettyName(e.name)) +
+            ' <span style="color:var(--dim2)">\u00b7 ' + esc(APP_LABEL[e.app] || e.app || 'app') + '</span></span>' +
+            '<span class="hint" style="color:var(--dim2)">' + esc(e.label) + '</span>' +
+            '<span class="hint" style="min-width:64px;text-align:right">' + esc(devAgo(e.t)) + '</span></div>';
+        }).join('') +
+        (devAll.length > 12 ? '<div class="hint" style="color:var(--dim2)">\u2026and ' + (devAll.length - 12) + ' more</div>' : '');
     })() +
     (function(){
       var own = devByName['admin'] || [];

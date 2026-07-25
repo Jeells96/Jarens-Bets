@@ -3220,8 +3220,8 @@ document.addEventListener('DOMContentLoaded', boot);
      Every successful entry stamps THIS device against the name that got in,
      one doc per device (member_devices/{id}) so two phones can never clobber
      each other's row. The Board totals them per member, which is how you spot
-     one code doing the rounds. Throttled to one write per device per 6h, and
-     any failure is silent — access never depends on it. ── */
+     one code doing the rounds. Re-stamped on every entry (2-minute debounce so one page load
+     writes once), and any failure is silent — access never depends on it. ── */
   function devId(){
     try {
       var k = 'board_device_v1', v = localStorage.getItem(k);
@@ -3243,7 +3243,7 @@ document.addEventListener('DOMContentLoaded', boot);
       if (!s || !s.name) return;
       var id = devId();
       if (!id) return;
-      if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 6 * 3600 * 1000) return;
+      if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 2 * 60 * 1000) return;
       /* Lives in app_settings/devices as ONE map keyed by device id. Writing
          with the nested field mask d.<id> touches only this device's key, so
          two phones still can't overwrite each other — and it stays inside the
@@ -3261,8 +3261,8 @@ document.addEventListener('DOMContentLoaded', boot);
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then(function(r){
-        // only start the 6h cooldown once it actually LANDED, so a rejected
-        // write can never mute the next six hours of attempts
+        // only start the debounce once it actually LANDED, so a rejected
+        // write can never mute the following attempts
         if (r && r.ok) localStorage.setItem('board_device_seen2', String(Date.now()));
       }).catch(function(){});
     } catch (e) {}
