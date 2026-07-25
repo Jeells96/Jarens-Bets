@@ -146,6 +146,26 @@ body{
   text-transform:uppercase; color:#0b0f14; background:var(--bulb);
   border-radius:999px; padding:4px 8px; }
 
+/* ---------- add-to-home-screen ---------- */
+#a2hs-btn{ display:flex; width:100%; align-items:center; gap:13px; margin:18px 0 4px; cursor:pointer;
+  background:linear-gradient(135deg,rgba(127,217,154,.14),rgba(127,217,154,.05));
+  border:1px solid rgba(127,217,154,.5); border-radius:14px; padding:16px 16px; color:var(--bone);
+  font:inherit; text-align:left; box-shadow:0 3px 18px rgba(127,217,154,.12); }
+#a2hs-btn:active{ transform:translateY(1px); }
+#a2hs-btn .a2hs-ico{ flex:0 0 auto; font-size:26px; line-height:1; }
+#a2hs-btn .a2hs-txt{ flex:1; min-width:0; display:block; }
+#a2hs-btn .a2hs-t{ display:block; font-size:15.5px; font-weight:800; letter-spacing:-.01em; }
+#a2hs-btn .a2hs-s{ display:block; font-size:12px; color:var(--dim); margin-top:2px; }
+#a2hs-btn .a2hs-arw{ flex:0 0 auto; color:#7fd99a; font-size:19px; }
+.a2step{ display:flex; gap:11px; align-items:flex-start; margin:11px 0; }
+.a2num{ flex:0 0 auto; width:23px; height:23px; border-radius:50%; background:#7fd99a; color:#08130b;
+  font:800 12.5px/23px ui-monospace,Menlo,monospace; text-align:center; }
+.a2body{ flex:1; min-width:0; font-size:14px; line-height:1.5; }
+.a2key{ display:inline-flex; align-items:center; gap:4px; border:1px solid var(--hair);
+  border-radius:6px; padding:1px 6px; font-weight:700; background:var(--board); white-space:nowrap; }
+.a2tab{ flex:1; padding:8px 0; border-radius:9px; border:1px solid var(--hair); background:transparent;
+  color:var(--dim2); font:inherit; font-size:12.5px; font-weight:700; cursor:pointer; }
+.a2tab.on{ border-color:#7fd99a; color:#7fd99a; }
 /* ---------- footer ---------- */
 .foot{ margin-top:34px; border-top:1px solid var(--hair2); padding-top:22px; }
 .foot h2{ font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.22em;
@@ -284,6 +304,15 @@ body{
 
   <main id="cards"><!-- cards injected --></main>
   <section id="superlocks" class="hidden" style="display:none"></section>
+
+  <button id="a2hs-btn" type="button">
+    <span class="a2hs-ico" aria-hidden="true">&#128241;</span>
+    <span class="a2hs-txt">
+      <span class="a2hs-t">Put The Board on your Home Screen</span>
+      <span class="a2hs-s">Opens like an app &middot; full screen &middot; one tap &middot; free</span>
+    </span>
+    <span class="a2hs-arw" aria-hidden="true">&rarr;</span>
+  </button>
 
   <footer class="foot">
     <h2>How the records work</h2>
@@ -3325,6 +3354,106 @@ document.addEventListener('DOMContentLoaded', function(){
 document.addEventListener('DOMContentLoaded', boot);
 </script>
 <script>
+/* ═══ ADD TO HOME SCREEN ═════════════════════════════════════════════════════
+   Steps differ per platform, so we detect and lead with the right ones — while
+   still letting anyone flip to the others. On Android/desktop Chrome the
+   browser hands us a real install prompt; when it does, the tutorial becomes a
+   single Install button instead of instructions. */
+(function(){
+  var btn = document.getElementById('a2hs-btn');
+  if (!btn) return;
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred = e; });
+  var standalone = false;
+  try {
+    standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  } catch (e) {}
+  function plat(){
+    var u = navigator.userAgent || '';
+    var iOS = /iPad|iPhone|iPod/.test(u) || (/Macintosh/.test(u) && navigator.maxTouchPoints > 1);
+    if (iOS) return 'ios';
+    if (/Android/.test(u)) return 'android';
+    return 'desktop';
+  }
+  var STEPS = {
+    ios: { name: 'iPhone / iPad', note: 'Safari can do this; Chrome on iPhone can too.', steps: [
+      'Tap the <span class="a2key">Share</span> button — the square with an arrow coming out the top. It\u2019s at the <b>bottom</b> of Safari, or top-right in Chrome.',
+      'Scroll the list and tap <span class="a2key">Add to Home Screen</span>.',
+      'Tap <span class="a2key">Add</span> in the top-right corner.',
+      'Done — The Board is on your Home Screen. Open it from there and it fills the whole screen, no address bar.'
+    ] },
+    android: { name: 'Android', note: 'Chrome, Samsung Internet and Edge all work.', steps: [
+      'Tap the <span class="a2key">\u22ee</span> menu in the top-right of the browser.',
+      'Tap <span class="a2key">Add to Home screen</span> (some phones say <span class="a2key">Install app</span>).',
+      'Tap <span class="a2key">Add</span> or <span class="a2key">Install</span> to confirm.',
+      'Done — the icon is on your home screen and opens full screen, like an app.'
+    ] },
+    desktop: { name: 'Computer', note: 'Chrome, Edge or Brave.', steps: [
+      'Look at the right-hand end of the address bar for the <span class="a2key">\u2295 Install</span> icon (a monitor with a down arrow).',
+      'Click it, then click <span class="a2key">Install</span>.',
+      'No icon there? Open the <span class="a2key">\u22ee</span> menu \u2192 <span class="a2key">Cast, save and share</span> \u2192 <span class="a2key">Install page as app</span>.',
+      'The Board opens in its own window from then on \u2014 pin it to your taskbar or dock.'
+    ] }
+  };
+  var cur = plat();
+  function render(ovl){
+    var d = STEPS[cur];
+    var tabs = Object.keys(STEPS).map(function(k){
+      return '<button class="a2tab' + (k === cur ? ' on' : '') + '" data-a2="' + k + '">' + STEPS[k].name + '</button>';
+    }).join('');
+    var body;
+    if (standalone){
+      body = '<div style="border:1px solid #7fd99a;border-radius:11px;padding:13px;margin-bottom:6px">' +
+        '<div style="font-weight:800;color:#7fd99a;margin-bottom:2px">\u2713 Already installed</div>' +
+        '<div class="sub" style="margin:0">You\u2019re running The Board from your Home Screen right now \u2014 nothing to do.</div></div>';
+    } else {
+      body = '<div style="display:flex;gap:6px;margin:0 0 14px">' + tabs + '</div>' +
+        '<div class="sub" style="margin:0 0 6px;color:var(--dim2)">' + d.note + '</div>' +
+        d.steps.map(function(st, i){
+          return '<div class="a2step"><span class="a2num">' + (i + 1) + '</span><span class="a2body">' + st + '</span></div>';
+        }).join('') +
+        (deferred && cur !== 'ios'
+          ? '<button class="go" id="a2-install" style="margin-top:12px">Install it for me \u2192</button>'
+          : '') +
+        '<div class="sub" style="margin:14px 0 0;color:var(--dim2);border-top:1px solid var(--hair2);padding-top:10px">' +
+          'It\u2019s a shortcut, not an app download \u2014 nothing to pay for, nothing from a store, and it updates itself. ' +
+          'Your sign-in comes with it, so you won\u2019t have to enter your code again.</div>';
+    }
+    ovl.querySelector('.box').innerHTML =
+      '<h3>Save The Board to your Home Screen</h3>' +
+      '<p class="sub" style="margin:0 0 12px">One tap to open, full screen, no address bar \u2014 it behaves like a normal app.</p>' +
+      body +
+      '<button class="close" id="a2-close" style="width:100%;margin-top:12px;border:1px solid var(--hair);border-radius:9px;padding:10px;background:transparent;color:var(--dim)">Close</button>';
+    ovl.querySelectorAll('.a2tab').forEach(function(t){
+      t.addEventListener('click', function(){ cur = t.getAttribute('data-a2'); render(ovl); });
+    });
+    var inst = ovl.querySelector('#a2-install');
+    if (inst) inst.addEventListener('click', async function(){
+      inst.disabled = true; inst.textContent = 'Opening the installer\u2026';
+      try { deferred.prompt(); var res = await deferred.userChoice; deferred = null;
+        inst.textContent = (res && res.outcome === 'accepted') ? '\u2713 Installed' : 'Installer closed \u2014 use the steps above';
+      } catch (e){ inst.textContent = 'Use the steps above'; }
+    });
+    ovl.querySelector('#a2-close').addEventListener('click', function(){ ovl.remove(); document.body.style.overflow = ''; });
+  }
+  btn.addEventListener('click', function(){
+    try { standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; } catch (e) {}
+    cur = plat();
+    var ovl = document.createElement('div');
+    ovl.className = 'ovl'; ovl.id = 'a2hsovl';
+    ovl.innerHTML = '<div class="box" style="max-width:430px"></div>';
+    document.body.appendChild(ovl); document.body.style.overflow = 'hidden';
+    ovl.addEventListener('click', function(e){ if (e.target === ovl){ ovl.remove(); document.body.style.overflow = ''; } });
+    render(ovl);
+  });
+  // already on the home screen? the button says so instead of nagging
+  if (standalone){
+    btn.querySelector('.a2hs-t').textContent = 'Already on your Home Screen';
+    btn.querySelector('.a2hs-s').textContent = 'You\u2019re running it as an app \u00b7 tap for details';
+  }
+  window.__a2hs = { plat: plat, steps: STEPS, standalone: function(){ return standalone; } };
+})();
+
 /* ═══ THE STORM ═══════════════════════════════════════════════════════════════
    A living sky behind the board: smoke banks rolling through, lightning that
    forks and crackles, strikes that detonate into sparks and fresh smoke, and
