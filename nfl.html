@@ -1208,13 +1208,12 @@ body{font-size:16px}
           <label class="lock-th-row"><span>First TD · min P(first) %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="firstTd"></label>
           <label class="lock-th-row"><span>Player yards · min model conf %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="yards"></label>
           <label class="lock-th-row"><span>Game lines · min model conf %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="lines"></label>
-          <label class="lock-th-row"><span>ATS (DK spread) · min cover prob %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="dk"></label>
+          <label class="lock-th-row"><span>vs DK (ATS + count props) · min win prob %</span><input type="number" min="0" max="99" inputmode="numeric" data-lockth="dk"></label>
         </div>
         <div class="setting-note" style="margin-top:12px">Hit tolerances — how close a projection must land to count as correct. Applies to scores/totals (pts) and every yardage prop (yds). Changing these re-grades all records instantly.</div>
         <div class="lock-th-grid">
           <label class="lock-th-row"><span>Scores &amp; totals · ± points</span><input type="number" min="0.5" max="50" step="0.5" inputmode="decimal" data-hittol="pts"></label>
           <label class="lock-th-row"><span>Yardage props · ± yards</span><input type="number" min="1" max="50" inputmode="numeric" data-hittol="yds"></label>
-          <label class="lock-th-row"><span>Count props (receptions / pass TDs) · ± count</span><input type="number" min="0.5" max="6" step="0.5" inputmode="decimal" data-hittol="cnt"></label>
         </div>
         <div class="setting-note" id="lock-th-note"></div>
         <div class="lock-tune">
@@ -1226,10 +1225,9 @@ body{font-size:16px}
               <option value="firstTd">First TD</option>
               <option value="yards">Player yards</option>
               <option value="lines">Game lines</option>
-              <option value="dk">ATS (DK spread)</option>
+              <option value="dk">vs DK (ATS + count props)</option>
               <option value="tolPts">± points (scores/totals)</option>
               <option value="tolYds">± yards (yardage props)</option>
-              <option value="tolCnt">± count (receptions / pass TDs)</option>
             </select>
             <input type="number" id="tune-target" min="1" max="99" inputmode="numeric" placeholder="target %">
             <button class="chip" id="tune-find">Find</button>
@@ -1596,7 +1594,7 @@ const LOCK_DEFAULTS = {
 // Hit tolerances — what counts as "correct" for score/yardage projections.
 // Editable in Settings and tunable to a target success rate, exactly like
 // lock thresholds. pts: game totals & team scores. yds: every yardage prop.
-const TOL_DEFAULTS = { pts: HIT_TOTAL_TOL, yds: HIT_YDS_TOL, cnt: 1 };
+const TOL_DEFAULTS = { pts: HIT_TOTAL_TOL, yds: HIT_YDS_TOL };
 function hitTol(key) {
   const ht = (state.settings && state.settings.hitTol) || {};
   const v = +ht[key];
@@ -4113,8 +4111,8 @@ const CAT_META = {
   anytimeTd:  { label: 'TD Locks (rush/rec)', th: 'anytimeTd', short: 'TD lock' },
   firstTd:    { label: 'First TD Pick',       th: 'firstTd',   short: '1st TD' },
   dkSpread:   { label: 'ATS (DK Spread)',     th: 'dk',        short: 'ATS' },
-  playerRecCnt: { label: 'Receptions ±1',     th: 'yards',     short: 'Receptions' },
-  playerPassTd: { label: 'QB Pass TDs ±1',    th: 'yards',     short: 'Pass TDs' },
+  playerRecCnt: { label: 'Receptions O/U (DK line)', th: 'dk',  short: 'Receptions' },
+  playerPassTd: { label: 'QB Pass TDs O/U (DK line)', th: 'dk', short: 'Pass TDs' },
 };
 function catDesc(k) {
   const t = lockTh(CAT_META[k].th);
@@ -4123,7 +4121,7 @@ function catDesc(k) {
   if (k === 'anytimeTd') return 'Scored a rush/rec TD (never passing)' + gate;
   if (k === 'firstTd') return 'Pick scored the actual first rush/rec TD' + gate;
   if (k === 'dkSpread') return 'Picked side covers the real DraftKings spread' + gate;
-  if (TOL_KEY_BY_CAT[k] === 'cnt') return 'Within ±' + hitTol('cnt') + (k === 'playerRecCnt' ? ' catches' : ' passing TDs') + gate;
+  if (k === 'playerRecCnt' || k === 'playerPassTd') return 'Beat the real DraftKings line (no line = not graded)' + gate;
   if (['total','awayPts','homePts'].includes(k)) return 'Within ±' + hitTol('pts') + ' pts' + gate;
   return 'Within ±' + hitTol('yds') + ' yds' + gate;
 }
@@ -4218,8 +4216,8 @@ function findToleranceForTarget(tolKey, targetPct) {
   }
   const pool = units.filter(u => TOL_KEY_BY_CAT[u.cat] === tolKey && u.adelta != null && unitQualifies(u));
   if (!pool.length) return null;
-  const step = tolKey === 'yds' ? 1 : 0.5;
-  const maxT = tolKey === 'pts' ? 21 : tolKey === 'cnt' ? 6 : 40;
+  const step = tolKey === 'pts' ? 0.5 : 1;
+  const maxT = tolKey === 'pts' ? 21 : 40;
   let best = null;
   for (let t = step; t <= maxT; t += step) {
     const hit = pool.reduce((c, u) => c + (u.adelta <= t ? 1 : 0), 0);
@@ -4231,6 +4229,9 @@ function findToleranceForTarget(tolKey, targetPct) {
   return best;
 }
 
+// Every category whose bet only exists because DraftKings posted a line.
+// The Board's master DK switch hides all of them together.
+function isDkCat(k) { return /^dk/.test(k) || k === 'playerRecCnt' || k === 'playerPassTd'; }
 function unitQualifies(u) {
   return calGrade(u.cat, u.metric) >= lockTh(CAT_META[u.cat].th);
 }
@@ -4239,7 +4240,6 @@ const TOL_KEY_BY_CAT = {
   total: 'pts', awayPts: 'pts', homePts: 'pts',
   teamPass: 'yds', teamRush: 'yds',
   playerPass: 'yds', playerRush: 'yds', playerRec: 'yds',
-  playerRecCnt: 'cnt', playerPassTd: 'cnt',
 };
 // Hit under CURRENT tolerances. Units store the raw miss distance (adelta), so
 // tolerance changes re-grade instantly. Falls back to the baked hit for units
@@ -4252,16 +4252,15 @@ function unitHit(u) {
 function catLabel(k) {
   if (['total','awayPts','homePts'].includes(k)) return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('pts'));
   if (TOL_KEY_BY_CAT[k] === 'yds') return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('yds'));
-  if (TOL_KEY_BY_CAT[k] === 'cnt') return CAT_META[k].label.replace(/±\d+(\.\d+)?/, '±' + hitTol('cnt'));
   return CAT_META[k].label;
 }
 // Aggregate raw units into per-category records, applying CURRENT thresholds
 function aggregateUnits(units) {
   const cats = {};
-  for (const k in CAT_META){ if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(k)) continue; cats[k] = { hit: 0, n: 0, label: catLabel(k), desc: catDesc(k) }; }
+  for (const k in CAT_META){ if (typeof window!=='undefined' && window.__DK_OK===false && isDkCat(k)) continue; cats[k] = { hit: 0, n: 0, label: catLabel(k), desc: catDesc(k) }; }
   const all = { hit: 0, n: 0, label: 'All Locks', desc: 'Every qualifying lock across all categories combined' };
   for (const u of units) {
-    if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(u.cat)) continue; 
+    if (typeof window!=='undefined' && window.__DK_OK===false && isDkCat(u.cat)) continue; 
     if (!cats[u.cat] || !unitQualifies(u)) continue;
     const h = unitHit(u);
     cats[u.cat].n++;
@@ -4392,14 +4391,16 @@ function gradeWeek() {
     }
   }
 
-  // Count props — receptions + QB pass TDs, graded ±hitTol('cnt')
+  // Count props — receptions + QB pass TDs, graded OVER/UNDER vs the REAL
+  // DraftKings line. gatherCountProps already dropped every player without a
+  // posted line, and an exact push (hit === null) is skipped here, so neither
+  // can nudge the record either way.
   for (const r of gatherCountProps()) {
-    if (!r.completed || r.actual == null) continue;
+    if (!r.completed || r.hit == null) continue;
     const g2 = state.games.find(x => String(x.id) === String(r.gameId));
     const gm2 = g2 ? g2.away.abbr + '@' + g2.home.abbr : '';
-    const delta = r.actual - r.projCnt;
-    units.push({ cat: r.cat, metric: r.conf, adelta: Math.abs(delta), hit: Math.abs(delta) <= hitTol('cnt'), game: gm2,
-      desc: r.name + ' ' + (r.cat === 'playerRecCnt' ? 'receptions' : 'pass TDs') + ' ' + r.projCnt + ' → ' + r.actual + ' (' + fmtSigned(delta, 1) + ') · conf ' + r.conf + '%' });
+    units.push({ cat: r.cat, metric: r.conf, hit: r.hit, game: gm2,
+      desc: r.name + ' ' + r.lean + ' ' + r.line + ' ' + (r.cat === 'playerRecCnt' ? 'receptions' : 'pass TDs') + ' (proj ' + r.projCnt + ', ' + r.conf + '%) → ' + r.actual });
   }
 
   const cats = aggregateUnits(units);
@@ -5081,12 +5082,33 @@ function playerCntSigma(p, key, pos) {
   const shrink = rows.length / (rows.length + 3);
   return { sigma: Math.max(0.4, shrink * playerSigma + (1 - shrink) * prior), n: rows.length };
 }
-function cntConfidence(p, key, pos, injuryStatus) {
+/* The DraftKings line for one player's count market, from the stored pull.
+   No line -> null, and the caller emits nothing: a bet the book never posted
+   can't be graded, so it must never move a success rate. */
+const CNT_MARKET = { receptions: 'player_receptions', passTds: 'player_pass_tds' };
+function dkPropLine(g, playerName, marketKey) {
+  const ev = findDKEventForGame(g);
+  const outs = ev && ev.markets && ev.markets[marketKey];
+  if (!outs) return null;
+  const norm = s2 => String(s2 || '').toLowerCase().replace(/[^a-z]/g, '');
+  const want = norm(playerName);
+  const mine = outs.filter(o => norm(o.description) === want);
+  if (!mine.length) return null;
+  const ov = mine.find(o => /over/i.test(o.name)), un = mine.find(o => /under/i.test(o.name));
+  const point = ov && ov.point != null ? ov.point : (un && un.point != null ? un.point : null);
+  if (point == null) return null;
+  return { line: point, over: ov ? ov.price : null, under: un ? un.price : null };
+}
+/* Probability our projection beats the posted line, from that player's own
+   count volatility. THIS is the grade — not a ± window around our own number. */
+function cntConfidence(p, key, pos, injuryStatus, proj, line) {
   const sg = playerCntSigma(p, key, pos);
-  let conf = (2 * normCdf(hitTol('cnt') / sg.sigma) - 1) * 100;
-  if (injuryStatus === 'questionable') conf *= 0.75;
+  const pOver = normCdf((proj - line) / sg.sigma);
+  const lean = pOver >= 0.5 ? 'OVER' : 'UNDER';
+  let conf = Math.max(pOver, 1 - pOver) * 100;
+  if (injuryStatus === 'questionable') conf = 50 + (conf - 50) * 0.75; // damp toward a coin flip
   conf = Math.max(5, Math.min(95, Math.round(conf)));
-  return { conf, sigma: sg.sigma, sampleN: sg.n };
+  return { conf, lean, sigma: sg.sigma, sampleN: sg.n };
 }
 function getPlayerCntProj(p, key, ctx) {
   const proj = projectPlayer(p);
@@ -5113,16 +5135,22 @@ function gatherCountProps() {
           teamPlayers.sort((a, b) => playerProjVolume(b, pos, ctx) - playerProjVolume(a, pos, ctx));
           const limit = pos === 'WR' ? 3 : 1;
           for (const p of teamPlayers.slice(0, limit)) {
+            // A REAL DraftKings line is the entry ticket. Without one there is no
+            // bet to make and nothing to grade — the category simply skips this
+            // player, so its success rate never moves.
+            const dk = dkPropLine(g, p.name, CNT_MARKET[key]);
+            if (!dk) continue;
             const got = getPlayerCntProj(p, key, ctx);
-            if (got.cnt <= (key === 'receptions' ? 0.9 : 0.4) && !g.completed) continue;
             const inj = g.completed ? null : playerInjury(g, p);
-            const pc = cntConfidence(p, key, pos, inj);
+            const pc = cntConfidence(p, key, pos, inj, got.cnt, dk.line);
             const actual = g.completed ? (key === 'receptions' ? (p.receptions || 0) : (p.passTds || 0)) : null;
-            const delta = actual != null ? actual - got.cnt : null;
+            // Exact push = no result; anything else grades against the book.
+            const hit = (actual == null || actual === dk.line) ? null
+              : (pc.lean === 'OVER' ? actual > dk.line : actual < dk.line);
             out.push({ gameId: g.id, completed: g.completed, name: p.name, abbr: p.abbr, position: pos,
               oppAbbr: side === 'away' ? g.home.abbr : g.away.abbr, cat, key,
-              projCnt: got.cnt, actual, delta, hit: delta != null ? Math.abs(delta) <= hitTol('cnt') : null,
-              conf: pc.conf, inj });
+              projCnt: got.cnt, line: dk.line, lean: pc.lean, price: pc.lean === 'OVER' ? dk.over : dk.under,
+              actual, hit, conf: pc.conf, inj });
           }
         }
       }
@@ -5213,10 +5241,10 @@ function gbRows(key) {
       _early = gbEarly(state.games.find(x => String(x.id) === String(r.gameId)));
       const lbl = key === 'playerRecCnt' ? 'receptions' : 'pass TDs';
       const tok = key + '|' + r.name + '|' + r.gameId;
-      push(tok, gbName(r.name, tok) + ' — ' + lbl + ' ' + r.projCnt + ' ±' + hitTol('cnt'),
-        r.abbr + ' vs ' + r.oppAbbr + (r.inj === 'questionable' ? ' · Q' : ''), calGrade(key, r.conf),
+      push(tok, gbName(r.name, tok) + ' — <b>' + r.lean + ' ' + r.line + '</b> ' + lbl,
+        r.abbr + ' vs ' + r.oppAbbr + ' · DK line' + (r.inj === 'questionable' ? ' · Q' : ''), calGrade(key, r.conf),
         r.completed ? r.hit : null,
-        'Projected <b>' + r.projCnt + ' ' + lbl + '</b> from per-game volume, matchup and recent form; the bet hits within ±' + hitTol('cnt') + '.' + (r.actual != null ? ' Actual: ' + r.actual + ' (' + fmtSigned(r.delta, 1) + ').' : ''));
+        'We project <b>' + r.projCnt + ' ' + lbl + '</b> against DraftKings’ posted <b>' + r.line + '</b> — that gap plus this player’s week-to-week swing gives ' + r.conf + '% on the ' + r.lean + '. Graded against the book’s line, never our own number; players DraftKings hasn’t priced are left out entirely.' + (r.actual != null ? ' Actual: ' + r.actual + '.' : ''));
     }
   } else {
     for (const g of state.games) {
@@ -5356,7 +5384,7 @@ function renderGameBets(main) {
   }
   const order = Object.keys(GB_META).map(k => ({ k, pct: (gbRate(GB_META[k].rateKeys) || {}).pct ?? -1 })).sort((a, b) => b.pct - a.pct);
   for (const { k } of order) {
-    if (typeof window !== 'undefined' && window.__DK_OK === false && /^dk/.test(k)) continue;
+    if (typeof window !== 'undefined' && window.__DK_OK === false && isDkCat(k)) continue;
     const meta = GB_META[k];
     const all = gbRows(k);
     if (!all.length) continue;
@@ -5677,14 +5705,14 @@ document.getElementById('acc-sync-toggle').addEventListener('change', e => {
   logEvent('info', 'cfg', 'accuracy sync → ' + (e.target.checked ? 'on' : 'off'));
 });
 // ---- Auto-tune: find threshold for a target hit rate ----
-const TUNE_LABEL = { winner: 'Winner pick', anytimeTd: 'Anytime TD', firstTd: 'First TD', yards: 'Player yards', lines: 'Game lines', dk: 'ATS (DK spread)', tolPts: '± points (scores/totals)', tolYds: '± yards (yardage props)', tolCnt: '± count (rec / pass TD props)' };
+const TUNE_LABEL = { winner: 'Winner pick', anytimeTd: 'Anytime TD', firstTd: 'First TD', yards: 'Player yards', lines: 'Game lines', dk: 'vs DK bets (ATS / count props)', tolPts: '± points (scores/totals)', tolYds: '± yards (yardage props)' };
 document.getElementById('tune-find').addEventListener('click', () => {
   const key = document.getElementById('tune-key').value;
   const target = Math.max(1, Math.min(99, Math.round(+document.getElementById('tune-target').value || 0)));
   const resEl = document.getElementById('tune-result');
   if (!target) { resEl.innerHTML = '<div class="setting-note" style="color:var(--hot)">Enter a target hit rate % first.</div>'; return; }
-  const isTol = key === 'tolPts' || key === 'tolYds' || key === 'tolCnt';
-  const tolKey = key === 'tolPts' ? 'pts' : key === 'tolCnt' ? 'cnt' : 'yds';
+  const isTol = key === 'tolPts' || key === 'tolYds';
+  const tolKey = key === 'tolPts' ? 'pts' : 'yds';
   const best = isTol ? findToleranceForTarget(tolKey, target) : findThresholdForTarget(key, target);
   if (!best) {
     resEl.innerHTML = '<div class="setting-note" style="color:var(--hot)">No graded data to tune against — run a season scan (Facts tab) or load a completed week first.' + (isTol ? ' (Older stored scans lack miss-distance data — re-scan once.)' : '') + '</div>';
@@ -5705,8 +5733,8 @@ document.getElementById('tune-find').addEventListener('click', () => {
     '</div>';
   document.getElementById('tune-apply').addEventListener('click', (e) => {
     const k = e.target.dataset.key, v = +e.target.dataset.t;
-    if (k === 'tolPts' || k === 'tolYds' || k === 'tolCnt') {
-      const tk = k === 'tolPts' ? 'pts' : k === 'tolCnt' ? 'cnt' : 'yds';
+    if (k === 'tolPts' || k === 'tolYds') {
+      const tk = k === 'tolPts' ? 'pts' : 'yds';
       if (!state.settings.hitTol) state.settings.hitTol = {};
       state.settings.hitTol[tk] = v;
       saveSettings();

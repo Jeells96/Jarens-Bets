@@ -1158,7 +1158,7 @@ var FREE_KNOBS = [['hits','Batter hits'],['tb','Total bases'],['hr','Home runs']
 var NBA_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals/team pts \u00b7 lock \u2265 %'],['props','Player props \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['stat','Stat tolerance \u00b1'],['cnt','Count tolerance \u00b1 (threes/steals/blocks)']];
 var ICE_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['lines','Totals \u00b7 lock \u2265 %'],['props','Goal/point scorers \u00b7 lock \u2265 %'],['dk','vs DK bets \u00b7 lock \u2265 %'],['goals','Total tolerance \u00b1'],['p1','1st-period tolerance \u00b1']];
 var NASCAR_KNOBS = [['winner','Race winner \u00b7 show \u2265 %'],['top5','Top 5 \u00b7 lock \u2265 %'],['top10','Top 10 \u00b7 lock \u2265 %'],['top15','Top 15 \u00b7 lock \u2265 %'],['h2h','Head-to-head \u00b7 lock \u2265 %']];
-var NFL_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['anytimeTd','Anytime TD \u00b7 lock \u2265 %'],['firstTd','First TD \u00b7 lock \u2265 %'],['lines','Totals/scores/team yds \u00b7 lock \u2265 %'],['yards','Player yards/props \u00b7 lock \u2265 %'],['dk','ATS (DK spread) \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['yds','Yards tolerance \u00b1'],['cnt','Count tolerance \u00b1 (rec/pass TD)']];
+var NFL_KNOBS = [['winner','Winner \u00b7 lock \u2265 %'],['anytimeTd','Anytime TD \u00b7 lock \u2265 %'],['firstTd','First TD \u00b7 lock \u2265 %'],['lines','Totals/scores/team yds \u00b7 lock \u2265 %'],['yards','Player yards \u00b7 lock \u2265 %'],['dk','vs DK bets (ATS/receptions/pass TDs) \u00b7 lock \u2265 %'],['pts','Points tolerance \u00b1'],['yds','Yards tolerance \u00b1']];
 var PREVIEW_CACHE = {};
 async function listAllDocs(cfg, coll){
   var out = [], tok = '';
@@ -1302,8 +1302,8 @@ function nascarRates(units, th){
 // Mirrors nfl.html unitQualifies/unitHit exactly.
 function nflRates(units, th, tol){
   var TH = { winner:'winner', total:'lines', awayPts:'lines', homePts:'lines', teamPass:'lines', teamRush:'lines',
-             playerPass:'yards', playerRush:'yards', playerRec:'yards', playerRecCnt:'yards', playerPassTd:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd', dkSpread:'dk' };
-  var TOLK = { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds', playerRecCnt:'cnt', playerPassTd:'cnt' };
+             playerPass:'yards', playerRush:'yards', playerRec:'yards', playerRecCnt:'dk', playerPassTd:'dk', anytimeTd:'anytimeTd', firstTd:'firstTd', dkSpread:'dk' };
+  var TOLK = { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds' };
   var agg = { allLocks:{h:0,n:0} };
   Object.keys(TH).forEach(function(k){ agg[k] = { h:0, n:0 }; });
   units.forEach(function(u){
@@ -1374,7 +1374,7 @@ var LAB_APPS = [
   { ns: 'mlb', file: 'premium.html', name: 'Diamond IQ Premium (MLB)', kind: 'calib', proj: 'ADMIN', reportPath: 'fable_settings/labReport', cfgPath: 'fable_settings/lab_cfg', shadowPath: 'fable_settings/labShadow',
     cats: { hits: 'Batter hits', hr: 'Home runs', kB: 'Batter K', bbB: 'Batter BB', gm: 'Game winner' } },
   { ns: 'nfl', file: 'nfl.html', name: 'Gridline (NFL)', kind: 'calib', proj: 'NFLP', reportPath: 'accuracy/labReport', cfgPath: 'accuracy/lab_cfg', shadowPath: 'accuracy/labShadow',
-    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)', playerRecCnt: 'Receptions', playerPassTd: 'QB pass TDs' } },
+    cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)', playerRecCnt: 'Receptions vs DK', playerPassTd: 'Pass TDs vs DK' } },
   { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)', kind: 'weights', proj: 'NFLP', reportPath: 'nba/labReport', cfgPath: 'nba/lab_cfg', shadowPath: 'nba/labShadow',
     cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', playerPts: 'Player points', playerReb: 'Player rebounds', playerAst: 'Player assists', playerThr: 'Player threes', playerStl: 'Player steals', playerBlk: 'Player blocks' } },
   { ns: 'nhl', file: 'hockey.html', name: 'Icing (NHL)', kind: 'weights', proj: 'NFLP', reportPath: 'nhl/labReport', cfgPath: 'nhl/lab_cfg', shadowPath: 'nhl/labShadow',
@@ -1746,7 +1746,7 @@ async function openSettingsPanel(){
   var PREM_DEF = { lock: 0.78, hrLock: 0.10, gmLock: 0, kbLock: 0.75, bbbLock: 0.45, kEdge: 0.45, bbEdge: 0.25, tbEdge: 0.45, gtEdge: 0.6, phEdge: 0.9, grEdge: 0.75 };
   var FREE_DEF = { hits: 79.5, tb: 72, hr: 72, bb: 72, k: 72, pbb: 72, bbat: 72, hrLine: 72, gnoHR: 72, gmultiHR: 72 };
   var NBA_TH_DEF = { winner: 60, lines: 0, props: 0, dk: 0 }, NBA_TOL_DEF = { pts: 4, stat: 3, cnt: 1 };
-  var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0, dk: 55 }, NFL_TOL_DEF = { pts: 3, yds: 10, cnt: 1 };
+  var NFL_TH_DEF = { winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0, dk: 55 }, NFL_TOL_DEF = { pts: 3, yds: 10 };
   var ICE_TH_DEF = { winner: 58, lines: 0, props: 40, dk: 0 }, ICE_TOL_DEF = { goals: 1, p1: 1 };
   var NASCAR_TH_DEF = { winner: 0, top5: 45, top10: 58, top15: 68, h2h: 60 };
   var premCfg = {}; Object.keys(PREM_DEF).forEach(function(k){ premCfg[k] = (premCfgRaw && typeof premCfgRaw[k] === 'number') ? premCfgRaw[k] : PREM_DEF[k]; });
@@ -1898,7 +1898,7 @@ async function openSettingsPanel(){
     '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once, 10\u201345 minutes before its start</b> \u2014 as close to gametime as possible for the freshest lines, while still leaving time to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
     '<p class="sub" style="margin:0 0 8px;color:var(--dim2)"><b>What each app pulls when its games hit the window:</b><br>' +
       '\u2022 <b>Diamond IQ Premium</b> \u2014 <b>player props</b> (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks), one call per game, <b>plus MLB game lines</b> (moneyline, total + run-line spread) in one bulk call per wave \u2014 those feed Game Predictions, Game Totals and the Run Line.<br>' +
-      '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled (one call per game).<br>' +
+      '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled \u2014 including <b>receptions</b> and <b>pass TDs</b>, which are graded straight against DraftKings\u2019 line (one call per game).<br>' +
       '\u2022 <b>The Key</b> \u2014 moneyline, spread and total in one bulk call per wave.<br>' +
       '\u2022 <b>Icing</b> \u2014 moneyline, total and puck-line spread in one bulk call per wave.</p>' +
     '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
@@ -2167,7 +2167,7 @@ async function openSettingsPanel(){
   hookPreview('g-preview', 'g-prevout', async function(){
     var all = readNums(NFL_KNOBS, 'gk-');
     if (!all) throw new Error('Every field needs a number \u2265 0.');
-    var sp = split2(all, ['pts','yds','cnt']);
+    var sp = split2(all, ['pts','yds']);
     if (!PREVIEW_CACHE.nfl){
       var docs = await listAllDocs(NFLP, 'accuracy');
       var units = [];
@@ -2181,7 +2181,7 @@ async function openSettingsPanel(){
     }
     if (!PREVIEW_CACHE.nfl.units.length) throw new Error('No stored picks yet — the next Gridline grading run uploads them (every 6h). Try again after it runs.');
     var cur = nflRates(PREVIEW_CACHE.nfl.units, nflTh, nflTol), nxt = nflRates(PREVIEW_CACHE.nfl.units, sp.th, sp.tol);
-    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', awayPts:'Away score', homePts:'Home score', teamPass:'Team pass yds', teamRush:'Team rush yds', playerPass:'Player pass yds', playerRush:'Player rush yds', playerRec:'Player rec yds', playerRecCnt:'Receptions', playerPassTd:'QB pass TDs', anytimeTd:'Anytime TD', firstTd:'First TD', dkSpread:'ATS (DK spread)' };
+    var L = { allLocks:'All locks', winner:'Winner', total:'Game total', awayPts:'Away score', homePts:'Home score', teamPass:'Team pass yds', teamRush:'Team rush yds', playerPass:'Player pass yds', playerRush:'Player rush yds', playerRec:'Player rec yds', playerRecCnt:'Receptions vs DK', playerPassTd:'Pass TDs vs DK', anytimeTd:'Anytime TD', firstTd:'First TD', dkSpread:'ATS (DK spread)' };
     return '<div class="hint" style="padding:6px 0 2px">success rates at the numbers you\u2019ve entered (' + PREVIEW_CACHE.nfl.weeks + ' stored weeks)</div>' +
       Object.keys(L).map(function(m){ return rateRow(L[m], cur[m], nxt[m]); }).join('');
   });
@@ -2292,13 +2292,13 @@ async function openSettingsPanel(){
   });
   hookSolve('gk-', NFL_KNOBS, ['pts','yds'], async function(target){
     await ensureNFLC();
-    var tolVals = { pts: parseFloat(box.querySelector('#gk-pts').value) || 3, yds: parseFloat(box.querySelector('#gk-yds').value) || 10, cnt: parseFloat(box.querySelector('#gk-cnt').value) || 1 };
+    var tolVals = { pts: parseFloat(box.querySelector('#gk-pts').value) || 3, yds: parseFloat(box.querySelector('#gk-yds').value) || 10 };
     var pools = unitPools(PREVIEW_CACHE.nfl.units,
       { winner:'winner', total:'lines', awayPts:'lines', homePts:'lines', teamPass:'lines', teamRush:'lines',
-        playerPass:'yards', playerRush:'yards', playerRec:'yards', playerRecCnt:'yards', playerPassTd:'yards', anytimeTd:'anytimeTd', firstTd:'firstTd', dkSpread:'dk' },
-      { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds', playerRecCnt:'cnt', playerPassTd:'cnt' },
+        playerPass:'yards', playerRush:'yards', playerRec:'yards', playerRecCnt:'dk', playerPassTd:'dk', anytimeTd:'anytimeTd', firstTd:'firstTd', dkSpread:'dk' },
+      { total:'pts', awayPts:'pts', homePts:'pts', teamPass:'yds', teamRush:'yds', playerPass:'yds', playerRush:'yds', playerRec:'yds' },
       tolVals, 'm', 'c', 'a', 'h');
-    var L = { winner:'Winner lock %', lines:'Totals/scores/team yds lock %', yards:'Player yards/props lock %', dk:'ATS (DK spread) lock %', anytimeTd:'Anytime TD lock %', firstTd:'First TD lock %' };
+    var L = { winner:'Winner lock %', lines:'Totals/scores/team yds lock %', yards:'Player yards lock %', dk:'vs DK bets lock %', anytimeTd:'Anytime TD lock %', firstTd:'First TD lock %' };
     return '<div class="hint" style="padding:6px 0 2px">to hit ' + target + '% at the current tolerances</div>' +
       Object.keys(L).map(function(k){ return suggRow(L[k], solveTarget(pools[k] || [], target)); }).join('');
   });
@@ -2357,7 +2357,7 @@ async function openSettingsPanel(){
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify(nbaPayload) }, t: { stringValue: new Date().toISOString() } } })
       }).then(function(r){ if (!r.ok) throw new Error('NBA config save failed (HTTP ' + r.status + ')'); });
-      var nflSp = split2(nflOut, ['pts','yds','cnt']);
+      var nflSp = split2(nflOut, ['pts','yds']);
       await fsPatch(NFLP, 'accuracy/config_locks', { lockThresholds: nflSp.th, hitTol: nflSp.tol, updatedAt: Date.now() });
       var iceSp = split2(iceOut, ['goals','p1']);
       await fetch(FS + NFLP.p + '/databases/(default)/documents/nhl/lockcfg?key=' + NFLP.k + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
@@ -2370,7 +2370,7 @@ async function openSettingsPanel(){
       }).then(function(r){ if (!r.ok) throw new Error('NASCAR config save failed (HTTP ' + r.status + ')'); });
       premCfg = premOut; freeCfg = freeOut;
       var nb2 = split2(nbaOut, ['pts','stat','cnt']); nbaTh = nb2.th; nbaTol = nb2.tol;
-      var nf2 = split2(nflOut, ['pts','yds','cnt']); nflTh = nf2.th; nflTol = nf2.tol;
+      var nf2 = split2(nflOut, ['pts','yds']); nflTh = nf2.th; nflTol = nf2.tol;
       var ic2 = split2(iceOut, ['goals','p1']); iceTh = ic2.th; iceTol = ic2.tol;
       nascarTh = nascarOut;
       // Re-evaluate this device against the list just saved, so member/access
@@ -2459,7 +2459,7 @@ async function slConfigs(){
     iceTh: Object.assign({ winner: 58, lines: 0, props: 40, dk: 0 }, (iceCfg && iceCfg.lockThresholds) || {}),
     iceTol: Object.assign({ goals: 1, p1: 1 }, (iceCfg && iceCfg.hitTol) || {}),
     nflTh: Object.assign({ winner: 55, anytimeTd: 50, firstTd: 0, yards: 0, lines: 0, dk: 55 }, (nflCfg && nflCfg.lockThresholds) || {}),
-    nflTol: Object.assign({ pts: 3, yds: 10, cnt: 1 }, (nflCfg && nflCfg.hitTol) || {}),
+    nflTol: Object.assign({ pts: 3, yds: 10 }, (nflCfg && nflCfg.hitTol) || {}),
     nascarTh: Object.assign({ winner: 0, top5: 45, top10: 58, top15: 68, h2h: 60 }, (nascarCfg && nascarCfg.lockThresholds) || {})
   };
 }
@@ -2622,7 +2622,7 @@ async function refreshSuperLocks(force){
       slUnitsLane(cfgs, { cacheKey: 'nfl', coll: 'accuracy', todayDoc: 'gridline/todayLocks', name: 'Gridline', key: 'nfl', unitsField: 'units', maxAgeDays: 6,
         rates: function(u){ return nflRates(u, cfgs.nflTh, cfgs.nflTol); },
         qualifies: function(){ return false; }, hitOf: function(){ return null; },
-        labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', playerRecCnt: 'Receptions', playerPassTd: 'Pass TDs', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)' },
+        labels: { winner: 'Winner', total: 'Game total', awayPts: 'Away points', homePts: 'Home points', teamPass: 'Team pass yds', teamRush: 'Team rush yds', playerPass: 'Pass yds', playerRush: 'Rush yds', playerRec: 'Rec yds', playerRecCnt: 'Receptions vs DK', playerPassTd: 'Pass TDs vs DK', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)' },
         season: 'NFL runs Sep–Feb' }),
       slUnitsLane(cfgs, { cacheKey: 'nascar', coll: 'nascar_accuracy', todayDoc: 'nascar/today', name: "Pete's Picks", key: 'nascar', maxAgeDays: 6,
         rates: function(u){ return nascarRates(u, cfgs.nascarTh); },
