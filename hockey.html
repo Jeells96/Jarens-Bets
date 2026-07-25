@@ -1451,9 +1451,22 @@ async function runCronGrade(){
     var d = x % 12; if (d === 0) d = 12;
     return d + ':00 ' + ap;
   }
-  function hoursBlock(vh){
+  function hoursBlock(vh, name){
     var w = vh && vh[APPKEY];
     if (!w || !w.on) return null;
+    // who: blank = everyone; otherwise only the ticked members are restricted
+    if (w.who){
+      var names = String(w.who).split('|').map(norm);
+      if (names.indexOf(norm(name || '')) < 0) return null;
+    }
+    // days: the restriction only bites on its chosen days (Pacific)
+    try {
+      if (w.d != null && String(w.d).length){
+        var DW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        var dw = DW[new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }).format(new Date())];
+        if (dw != null && String(w.d).split(',').indexOf(String(dw)) < 0) return null;
+      }
+    } catch (e) {}
     var fH = +w.f, tH = +w.t;
     if (!isFinite(fH) || !isFinite(tH) || fH === tH) return null; // same start/end = no restriction
     var hr = NaN;
@@ -1468,12 +1481,35 @@ async function runCronGrade(){
       '<div style="font-size:24px;font-weight:800;margin-bottom:8px">Outside viewing hours</div>' +
       '<div style="color:#8fa0b5;font-size:14.5px;line-height:1.6">This app is open <b style="color:#e8edf4">' + fmtHr(hb.f) + ' \u2013 ' + fmtHr(hb.t) + ' PT</b>.<br>Come back during these hours to view.</div></div>');
   }
-  function passGated(code){
+  function passGated(code, name){
     if (!(code && pinOk(code))){
-      var hb = hoursBlock(VHOURS);
+      var hb = hoursBlock(VHOURS, name);
       if (hb){ showHoursCover(hb); return; }
     }
     pass();
+  }
+  /* ── WATCHDOG ─ enforcement doesn't wait for the next visit. Every 90s an
+     open app re-checks the member list (removed member, expired paidUntil)
+     and the viewing window, and drops the curtain mid-session the moment
+     either says no. Owner-PIN devices are left alone; a network blip changes
+     nothing (checks only act on data that actually loaded). ── */
+  function startWatchdog(){
+    if (startWatchdog._t) return;
+    var tick = async function(){
+      try {
+        if (document.hidden) return;
+        var s2 = saved();
+        if (!s2 || (s2.code && pinOk(s2.code))) return;
+        var list2 = null;
+        try { var wr = await fetch(DOC + 'app_settings/board_access?key=' + MK, { cache: 'no-store' }); if (wr.ok) list2 = parseMembers((await wr.json()).fields || {}); } catch (e) {}
+        try { var wr2 = await fetch(DOC + 'app_settings/view_hours?key=' + MK, { cache: 'no-store' }); if (wr2.ok){ var wf = (await wr2.json()).fields || {}; VHOURS = (wf.w && wf.w.stringValue) ? JSON.parse(wf.w.stringValue) : null; } } catch (e) {}
+        if (list2 && !okApp(grantOf(s2, list2))){ showGate(list2); return; }
+        var hb2 = hoursBlock(VHOURS, s2.name);
+        if (hb2) showHoursCover(hb2);
+      } catch (e) {}
+    };
+    try { window.__wdTick = tick; } catch (e) {}
+    startWatchdog._t = setInterval(tick, 90000);
   }
   function devId(){
     try {
@@ -1520,7 +1556,7 @@ async function runCronGrade(){
       }).catch(function(){});
     } catch (e) {}
   }
-  function pass(){ regDevice(); if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
+  function pass(){ regDevice(); startWatchdog(); if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
   function inp(id, ph, cap){ return '<input id="' + id + '" placeholder="' + ph + '" autocomplete="off" autocapitalize="' + cap + '" style="width:100%;box-sizing:border-box;background:#182231;border:1px solid #243146;border-radius:9px;color:#e8edf4;padding:12px;font-size:16px;margin-bottom:10px">'; }
   // First and last go in their own boxes so a half-entered name can't slip through
   function nameRow(){
@@ -1588,7 +1624,7 @@ async function runCronGrade(){
         logFree(name); pass(); return;
       }
       var g = grantOf({ name: name, code: code }, list);
-      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkEff(g, dkVisG, String(code).trim())); passGated(code); }
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkEff(g, dkVisG, String(code).trim())); passGated(code, name); }
       else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
       else { err('No match — check your name and code, or your access was turned off.'); }
     };
@@ -1629,7 +1665,7 @@ async function runCronGrade(){
     }
     var g = grantOf(s, list);
     setDk(g.ok ? dkEff(g, dkVis, (s && s.code) || '') : dkVis); // effective DK = global switch AND this member's DK mode (unlimited / 15-day pass / off)
-    if (okApp(g)){ passGated(s && s.code); return; }
+    if (okApp(g)){ passGated(s && s.code, s && s.name); return; }
     showGate(list);
   })();
 })();

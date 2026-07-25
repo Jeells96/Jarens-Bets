@@ -705,7 +705,7 @@ async function fillFreeTop3(){
 /* ---------- My plan panel: current tier + what the others include ---------- */
 var TIER_DEFS = [
   { id: '1', price: '$10', per: '/mo', name: 'Tier 1', tagline: 'One sport, your pick',
-    perks: ['The sport of your choice — MLB, NFL, NBA or NHL', 'DraftKings odds · the 1st–15th of each month', 'Every pick graded walk-forward'] },
+    perks: ['The sport of your choice — MLB, NFL, NBA or NHL', 'Every pick graded walk-forward', 'No DraftKings odds — that starts at Tier 2'] },
   { id: '2', price: '$20', per: '/mo', name: 'Tier 2', tagline: 'Every sport + Super Locks',
     perks: ['All four sports — MLB, NFL, NBA & NHL', '⚡ Super Locks — the day’s 80%+ bets', 'DraftKings odds · the 1st–15th of each month'] },
   { id: '3', price: '$40', per: '/mo', name: 'Tier 3', tagline: 'Everything, unlimited',
@@ -1003,7 +1003,7 @@ function gateSuperPill(){
   var ok = superLocksAllowed();
   vs.classList.toggle('locked', !ok);
   vs.innerHTML = ok
-    ? '<span class="sl-t">\u26a1 Super Locks</span><span class="sl-s">only the 80%+ bet types</span>'
+    ? '<span class="sl-t">\u26a1 Super Locks</span><span class="sl-s">tap here to enter \u00b7 only the 80%+ bet types</span>'
     : '<span class="sl-t">\u26a1 Super Locks \ud83d\udd12</span><span class="sl-s">premium \u00b7 tap to unlock</span>';
   if (!ok){ // if access was just revoked while they were viewing it, drop them out
     var sl = document.getElementById('superlocks');
@@ -1015,8 +1015,8 @@ var DEFAULT_AD = {
   title: 'Unlock the full Board',
   pitch: 'You\u2019re on the free tier. Pick a plan and get the real models \u2014 sharper projections, deeper stats, and the bets the free version can\u2019t show.',
   perks: [
-    '$10 / month \u2014 the sport of your choice + DraftKings odds 15 days a month',
-    '$20 / month \u2014 every sport + \u26a1 Super Locks (still a 15-day DK pass)',
+    '$10 / month \u2014 the sport of your choice, every pick graded (no DraftKings odds)',
+    '$20 / month \u2014 every sport + \u26a1 Super Locks + DraftKings odds the 1st\u201315th',
     '$40 / month \u2014 everything, plus unlimited DraftKings odds all month',
     'Every pick graded walk-forward \u2014 check the record before you tap in'
   ],
@@ -2012,15 +2012,33 @@ async function openSettingsPanel(){
     for (var hh = 0; hh < 24; hh++) o += '<option value="' + hh + '"' + (hh === val ? ' selected' : '') + '>' + vhFmt(hh) + '</option>';
     return '<select class="' + cls + '" data-vhapp="' + app + '" style="padding:6px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' + o + '</select>';
   };
-  var vhRowsHtml = VH_APPS.map(function(a){
-    var w = vhCfg[a[0]] || {};
-    return '<div class="row" style="margin:7px 0;flex-wrap:wrap;gap:8px">' +
-      '<span class="lbl" style="flex:1;min-width:150px;font-size:13px">' + a[1] + '</span>' +
-      '<label class="tog"><input type="checkbox" class="vh-on" data-vhapp="' + a[0] + '"' + (w.on ? ' checked' : '') + '><span></span></label>' +
-      '<span class="hint">from</span>' + vhSel('vh-f', a[0], isFinite(+w.f) && w.f != null ? +w.f : 9) +
-      '<span class="hint">until</span>' + vhSel('vh-t', a[0], isFinite(+w.t) && w.t != null ? +w.t : 17) +
-    '</div>';
-  }).join('');
+  var VH_DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+  var vhRowsHtml = function(memberList){
+    return VH_APPS.map(function(a){
+      var w = vhCfg[a[0]] || {};
+      var dOn = (w.d != null && String(w.d).length) ? String(w.d).split(',') : ['0','1','2','3','4','5','6'];
+      var whoOn = w.who ? String(w.who).split('|').map(function(x){ return x.trim().toLowerCase(); }) : [];
+      return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:8px 10px;margin:8px 0">' +
+        '<div class="row" style="margin:0;flex-wrap:wrap;gap:8px">' +
+          '<span class="lbl" style="flex:1;min-width:150px;font-size:13px">' + a[1] + '</span>' +
+          '<label class="tog"><input type="checkbox" class="vh-on" data-vhapp="' + a[0] + '"' + (w.on ? ' checked' : '') + '><span></span></label>' +
+          '<span class="hint">from</span>' + vhSel('vh-f', a[0], isFinite(+w.f) && w.f != null ? +w.f : 9) +
+          '<span class="hint">until</span>' + vhSel('vh-t', a[0], isFinite(+w.t) && w.t != null ? +w.t : 17) +
+        '</div>' +
+        '<div class="hint" style="margin:7px 0 3px">Restricted on these days:</div>' +
+        '<div style="display:flex;gap:4px">' + VH_DAYS.map(function(dl, di){
+          var on = dOn.indexOf(String(di)) >= 0;
+          return '<span class="vh-day' + (on ? ' on' : '') + '" data-vhapp="' + a[0] + '" data-day="' + di + '" style="flex:1;text-align:center;cursor:pointer;padding:6px 0;border:1px solid ' + (on ? '#c9a84c' : 'var(--hair)') + ';border-radius:8px;font-size:11.5px;' + (on ? 'color:#c9a84c;font-weight:800' : 'color:var(--dim2)') + '">' + dl + '</span>';
+        }).join('') + '</div>' +
+        '<div class="hint" style="margin:8px 0 3px">Applies to <b>everyone</b> unless you tick specific members:</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:6px 12px">' + memberList.map(function(m2){
+          if (!m2.name) return '';
+          var chk = whoOn.indexOf(String(m2.name).trim().toLowerCase()) >= 0;
+          return '<label class="hint" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="vh-who" data-vhapp="' + a[0] + '" data-name="' + esc(m2.name) + '"' + (chk ? ' checked' : '') + '>' + esc(m2.name) + '</label>';
+        }).join('') + '</div>' +
+      '</div>';
+    }).join('');
+  };
   var freeLog = [], freeSeenAt = 0;
   try {
     var flr = await fsGetRaw(ADMIN, 'app_settings/free_log');
@@ -2157,7 +2175,7 @@ async function openSettingsPanel(){
         '<button class="close m-del" style="width:auto;margin:0;padding:4px 6px;color:#ff7a7a">\u2715</button></div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px">' +
         '<select class="m-tier" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' +
-          '<option value="1"' + sel(tier, '1') + '>Tier 1 \u00b7 $10 (one sport)</option>' +
+          '<option value="1"' + sel(tier, '1') + '>Tier 1 \u00b7 $10 (one sport, no DK)</option>' +
           '<option value="2"' + sel(tier, '2') + '>Tier 2 \u00b7 $20 (all + Super Locks)</option>' +
           '<option value="3"' + sel(tier, '3') + '>Tier 3 \u00b7 $40 (all + unlimited DK)</option>' +
           '<option value="custom"' + sel(tier, 'custom') + '>Custom</option></select>' +
@@ -2186,7 +2204,7 @@ async function openSettingsPanel(){
     if (tier === '1'){
       var sp = sportSel.value;
       checks.forEach(function(cb){ var k = cb.getAttribute('data-app'); cb.checked = (k === sp || k === 'mlbfree'); });
-      dkSel.value = 'limited';
+      dkSel.value = 'off';   // DraftKings odds start at Tier 2
     } else { // tier 2 or 3 = everything (all apps + Super Locks)
       checks.forEach(function(cb){ cb.checked = true; });
       dkSel.value = tier === '3' ? 'unlimited' : 'limited';
@@ -2239,7 +2257,7 @@ async function openSettingsPanel(){
     '</div>' +
     '<div id="stab-members">' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport + DK odds the 1st–15th; <b>$20</b> = all sports + ⚡ Super Locks + DK the 1st–15th; <b>$40</b> = all + unlimited DK. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport, <b>no DK odds</b>; <b>$20</b> = all sports + ⚡ Super Locks + DK odds the 1st–15th; <b>$40</b> = all + unlimited DK. DraftKings odds start at Tier 2 — members set up before this change keep their old DK setting until you re-apply their tier. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
     (function(){
       var t = new Date().toLocaleDateString('en-CA');
       var soon = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA');
@@ -2338,8 +2356,8 @@ async function openSettingsPanel(){
     '<div id="stab-hours" style="display:none">' +
     '<div class="sect"><div class="row"><span class="lbl">Viewing hours</span><span class="hint">office-sharing guard</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Restrict WHEN each app can be viewed, so one paying login can\u2019t feed a whole office all day. Flip an app on and pick its window \u2014 outside it, members see \u201ccome back during these hours\u201d instead of the picks. All times are <b>Pacific</b>.</p>' +
-    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">You (owner PIN) and the automation are never restricted. An overnight window works \u2014 8 PM until 2 AM wraps past midnight. Same start and end = no restriction. Honest limit: the check runs when an app is <b>opened</b>; someone already inside when the window closes keeps that view until they next open it.</p>' +
-    vhRowsHtml +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">You (owner PIN) and the automation are never restricted. An overnight window works \u2014 8 PM until 2 AM wraps past midnight. Same start and end = no restriction. Every open app also re-checks itself every 90 seconds, so a closing window (or a removed/expired member) drops the curtain mid-session \u2014 nobody keeps a stale view.</p>' +
+    vhRowsHtml(members) +
     '</div></div>' +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
@@ -2377,7 +2395,7 @@ async function openSettingsPanel(){
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
     var div = document.createElement('div');
-    div.innerHTML = memberRowHtml({ name: '', code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'limited' }, Date.now());
+    div.innerHTML = memberRowHtml({ name: '', code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'off' }, Date.now());
     box.querySelector('#memlist').appendChild(div.firstChild);
     wireDel(); wireDevices();
   });
@@ -2419,6 +2437,15 @@ async function openSettingsPanel(){
     });
   }
   wireFree();
+  box.querySelectorAll('.vh-day').forEach(function(c){
+    c.addEventListener('click', function(){
+      var on = !c.classList.contains('on');
+      c.classList.toggle('on', on);
+      c.style.borderColor = on ? '#c9a84c' : 'var(--hair)';
+      c.style.color = on ? '#c9a84c' : 'var(--dim2)';
+      c.style.fontWeight = on ? '800' : '';
+    });
+  });
   /* One tap turns a free sign-in into a member row with their name already in,
      scrolled to and focused on the code field — the only thing left to type. */
   function wirePromote(){
@@ -2426,7 +2453,7 @@ async function openSettingsPanel(){
     b.addEventListener('click', function(){
       var nm = b.getAttribute('data-name') || '';
       var div = document.createElement('div');
-      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'limited' }, Date.now());
+      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'off' }, Date.now());
       var row = div.firstChild;
       box.querySelector('#memlist').appendChild(row);
       wireDel(); wireDevices();
@@ -2805,7 +2832,11 @@ async function openSettingsPanel(){
         var on = box.querySelector('.vh-on[data-vhapp="' + a2[0] + '"]');
         var fSel = box.querySelector('.vh-f[data-vhapp="' + a2[0] + '"]');
         var tSel = box.querySelector('.vh-t[data-vhapp="' + a2[0] + '"]');
-        vhOut[a2[0]] = { on: !!(on && on.checked), f: fSel ? +fSel.value : 9, t: tSel ? +tSel.value : 17 };
+        var dOut = [];
+        box.querySelectorAll('.vh-day[data-vhapp="' + a2[0] + '"]').forEach(function(c2){ if (c2.classList.contains('on')) dOut.push(c2.getAttribute('data-day')); });
+        var whoOut = [];
+        box.querySelectorAll('.vh-who[data-vhapp="' + a2[0] + '"]').forEach(function(c3){ if (c3.checked) whoOut.push(c3.getAttribute('data-name')); });
+        vhOut[a2[0]] = { on: !!(on && on.checked), f: fSel ? +fSel.value : 9, t: tSel ? +tSel.value : 17, d: dOut.join(','), who: whoOut.join('|') };
       });
       await adminSetDoc('app_settings', 'view_hours', { w: JSON.stringify(vhOut) });
       var adSave = {
@@ -2943,34 +2974,36 @@ async function slPremiumLane(cfgs){
   if (day){
     var res = day.results || null;
     var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
-    var push = function(m, desc, metric, hit){ locks.push({ cat: L[m] || m, catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric, hit: hit }); };
+    /* Unconfirmed matchups show like they do on the Premium Bets page — with
+       the amber notice — but they are NEVER graded until confirmed. */
+    var push = function(m, desc, metric, hit, unconf){ locks.push({ cat: L[m] || m, catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric, hit: unconf ? null : hit, unconf: !!unconf }); };
     if (qual.hits) (day.rows || []).forEach(function(r){
-      if (r.verified && !r.gradeFlag && r.prob != null && r.prob >= cfgs.prem.lock){
+      if (!r.gradeFlag && r.prob != null && r.prob >= cfgs.prem.lock){
         var o = res ? res[r.id] : null;
-        push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', Math.round(r.prob * 100) + '%', played(o) ? ((o.h || 0) >= 1) : null);
+        push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', Math.round(r.prob * 100) + '%', played(o) ? ((o.h || 0) >= 1) : null, !r.verified);
       }
     });
     var mk = day.mk || {};
     if (qual.gm) (mk.gm || []).forEach(function(r){
-      if (r.verified && (r.conf || 0) >= (cfgs.prem.gmLock || 0)){
+      if ((r.conf || 0) >= (cfgs.prem.gmLock || 0)){
         var g = res ? res['g' + r.id] : null;
         var gh = (g && g.hs != null && g.as != null && g.hs !== g.as) ? ((g.hs > g.as) === (r.pick === r.team)) : null;
-        push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — pick ' + r.pick, r.conf != null ? Math.round(r.conf) + '%' : '', gh);
+        push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — pick ' + r.pick, r.conf != null ? Math.round(r.conf) + '%' : '', gh, !r.verified);
       }
     });
     if (qual.hr) (mk.hr || []).forEach(function(r){
-      if (r.verified && !r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock){
+      if (!r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock){
         var oh = res ? res[r.id] : null;
-        push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%', played(oh) ? ((oh.hr || 0) >= 1) : null);
+        push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%', played(oh) ? ((oh.hr || 0) >= 1) : null, !r.verified);
       }
     });
     [['kB', 'so', 'kbLock', '1+ strikeout'], ['bbB', 'bb', 'bbbLock', '1+ walk']].forEach(function(c){
       if (!qual[c[0]]) return;
       (mk[c[0]] || []).forEach(function(r){
         var p = r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null);
-        if (r.verified && !r.gradeFlag && p != null && p >= cfgs.prem[c[2]]){
+        if (!r.gradeFlag && p != null && p >= cfgs.prem[c[2]]){
           var ob = res ? res[r.id] : null;
-          push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%', played(ob) ? ((ob[c[1]] || 0) >= 1) : null);
+          push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%', played(ob) ? ((ob[c[1]] || 0) >= 1) : null, !r.verified);
         }
       });
     });
@@ -2978,7 +3011,7 @@ async function slPremiumLane(cfgs){
     Object.keys(edgeKey).forEach(function(m){
       if (!qual[m]) return;
       (mk[m] || []).forEach(function(r){
-        if (!r.verified || r.gradeFlag || r.line == null || r.exp == null) return;
+        if (r.gradeFlag || r.line == null || r.exp == null) return;
         var d = r.exp - r.line, th = cfgs.prem[edgeKey[m]];
         var lean = d >= th ? 'OVER' : d <= -th ? 'UNDER' : null;
         if (!lean) return;
@@ -2992,7 +3025,7 @@ async function slPremiumLane(cfgs){
           var sgn = function(v){ return (v > 0 ? '+' : '') + v; };
           desc = (lean === 'OVER' ? (r.team || '') + ' ' + sgn(r.hSpread) : (r.opp || '') + ' ' + sgn(-r.hSpread)) + ' covers the run line (' + r.name + ')';
         }
-        push(m, desc, 'exp ' + r.exp, eh);
+        push(m, desc, 'exp ' + r.exp, eh, !r.verified);
       });
     });
   }
@@ -3170,7 +3203,8 @@ async function refreshSuperLocks(force){
                      : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;min-width:13px;text-align:center">✗</span>'
                      : (past ? '<span style="color:var(--dim2);min-width:13px;text-align:center">—</span>' : '');
             html += '<div style="display:flex;gap:9px;align-items:baseline;padding:6px 0;border-top:1px solid var(--hair2)">' + mark +
-              '<span style="flex:1;font-size:14px;min-width:0">' + esc(l.desc) + '</span>' +
+              '<span style="flex:1;font-size:14px;min-width:0">' + esc(l.desc) +
+                (l.unconf ? ' <span style="color:#ffb454;font-size:10.5px;font-weight:700;white-space:nowrap">\u25cb lineup not confirmed</span>' : '') + '</span>' +
               '<span style="flex:0 0 auto;font:800 13px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span></div>';
           });
         });
@@ -3220,6 +3254,14 @@ document.addEventListener('DOMContentLoaded', function(){
   if (pb) pb.addEventListener('click', openPlanPanel);
   var vs = document.getElementById('vSuper');
   if (vs) vs.addEventListener('click', function(){ showView('super'); });
+  /* WATCHDOG — the open Board re-checks access every 90s (removed member,
+     expired paidUntil), same as the apps. runGate is idempotent: access
+     intact = nothing visible happens; access lost = the gate drops. */
+  setInterval(function(){
+    var sm = savedMember();
+    if (document.hidden || !sm || (sm.code && adminPinOk(sm.code))) return;
+    runGate();
+  }, 90000);
   runGate().then(function(){ try { refreshNewSignins(); } catch (e) {} });
 });
 document.addEventListener('DOMContentLoaded', boot);
