@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Jaren&#39;s Bets">
@@ -208,6 +208,23 @@ body{
 .gearbtn{ position:relative; margin-left:auto; background:none; border:1px solid var(--hair); color:var(--dim);
   border-radius:8px; padding:5px 9px; font-size:14px; line-height:1; cursor:pointer; }
 .gearbtn:active{ color:var(--bone); background:var(--face); }
+/* ---------- zoom ----------
+   iOS refuses the pinch gesture inside a Home-Screen app, so the Board carries
+   its own zoom. It scales the whole page (cards, an embedded app, settings) and
+   sticks between visits. The storm cancels it back out so the sky keeps filling
+   the screen exactly once. */
+.zoombtn{ background:none; border:1px solid var(--hair); color:var(--dim); border-radius:8px;
+  padding:5px 9px; font:800 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; cursor:pointer; }
+.zoombtn:active{ color:var(--bone); background:var(--face); }
+.zoombar{ position:fixed; left:50%; transform:translateX(-50%); bottom:calc(16px + env(safe-area-inset-bottom));
+  z-index:2000; display:flex; align-items:center; gap:6px; padding:8px; border-radius:14px;
+  background:var(--panel); border:1px solid var(--hair2); box-shadow:0 10px 30px rgba(0,0,0,.55); }
+.zoombar.hidden{ display:none; }
+.zoombar button{ background:var(--face); border:1px solid var(--hair); color:var(--bone); border-radius:10px;
+  padding:9px 14px; font:800 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; cursor:pointer; }
+.zoombar button:active{ background:var(--hair2); }
+.zoombar button.small{ font-size:12.5px; padding:9px 11px; color:var(--dim); }
+.zoombar #zoomlvl{ min-width:56px; text-align:center; font:800 14px/1 ui-monospace,Menlo,monospace; color:var(--bone); }
 /* Super Locks is the premium tab — it should not look like a sibling of "The Board" */
 #viewpills{ align-items:stretch; }
 .vpill.sl{
@@ -228,13 +245,13 @@ body{
 @media (prefers-reduced-motion: reduce){ .vpill.sl::after{ animation:none; display:none; } }
 /* unread badge: new free sign-ins that still have no access code */
 /* ── STORM BACKGROUND ── the living sky behind the board */
-#stormbg{ position:fixed; inset:0; z-index:0; pointer-events:none; display:block; }
+#stormbg{ position:fixed; inset:0; z-index:0; pointer-events:none; display:block; zoom:var(--unzoom,1); }
 .wrap{ position:relative; z-index:1; }
 .ovl{ z-index:1000; }
 /* Settings is a full-screen view: edge-to-edge on the phone, centered column
    on desktop, with the title bar and tab bar pinned while you scroll. */
 #adminovl{ padding:0; align-items:flex-start; height:100%; overflow-y:auto;
-  -webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y; }
+  -webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y pinch-zoom; }
 #adminovl .box{ max-width:none !important; width:100%; min-height:100dvh; margin:0 auto !important;
   border-radius:0; box-sizing:border-box; padding:0 16px calc(30px + env(safe-area-inset-bottom)); }
 @media (min-width:820px){ #adminovl .box{ max-width:780px !important; border-left:1px solid var(--hair2); border-right:1px solid var(--hair2); } }
@@ -289,7 +306,8 @@ body{
     <div class="eyebrow">
       <span id="greet">Members only</span><span style="color:var(--hair)">/</span>
       <span class="live"><span class="bulb"></span>Live</span>
-      <button class="gearbtn" id="gearbtn" aria-label="Settings" style="margin-left:auto">&#9881;</button>
+      <button class="zoombtn" id="zoombtn" aria-label="Text size" title="Text size" style="margin-left:auto">Aa</button>
+      <button class="gearbtn" id="gearbtn" aria-label="Settings" style="margin-left:0">&#9881;</button>
     </div>
     <!-- Rename this wordmark to whatever you want the hub called. -->
     <h1 class="wordmark">The Board
@@ -333,12 +351,22 @@ body{
   <div class="appbar">
     <button class="appback" id="appback" type="button" aria-label="Back to The Board">&larr;&nbsp;Board</button>
     <div class="apptitle" id="apptitle"></div>
+    <button class="zoombtn" id="zoombtn2" type="button" aria-label="Text size" title="Text size">Aa</button>
     <a class="appout" id="appout" target="_blank" rel="noopener" aria-label="Open in a new tab" title="Open in a new tab">&#8599;</a>
   </div>
   <div class="appframe">
     <div class="apploading" id="apploading">Loading&hellip;</div>
     <iframe id="appiframe" title="Embedded app" allow="clipboard-write; geolocation"></iframe>
   </div>
+</div>
+
+<!-- Zoom, for Home-Screen app mode where iOS blocks the pinch gesture -->
+<div id="zoombar" class="zoombar hidden" role="dialog" aria-label="Zoom">
+  <button id="zoomout" type="button" aria-label="Smaller">&minus;</button>
+  <span id="zoomlvl">100%</span>
+  <button id="zoomin" type="button" aria-label="Bigger">+</button>
+  <button id="zoomreset" class="small" type="button">Reset</button>
+  <button id="zoomdone" class="small" type="button">Done</button>
 </div>
 
 <script>
@@ -507,6 +535,39 @@ function unlockPage(key){
   window.scrollTo(0, PAGE_LOCK.y);
 }
 window.__pageLock = PAGE_LOCK; // test hook
+
+/* ---------- zoom ----------
+   A Home-Screen app on iOS won't take a pinch, so the Board zooms itself. The
+   whole page scales — board cards, the app running inside it, settings — and
+   the level is remembered on this device. The storm canvas divides the zoom
+   back out (--unzoom) so the sky still covers exactly one screen. */
+var ZOOM_LS = 'board_zoom_v1';
+var ZOOM_STEPS = [1, 1.15, 1.3, 1.5, 1.75, 2];
+var zoomLevel = 1;
+function zoomApply(z, save){
+  z = Math.min(2, Math.max(1, +z || 1));
+  zoomLevel = z;
+  var de = document.documentElement;
+  if (z === 1){ de.style.zoom = ''; de.style.removeProperty('--unzoom'); }
+  else { de.style.zoom = String(z); de.style.setProperty('--unzoom', String(1 / z)); }
+  var l = document.getElementById('zoomlvl');
+  if (l) l.textContent = Math.round(z * 100) + '%';
+  if (save) { try { localStorage.setItem(ZOOM_LS, String(z)); } catch (e) {} }
+  try { window.dispatchEvent(new Event('resize')); } catch (e) {}   // storm re-fits
+}
+function zoomStep(dir){
+  var i = 0, best = 99;
+  ZOOM_STEPS.forEach(function(s, k){ var d = Math.abs(s - zoomLevel); if (d < best){ best = d; i = k; } });
+  zoomApply(ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, i + dir))], true);
+}
+function zoomBar(on){
+  var b = document.getElementById('zoombar');
+  if (!b) return;
+  if (on == null) on = b.classList.contains('hidden');
+  b.classList.toggle('hidden', !on);
+}
+try { zoomApply(parseFloat(localStorage.getItem(ZOOM_LS)) || 1, false); } catch (e) {}
+window.__zoom = function(){ return zoomLevel; }; // test hook
 
 var FS = 'https://firestore.googleapis.com/v1/projects/';
 function docUrl(cfg){ return FS + cfg.projectId + '/databases/(default)/documents/' + cfg.path + '?key=' + cfg.apiKey; }
@@ -3547,6 +3608,17 @@ function showView(which){
 document.addEventListener('DOMContentLoaded', function(){
   var g = document.getElementById('gearbtn');
   if (g) g.addEventListener('click', openSettingsPanel);
+  ['zoombtn', 'zoombtn2'].forEach(function(id){
+    var z = document.getElementById(id);
+    if (z) z.addEventListener('click', function(){ zoomBar(null); });
+  });
+  var zi = document.getElementById('zoomin'), zo = document.getElementById('zoomout'),
+      zr = document.getElementById('zoomreset'), zd = document.getElementById('zoomdone');
+  if (zi) zi.addEventListener('click', function(){ zoomStep(1); });
+  if (zo) zo.addEventListener('click', function(){ zoomStep(-1); });
+  if (zr) zr.addEventListener('click', function(){ zoomApply(1, true); });
+  if (zd) zd.addEventListener('click', function(){ zoomBar(false); });
+  zoomApply(zoomLevel, false); // paint the current level into the bar
   var pb = document.getElementById('planbtn');
   if (pb) pb.addEventListener('click', openPlanPanel);
   var vs = document.getElementById('vSuper');
