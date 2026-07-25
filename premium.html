@@ -3320,7 +3320,7 @@ async function runLabPrem(){
     return { ok: false };
   }
   function okApp(g){ return g.ok && (APPKEY === 'mlbfree' || !g.apps || g.apps.indexOf(APPKEY) >= 0); } // free MLB never locked
-  var ov, dkVisG = true;
+  var ov, dkVisG = true, VHOURS = null;
   function setDk(v){ window.__DK_OK = v; if (!v) document.documentElement.classList.add('dk-off'); else document.documentElement.classList.remove('dk-off'); try { if (typeof window.__onDkVisibility === 'function') window.__onDkVisibility(v); } catch (e) {} }
   // DK 'limited' tiers see DraftKings odds only on calendar days 1–15 each month;
   // from the 16th on it's off until the 1st rolls around again.
@@ -3346,6 +3346,41 @@ async function runLabPrem(){
      each other's row. The Board totals them per member, which is how you spot
      one code doing the rounds. Re-stamped on every entry (2-minute debounce so one page load
      writes once), and any failure is silent — access never depends on it. ── */
+  /* ── VIEWING HOURS ────────────────────────────────────────────────────────
+     The owner can restrict when each app is viewable (office-sharing guard).
+     Hours are Pacific, set on the Board. Owner PIN and ?cron/?lab runs are
+     never restricted. Checked when the app opens and at sign-in — someone
+     already inside when the window closes stays until their next open. ── */
+  function fmtHr(h){
+    var x = ((+h) % 24 + 24) % 24;
+    var ap = x >= 12 ? 'PM' : 'AM';
+    var d = x % 12; if (d === 0) d = 12;
+    return d + ':00 ' + ap;
+  }
+  function hoursBlock(vh){
+    var w = vh && vh[APPKEY];
+    if (!w || !w.on) return null;
+    var fH = +w.f, tH = +w.t;
+    if (!isFinite(fH) || !isFinite(tH) || fH === tH) return null; // same start/end = no restriction
+    var hr = NaN;
+    try { hr = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(new Date()), 10) % 24; } catch (e) {}
+    if (!isFinite(hr)) return null;   // can't tell the time -> never lock someone out on a glitch
+    var open = fH < tH ? (hr >= fH && hr < tH) : (hr >= fH || hr < tH);
+    return open ? null : { f: fH, t: tH };
+  }
+  function showHoursCover(hb){
+    cover('<div style="width:100%;max-width:340px;text-align:center">' +
+      '<div style="font-size:42px;margin-bottom:10px">\u23f0</div>' +
+      '<div style="font-size:24px;font-weight:800;margin-bottom:8px">Outside viewing hours</div>' +
+      '<div style="color:#8fa0b5;font-size:14.5px;line-height:1.6">This app is open <b style="color:#e8edf4">' + fmtHr(hb.f) + ' \u2013 ' + fmtHr(hb.t) + ' PT</b>.<br>Come back during these hours to view.</div></div>');
+  }
+  function passGated(code){
+    if (!(code && pinOk(code))){
+      var hb = hoursBlock(VHOURS);
+      if (hb){ showHoursCover(hb); return; }
+    }
+    pass();
+  }
   function devId(){
     try {
       var k = 'board_device_v1', v = localStorage.getItem(k);
@@ -3459,7 +3494,7 @@ async function runLabPrem(){
         logFree(name); pass(); return;
       }
       var g = grantOf({ name: name, code: code }, list);
-      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkEff(g, dkVisG, String(code).trim())); pass(); }
+      if (okApp(g)){ try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {} setDk(dkEff(g, dkVisG, String(code).trim())); passGated(code); }
       else if (g.ok){ err('Your access doesn’t include this app. Ask the owner.'); }
       else { err('No match — check your name and code, or your access was turned off.'); }
     };
@@ -3491,6 +3526,7 @@ async function runLabPrem(){
     var list = null, dkVis = true;
     try { var r = await fetch(DOC + 'app_settings/board_access?key=' + MK, { cache: 'no-store' }); if (r.ok) list = parseMembers((await r.json()).fields || {}); } catch (e) {}
     try { var r2 = await fetch(DOC + 'app_settings/dk_auto?key=' + MK, { cache: 'no-store' }); if (r2.ok){ var f = (await r2.json()).fields || {}; if (f.dkVisible && f.dkVisible.booleanValue === false) dkVis = false; } } catch (e) {}
+    try { var r3 = await fetch(DOC + 'app_settings/view_hours?key=' + MK, { cache: 'no-store' }); if (r3.ok){ var f3 = (await r3.json()).fields || {}; if (f3.w && f3.w.stringValue) VHOURS = JSON.parse(f3.w.stringValue); } } catch (e) {}
     dkVisG = dkVis;
     var s = saved();
     if (list === null){ // offline: trust a known device rather than lock it out on a network blip
@@ -3499,7 +3535,7 @@ async function runLabPrem(){
     }
     var g = grantOf(s, list);
     setDk(g.ok ? dkEff(g, dkVis, (s && s.code) || '') : dkVis); // effective DK = global switch AND this member's DK mode (unlimited / 15-day pass / off)
-    if (okApp(g)){ pass(); return; }
+    if (okApp(g)){ passGated(s && s.code); return; }
     showGate(list);
   })();
 })();

@@ -207,6 +207,24 @@ body{
 .vpill.sl.locked{ filter:saturate(.72); }
 @media (prefers-reduced-motion: reduce){ .vpill.sl::after{ animation:none; display:none; } }
 /* unread badge: new free sign-ins that still have no access code */
+/* ── STORM BACKGROUND ── the living sky behind the board */
+#stormbg{ position:fixed; inset:0; z-index:0; pointer-events:none; display:block; }
+.wrap{ position:relative; z-index:1; }
+.ovl{ z-index:1000; }
+/* Settings is a full-screen view: edge-to-edge on the phone, centered column
+   on desktop, with the title bar and tab bar pinned while you scroll. */
+#adminovl{ padding:0; align-items:stretch; }
+#adminovl .box{ max-width:none !important; width:100%; min-height:100dvh; margin:0 auto !important;
+  border-radius:0; box-sizing:border-box; padding:0 16px calc(30px + env(safe-area-inset-bottom)); }
+@media (min-width:820px){ #adminovl .box{ max-width:780px !important; border-left:1px solid var(--hair2); border-right:1px solid var(--hair2); } }
+#adminovl #sethead{ position:sticky; top:0; z-index:7; display:flex; align-items:center; justify-content:space-between;
+  gap:10px; background:var(--panel); margin:0 -16px; padding:14px 16px 10px; border-bottom:1px solid var(--hair2); }
+#adminovl #sethead h3{ margin:0; font-size:18px; }
+#adminovl #sethead .xclose{ flex:0 0 auto; width:34px; height:34px; border-radius:9px; border:1px solid var(--hair);
+  background:transparent; color:var(--dim); font-size:16px; cursor:pointer; }
+#adminovl #stabbar{ position:sticky; top:59px; z-index:6; background:var(--panel); margin:0 -16px 14px !important;
+  padding:10px 16px !important; border-bottom:1px solid var(--hair2); flex-wrap:wrap; }
+#adminovl #stabbar .stabbtn{ min-width:96px; }
 .newdot{ position:absolute; top:-6px; right:-6px; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
   border-radius:999px; background:#ff5d5d; color:#fff; font:800 10px/17px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   text-align:center; box-shadow:0 0 0 2px var(--board); pointer-events:none; }
@@ -241,6 +259,7 @@ body{
 </style>
 </head>
 <body>
+<canvas id="stormbg" aria-hidden="true"></canvas>
 <div class="wrap">
   <header>
     <div class="eyebrow">
@@ -259,10 +278,9 @@ body{
 
   <button id="planbtn" style="width:100%;margin:0 0 12px;background:#7fd99a;border:0;border-radius:10px;color:#08130b;font:inherit;font-size:13.5px;letter-spacing:.04em;font-weight:800;padding:12px;cursor:pointer;box-shadow:0 3px 14px rgba(127,217,154,.4)">&#9733; My Plan &amp; Upgrades</button>
 
-  <div id="viewpills" style="display:flex;gap:8px;margin:0 0 14px">
-    <button class="vpill on" id="vBoard" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">The Board</button>
-    <button class="vpill sl" id="vSuper" style="flex:1.25;padding:9px 0;border-radius:10px;cursor:pointer">&#9889; Super Locks</button>
-  </div>
+  <!-- The Board itself needs no tab — Super Locks opens as its own full view
+       with a back button, so this is a single full-width premium door. -->
+  <button class="vpill sl" id="vSuper" style="display:block;width:100%;padding:11px 0;border-radius:10px;cursor:pointer;margin:0 0 12px">&#9889; Super Locks</button>
 
   <main id="cards"><!-- cards injected --></main>
   <section id="superlocks" class="hidden" style="display:none"></section>
@@ -1985,6 +2003,24 @@ async function openSettingsPanel(){
   var iceTh = Object.assign({}, ICE_TH_DEF, (iceCfg && iceCfg.lockThresholds) || {});
   var iceTol = Object.assign({}, ICE_TOL_DEF, (iceCfg && iceCfg.hitTol) || {});
   var nascarTh = Object.assign({}, NASCAR_TH_DEF, (nascarCfg && nascarCfg.lockThresholds) || {});
+  var vhRaw = (await adminGetDoc('view_hours')) || {};
+  var vhCfg = {}; try { vhCfg = JSON.parse(vhRaw.w || '{}') || {}; } catch (e) {}
+  var VH_APPS = [['mlb','Diamond IQ Premium'],['mlbfree','Diamond IQ Free'],['nfl','Gridline (NFL)'],['nba','The Key (NBA)'],['hockey','Icing (NHL)'],['nascar','Pete\u2019s Picks (NASCAR)']];
+  var vhFmt = function(h){ var x = ((+h) % 24 + 24) % 24, ap = x >= 12 ? 'PM' : 'AM', d = x % 12 || 12; return d + ':00 ' + ap; };
+  var vhSel = function(cls, app, val){
+    var o = '';
+    for (var hh = 0; hh < 24; hh++) o += '<option value="' + hh + '"' + (hh === val ? ' selected' : '') + '>' + vhFmt(hh) + '</option>';
+    return '<select class="' + cls + '" data-vhapp="' + app + '" style="padding:6px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' + o + '</select>';
+  };
+  var vhRowsHtml = VH_APPS.map(function(a){
+    var w = vhCfg[a[0]] || {};
+    return '<div class="row" style="margin:7px 0;flex-wrap:wrap;gap:8px">' +
+      '<span class="lbl" style="flex:1;min-width:150px;font-size:13px">' + a[1] + '</span>' +
+      '<label class="tog"><input type="checkbox" class="vh-on" data-vhapp="' + a[0] + '"' + (w.on ? ' checked' : '') + '><span></span></label>' +
+      '<span class="hint">from</span>' + vhSel('vh-f', a[0], isFinite(+w.f) && w.f != null ? +w.f : 9) +
+      '<span class="hint">until</span>' + vhSel('vh-t', a[0], isFinite(+w.t) && w.t != null ? +w.t : 17) +
+    '</div>';
+  }).join('');
   var freeLog = [], freeSeenAt = 0;
   try {
     var flr = await fsGetRaw(ADMIN, 'app_settings/free_log');
@@ -2192,13 +2228,14 @@ async function openSettingsPanel(){
   };
 
   ovl.querySelector('.box').innerHTML =
-    '<h3>Board Settings</h3>' +
+    '<div id="sethead"><h3>Board Settings</h3><button class="xclose" id="s-x" aria-label="Close settings">\u2715</button></div>' +
     '<div id="healthstrip" style="border:1px solid var(--hair2);border-radius:9px;padding:8px 10px;margin:8px 0 2px"></div>' +
     '<div id="stabbar" style="display:flex;gap:6px;margin:10px 0 14px">' +
       '<button class="stabbtn" data-stab="members" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid #c9a84c;background:transparent;color:#c9a84c;font-weight:800;cursor:pointer;font:inherit;font-size:13px">Members</button>' +
       '<button class="stabbtn" data-stab="thresholds" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Thresholds</button>' +
       '<button class="stabbtn" data-stab="dk" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">DK Pulls</button>' +
       '<button class="stabbtn" data-stab="lab" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Model Lab</button>' +
+      '<button class="stabbtn" data-stab="hours" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--hair);background:transparent;color:var(--dim2);font-weight:700;cursor:pointer;font:inherit;font-size:13px">Hours</button>' +
     '</div>' +
     '<div id="stab-members">' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
@@ -2298,6 +2335,12 @@ async function openSettingsPanel(){
       NASCAR_KNOBS, 'nc-', Object.assign({}, nascarTh), 'nc-preview', 'nc-prevout') +
     '</div>' +
     '<div id="stab-lab" style="display:none">' + labTabHtml() + '</div>' +
+    '<div id="stab-hours" style="display:none">' +
+    '<div class="sect"><div class="row"><span class="lbl">Viewing hours</span><span class="hint">office-sharing guard</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">Restrict WHEN each app can be viewed, so one paying login can\u2019t feed a whole office all day. Flip an app on and pick its window \u2014 outside it, members see \u201ccome back during these hours\u201d instead of the picks. All times are <b>Pacific</b>.</p>' +
+    '<p class="sub" style="margin:0 0 10px;color:var(--dim2)">You (owner PIN) and the automation are never restricted. An overnight window works \u2014 8 PM until 2 AM wraps past midnight. Same start and end = no restriction. Honest limit: the check runs when an app is <b>opened</b>; someone already inside when the window closes keeps that view until they next open it.</p>' +
+    vhRowsHtml +
+    '</div></div>' +
     '<button class="go" id="s-save" style="margin-top:14px">Save all settings</button>' +
     '<div class="savemsg" id="s-msg"></div>' +
     '<button class="close" id="s-signout" style="margin-top:6px">Sign out this device (switch account)</button>' +
@@ -2314,7 +2357,7 @@ async function openSettingsPanel(){
         x.style.color = on ? '#c9a84c' : 'var(--dim2)';
         x.style.fontWeight = on ? '800' : '700';
       });
-      ['members', 'thresholds', 'dk', 'lab'].forEach(function(t){
+      ['members', 'thresholds', 'dk', 'lab', 'hours'].forEach(function(t){
         var el = box.querySelector('#stab-' + t);
         if (el) el.style.display = t === want ? '' : 'none';
       });
@@ -2330,6 +2373,7 @@ async function openSettingsPanel(){
     showDeniedNote('mlb'); // preview against the Premium app name
   });
   box.querySelector('#s-close').addEventListener('click', function(){ ovl.remove(); });
+  var sx = box.querySelector('#s-x'); if (sx) sx.addEventListener('click', function(){ ovl.remove(); });
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
     var div = document.createElement('div');
@@ -2756,6 +2800,14 @@ async function openSettingsPanel(){
         dkVisible: box.querySelector('#s-dkvis').checked
       });
       await adminSetDoc('app_settings', 'board_access', { members: JSON.stringify(mems) });
+      var vhOut = {};
+      VH_APPS.forEach(function(a2){
+        var on = box.querySelector('.vh-on[data-vhapp="' + a2[0] + '"]');
+        var fSel = box.querySelector('.vh-f[data-vhapp="' + a2[0] + '"]');
+        var tSel = box.querySelector('.vh-t[data-vhapp="' + a2[0] + '"]');
+        vhOut[a2[0]] = { on: !!(on && on.checked), f: fSel ? +fSel.value : 9, t: tSel ? +tSel.value : 17 };
+      });
+      await adminSetDoc('app_settings', 'view_hours', { w: JSON.stringify(vhOut) });
       var adSave = {
         title: (box.querySelector('#ad-title').value || '').trim(),
         pitch: (box.querySelector('#ad-pitch').value || '').trim(),
@@ -3018,6 +3070,7 @@ async function refreshSuperLocks(force){
   if (SL_CACHE){
     el.innerHTML = '<div class="statusline" style="padding:0 0 10px">↻ Updating to the latest grades…</div>' + SL_CACHE;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   }
   else el.innerHTML = '<div class="statusline" style="padding:20px 0">Reading every app’s graded record… takes a few seconds.</div>';
   try {
@@ -3056,7 +3109,8 @@ async function refreshSuperLocks(force){
 
     /* ── HEADER: kicker, big date, day picker, and a live/results summary ── */
     var navBtn = 'flex:1;background:var(--panel);border:1px solid var(--hair);color:var(--bone);border-radius:10px;padding:9px 0;font:600 12.5px/1 inherit;cursor:pointer';
-    var html = '<div style="background:linear-gradient(180deg,var(--panel),var(--face));border:1px solid ' + (past ? 'var(--hair)' : 'rgba(245,182,66,.45)') + ';border-radius:16px;padding:16px 17px 13px;margin:2px 0 14px">' +
+    var html = '<button class="slback" style="display:block;width:100%;background:var(--panel);border:1px solid var(--hair);color:var(--bone);border-radius:10px;padding:10px 0;font:700 13px/1 inherit;cursor:pointer;margin:0 0 10px">\u2039 Back to the Board</button>' +
+      '<div style="background:linear-gradient(180deg,var(--panel),var(--face));border:1px solid ' + (past ? 'var(--hair)' : 'rgba(245,182,66,.45)') + ';border-radius:16px;padding:16px 17px 13px;margin:2px 0 14px">' +
       '<div style="font:800 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.22em;text-transform:uppercase;color:' + (past ? 'var(--dim)' : 'var(--bulb)') + '">' +
         (past ? 'Results · how the super locks did' : '⚡ Super Locks · live') + '</div>' +
       '<div style="font-weight:900;font-size:24px;letter-spacing:-.01em;margin:5px 0 2px">' + esc(slPrettyDate(dShown)) + '</div>' +
@@ -3137,10 +3191,13 @@ async function refreshSuperLocks(force){
     SL_CACHE = html;
     el.innerHTML = html;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   } catch (e){
-    el.innerHTML = '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the tab again to retry.</div>' +
+    el.innerHTML = '<button class="slback" style="display:block;width:100%;background:var(--panel);border:1px solid var(--hair);color:var(--bone);border-radius:10px;padding:10px 0;font:700 13px/1 inherit;cursor:pointer;margin:0 0 10px">\u2039 Back to the Board</button>' +
+      '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the button above to go back, or the gold button to retry.</div>' +
       (SL_DATE ? '<button class="slnav" data-n="0" style="width:100%;background:var(--panel);border:1px solid var(--hair);color:var(--bulb);border-radius:10px;padding:9px 0;font:700 12.5px/1 inherit;cursor:pointer">back to today</button>' : '');
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   } finally { refreshSuperLocks._busy = false; }
 }
 function showView(which){
@@ -3148,16 +3205,11 @@ function showView(which){
   if (isSuper && !superLocksAllowed()){ showDeniedNote('superlocks'); return; } // locked — pitch the upgrade
   document.getElementById('cards').style.display = isSuper ? 'none' : '';
   document.getElementById('superlocks').style.display = isSuper ? '' : 'none';
-  var on = function(b, v){
-    b.classList.toggle('on', v);
-    if (b.classList.contains('sl')){ // premium pill keeps its gold; depth shows the active state
-      b.style.boxShadow = v ? '0 0 0 2px rgba(245,182,66,.5), 0 6px 20px rgba(245,182,66,.3)' : '0 2px 14px rgba(245,182,66,.22)';
-      return;
-    }
-    b.style.borderColor = v ? '#7fd99a' : 'var(--hair)'; b.style.color = v ? '#7fd99a' : '';
-  };
-  on(document.getElementById('vBoard'), !isSuper);
-  on(document.getElementById('vSuper'), isSuper);
+  var vsp = document.getElementById('vSuper');
+  vsp.classList.toggle('on', isSuper);
+  vsp.style.boxShadow = isSuper ? '0 0 0 2px rgba(245,182,66,.5), 0 6px 20px rgba(245,182,66,.3)' : '0 2px 14px rgba(245,182,66,.22)';
+  vsp.style.display = isSuper ? 'none' : 'block';   // inside Super Locks, the back button is the way home
+  var pbv = document.getElementById('planbtn'); if (pbv) pbv.style.display = isSuper ? 'none' : '';
   if (isSuper) refreshSuperLocks(false);
 }
 
@@ -3166,12 +3218,215 @@ document.addEventListener('DOMContentLoaded', function(){
   if (g) g.addEventListener('click', openSettingsPanel);
   var pb = document.getElementById('planbtn');
   if (pb) pb.addEventListener('click', openPlanPanel);
-  var vb = document.getElementById('vBoard'), vs = document.getElementById('vSuper');
-  if (vb) vb.addEventListener('click', function(){ showView('board'); });
+  var vs = document.getElementById('vSuper');
   if (vs) vs.addEventListener('click', function(){ showView('super'); });
   runGate().then(function(){ try { refreshNewSignins(); } catch (e) {} });
 });
 document.addEventListener('DOMContentLoaded', boot);
+</script>
+<script>
+/* ═══ THE STORM ═══════════════════════════════════════════════════════════════
+   A living sky behind the board: smoke banks rolling through, lightning that
+   forks and crackles, strikes that detonate into sparks and fresh smoke, and
+   embers drifting up through all of it. Everything is drawn on one canvas —
+   no libraries, no images. Pauses when the tab is hidden; a static smoke
+   frame for anyone with reduced motion on. */
+(function(){
+  var cv = document.getElementById('stormbg');
+  if (!cv || !cv.getContext) return;
+  var cx = cv.getContext('2d');
+  var REDUCE = false;
+  try { REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  var W = 0, H = 0;
+  function size(){
+    var DPR = Math.min(1.5, window.devicePixelRatio || 1); // sharp, without cooking phones
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.max(1, Math.round(W * DPR));
+    cv.height = Math.max(1, Math.round(H * DPR));
+    cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  size(); window.addEventListener('resize', size);
+  var R = Math.random;
+
+  /* Smoke is drawn from three pre-rendered cloud sprites — seven soft blue-grey
+     blobs each, layered at render time so no two puffs read the same. */
+  function mulberry(a){ return function(){ a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function smokeSprite(seed){
+    var c = document.createElement('canvas'); c.width = c.height = 256;
+    var g = c.getContext('2d'), rnd = mulberry(seed);
+    for (var i = 0; i < 7; i++){
+      var bx = 88 + rnd() * 80, by = 88 + rnd() * 80, br = 46 + rnd() * 62;
+      var grd = g.createRadialGradient(bx, by, br * 0.15, bx, by, br);
+      var hue = 214 + rnd() * 16, sat = 15 + rnd() * 11, lit = 40 + rnd() * 16;
+      grd.addColorStop(0, 'hsla(' + hue + ',' + sat + '%,' + lit + '%,' + (0.16 + rnd() * 0.1) + ')');
+      grd.addColorStop(1, 'hsla(' + hue + ',' + sat + '%,' + lit + '%,0)');
+      g.fillStyle = grd; g.fillRect(0, 0, 256, 256);
+    }
+    return c;
+  }
+  var SPRITES = [smokeSprite(11), smokeSprite(29), smokeSprite(47)];
+  var puffs = [];
+  for (var i = 0; i < 13; i++){
+    puffs.push({ x: R(), y: R(), s: 260 + R() * 520, rot: R() * 6.28, vr: (R() - 0.5) * 0.00022,
+      vx: (0.006 + R() * 0.02) * (R() < 0.5 ? -1 : 1), vy: -(0.002 + R() * 0.008),
+      a: 0.35 + R() * 0.5, spr: SPRITES[i % 3], ph: R() * 6.28 });
+  }
+  var embers = [];
+  function newEmber(anyY){
+    return { x: R(), y: anyY ? R() : 1.05, v: 0.00004 + R() * 0.00012, sway: 0.5 + R() * 1.6,
+      ph: R() * 6.28, r: 0.6 + R() * 1.7, hue: 18 + R() * 26, tw: 2 + R() * 5 };
+  }
+  for (var j = 0; j < 34; j++) embers.push(newEmber(true));
+
+  /* Lightning: midpoint-displaced trunk with 2–4 forks, drawn in three passes
+     (halo, glow, white-hot core) with a crackling alpha. A strike flashes the
+     whole sky, lights the smoke up, and sometimes detonates at the tip. */
+  var bolts = [], sparks = [], glows = [], flash = 0;
+  var nextStrike = performance.now() + 2200 + R() * 2500;
+  function boltPoints(x0, y0, x1, y1, disp){
+    var pts = [{ x: x0, y: y0 }, { x: x1, y: y1 }];
+    for (var d = disp; d > 4; d /= 2){
+      var out = [pts[0]];
+      for (var k = 1; k < pts.length; k++){
+        var a2 = pts[k - 1], b2 = pts[k];
+        out.push({ x: (a2.x + b2.x) / 2 + (R() - 0.5) * d, y: (a2.y + b2.y) / 2 + (R() - 0.5) * d * 0.4 }, b2);
+      }
+      pts = out;
+    }
+    return pts;
+  }
+  function strike(){
+    var sx = W * (0.12 + R() * 0.76), ex2 = sx + (R() - 0.5) * W * 0.22, ey = H * (0.5 + R() * 0.4);
+    var main = boltPoints(sx, -30, ex2, ey, 120);
+    var branches = [];
+    var nb = 2 + Math.floor(R() * 3);
+    for (var b3 = 0; b3 < nb; b3++){
+      var at = main[4 + Math.floor(R() * Math.max(1, main.length - 10))];
+      branches.push(boltPoints(at.x, at.y, at.x + (R() - 0.5) * 190, at.y + 90 + R() * 170, 55));
+    }
+    bolts.push({ main: main, branches: branches, born: performance.now(), life: 260 + R() * 160, re: R() < 0.65 });
+    flash = Math.min(1, flash + 0.85);
+    glows.push({ x: sx, y: 0, r: 260, a: 0.5, hue: 222 });
+    if (R() < 0.38) boom(ex2, ey);
+  }
+  function boom(x, y){
+    glows.push({ x: x, y: y, r: 150, a: 0.9, hue: 30 });
+    var n = 22 + Math.floor(R() * 16);
+    for (var k3 = 0; k3 < n; k3++){
+      var an = R() * 6.28, sp = 0.7 + R() * 3.4;
+      sparks.push({ x: x, y: y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp - 1.1,
+        life: 1, dec: 0.012 + R() * 0.02, r: 1 + R() * 2.2, hue: 16 + R() * 30 });
+    }
+    puffs.push({ x: x / W, y: y / H, s: 60, grow: 3.4, rot: R() * 6.28, vr: (R() - 0.5) * 0.001,
+      vx: (R() - 0.5) * 0.01, vy: -0.01, a: 0.9, fade: 0.0018, spr: SPRITES[Math.floor(R() * 3)], ph: R() * 6.28 });
+  }
+  function drawBolt(b, now){
+    var t = (now - b.born) / b.life;
+    if (t >= 1) return false;
+    var a = 1 - t;
+    if (b.re) a *= 0.55 + 0.45 * Math.abs(Math.sin(t * 26));
+    var paths = [b.main].concat(b.branches);
+    for (var p2 = 0; p2 < paths.length; p2++){
+      var isB = p2 > 0, pth = paths[p2];
+      cx.beginPath();
+      cx.moveTo(pth[0].x, pth[0].y);
+      for (var q = 1; q < pth.length; q++) cx.lineTo(pth[q].x, pth[q].y);
+      cx.lineCap = 'round'; cx.lineJoin = 'round';
+      cx.shadowColor = 'rgba(150,185,255,' + (0.8 * a) + ')'; cx.shadowBlur = 26;
+      cx.strokeStyle = 'rgba(140,175,255,' + (0.16 * a) + ')'; cx.lineWidth = isB ? 5 : 9; cx.stroke();
+      cx.strokeStyle = 'rgba(185,210,255,' + (0.5 * a) + ')'; cx.lineWidth = isB ? 2 : 3.2; cx.stroke();
+      cx.shadowBlur = 0;
+      cx.strokeStyle = 'rgba(255,255,255,' + (0.95 * a) + ')'; cx.lineWidth = isB ? 0.8 : 1.4; cx.stroke();
+    }
+    return true;
+  }
+  var last = performance.now(), running = !REDUCE;
+  function frame(now){
+    if (!running) return;
+    var dt = Math.min(50, now - last); last = now;
+    cx.globalCompositeOperation = 'source-over';
+    cx.fillStyle = '#0b0f15'; cx.fillRect(0, 0, W, H);
+    cx.globalCompositeOperation = 'lighter';
+    var boost = 1 + flash * 2.2;                 // a strike lights the clouds
+    for (var i2 = puffs.length - 1; i2 >= 0; i2--){
+      var p3 = puffs[i2];
+      p3.x += p3.vx * dt / 1000; p3.y += p3.vy * dt / 1000; p3.rot += p3.vr * dt;
+      if (p3.grow){ p3.s += p3.grow * dt / 16; if (p3.s > 520) p3.grow = 0; }
+      if (p3.fade){ p3.a -= p3.fade * dt; if (p3.a <= 0){ puffs.splice(i2, 1); continue; } }
+      if (p3.x < -0.4) p3.x = 1.4; else if (p3.x > 1.4) p3.x = -0.4;
+      if (p3.y < -0.5) p3.y = 1.4;
+      var sz = p3.s * (1 + 0.06 * Math.sin(now / 3800 + p3.ph));
+      cx.save();
+      cx.translate(p3.x * W, p3.y * H); cx.rotate(p3.rot);
+      cx.globalAlpha = Math.min(1, 0.14 * p3.a * boost);
+      cx.drawImage(p3.spr, -sz / 2, -sz / 2, sz, sz);
+      cx.restore();
+    }
+    cx.globalAlpha = 1;
+    for (var j2 = 0; j2 < embers.length; j2++){
+      var e2 = embers[j2];
+      e2.y -= e2.v * dt;
+      if (e2.y < -0.05) embers[j2] = e2 = newEmber(false);
+      var tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(now / (90 * e2.tw) + e2.ph));
+      cx.fillStyle = 'hsla(' + e2.hue + ',95%,62%,' + (0.5 * tw) + ')';
+      cx.beginPath();
+      cx.arc((e2.x + Math.sin(now * 0.0008 / e2.sway + e2.ph) * 0.012) * W, e2.y * H, e2.r, 0, 6.28);
+      cx.fill();
+    }
+    for (var g2 = glows.length - 1; g2 >= 0; g2--){
+      var gl = glows[g2];
+      gl.a -= 0.0022 * dt; gl.r += 0.12 * dt;
+      if (gl.a <= 0){ glows.splice(g2, 1); continue; }
+      var gg = cx.createRadialGradient(gl.x, gl.y, 0, gl.x, gl.y, gl.r);
+      gg.addColorStop(0, 'hsla(' + gl.hue + ',90%,66%,' + (gl.a * 0.5) + ')');
+      gg.addColorStop(1, 'hsla(' + gl.hue + ',90%,66%,0)');
+      cx.fillStyle = gg;
+      cx.beginPath(); cx.arc(gl.x, gl.y, gl.r, 0, 6.28); cx.fill();
+    }
+    for (var s2 = sparks.length - 1; s2 >= 0; s2--){
+      var sp2 = sparks[s2];
+      sp2.x += sp2.vx * dt / 8; sp2.y += sp2.vy * dt / 8; sp2.vy += 0.0032 * dt; sp2.life -= sp2.dec * dt / 16;
+      if (sp2.life <= 0){ sparks.splice(s2, 1); continue; }
+      cx.fillStyle = 'hsla(' + (sp2.hue + (1 - sp2.life) * 12) + ',95%,' + (46 + 26 * sp2.life) + '%,' + sp2.life + ')';
+      cx.beginPath(); cx.arc(sp2.x, sp2.y, sp2.r * (0.5 + sp2.life * 0.7), 0, 6.28); cx.fill();
+    }
+    for (var b4 = bolts.length - 1; b4 >= 0; b4--){ if (!drawBolt(bolts[b4], now)) bolts.splice(b4, 1); }
+    if (flash > 0.003){
+      cx.fillStyle = 'rgba(168,198,255,' + (flash * 0.17) + ')';
+      cx.fillRect(0, 0, W, H);
+      flash *= Math.pow(0.988, dt);
+    } else flash = 0;
+    cx.globalCompositeOperation = 'source-over';   // vignette keeps content readable
+    var vg = cx.createRadialGradient(W / 2, H * 0.42, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.78);
+    vg.addColorStop(0, 'rgba(8,11,16,0)');
+    vg.addColorStop(1, 'rgba(6,8,12,0.55)');
+    cx.fillStyle = vg; cx.fillRect(0, 0, W, H);
+    if (now >= nextStrike){
+      strike();
+      if (R() < 0.3) setTimeout(strike, 110 + R() * 130);   // the double-hit flicker real storms do
+      nextStrike = now + 4800 + R() * 8600;
+    }
+    requestAnimationFrame(frame);
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) running = false;
+    else if (!REDUCE && !running){ running = true; last = performance.now(); requestAnimationFrame(frame); }
+  });
+  if (REDUCE){
+    cx.fillStyle = '#0b0f15'; cx.fillRect(0, 0, W, H);
+    cx.globalCompositeOperation = 'lighter';
+    for (var k4 = 0; k4 < puffs.length; k4++){
+      var pp = puffs[k4];
+      cx.globalAlpha = 0.1 * pp.a;
+      cx.drawImage(pp.spr, pp.x * W - pp.s / 2, pp.y * H - pp.s / 2, pp.s, pp.s);
+    }
+    cx.globalAlpha = 1; cx.globalCompositeOperation = 'source-over';
+  } else {
+    requestAnimationFrame(frame);
+  }
+  window.__storm = { strike: strike, boom: boom, reduced: REDUCE,
+    state: function(){ return { puffs: puffs.length, embers: embers.length, bolts: bolts.length, sparks: sparks.length, glows: glows.length, running: running }; } };
+})();
 </script>
 </body>
 </html>
