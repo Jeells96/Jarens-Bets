@@ -722,7 +722,7 @@ async function openPlanPanel(){
   } else if (info.kind === 'tier'){
     var td = TIER_DEFS.filter(function(t){ return t.id === info.tier; })[0];
     banner = '<div style="border:1px solid #7fd99a;border-radius:10px;padding:10px 12px;margin-bottom:14px">' +
-      '<div style="font-weight:800;color:#7fd99a">Your plan · ' + esc(td.name) + ' · ' + esc(td.price + td.per) + '</div>' +
+      '<div style="font-weight:800;color:#7fd99a">Your plan · ' + esc(td.name) + ' <span style="color:var(--dim2);font-weight:700">' + esc(td.tagline) + '</span></div>' +
       '<div class="sub" style="margin:2px 0 0">' +
         (info.tier === '1' && info.sport ? 'Sport: ' + esc(SPORT_NAME[info.sport] || info.sport) + ' · ' : '') +
         esc(dkModeLabel(info.dkMode || (info.tier === '3' ? 'unlimited' : 'limited'))) + '</div></div>';
@@ -732,22 +732,16 @@ async function openPlanPanel(){
       '<div class="sub" style="margin:2px 0 0">Your access was set by hand (' + esc(dkModeLabel(info.dkMode || 'unlimited')) + '). See the standard plans below.</div></div>';
   }
 
-  var cards = TIER_DEFS.map(function(t){
-    var isCurrent = info.kind === 'tier' && info.tier === t.id;
-    var isUpgrade = info.kind === 'tier' && +t.id > +info.tier;
-    var tag = isCurrent ? '<span style="font-size:10px;font-weight:800;letter-spacing:.1em;color:#7fd99a;border:1px solid #7fd99a;border-radius:6px;padding:2px 6px">YOUR PLAN</span>'
-      : isUpgrade ? '<span style="font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--bone);border:1px solid var(--hair);border-radius:6px;padding:2px 6px">UPGRADE</span>' : '';
-    var perks = t.perks.map(function(p){
-      return '<li style="display:flex;gap:7px;align-items:flex-start;margin:5px 0;font-size:13px;line-height:1.35">' +
-        '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">✓</span><span>' + esc(p) + '</span></li>';
-    }).join('');
-    return '<div style="border:1px solid ' + (isCurrent ? '#7fd99a' : 'var(--hair)') + ';border-radius:12px;padding:12px 14px;margin-bottom:10px' + (isCurrent ? ';background:rgba(127,217,154,.06)' : '') + '">' +
-      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:2px">' +
-        '<span style="font-weight:800">' + esc(t.name) + ' <span style="color:var(--dim2);font-weight:700">' + esc(t.tagline) + '</span></span>' +
-        '<span style="flex:0 0 auto">' + tag + '</span></div>' +
-      '<div style="font-size:22px;font-weight:800;margin:2px 0 6px">' + esc(t.price) + '<span style="font-size:13px;color:var(--dim2);font-weight:700">' + esc(t.per) + '</span></div>' +
-      '<ul style="list-style:none;padding:0;margin:0">' + perks + '</ul></div>';
-  }).join('');
+  /* The plans shown here come from the SAME editable ad as the locked-app
+     pop-up. They used to be a second, hardcoded copy of the pricing — which is
+     how an edit in Settings could leave this panel selling the old numbers. */
+  var cards = '<div style="border:1px solid var(--hair);border-radius:12px;padding:12px 14px;margin-bottom:10px">' +
+    '<div style="font-weight:800;font-size:15px;margin-bottom:2px">' + esc(ad.title) + '</div>' +
+    '<p class="sub" style="margin:4px 0 8px">' + esc(ad.pitch) + '</p>' +
+    '<ul style="list-style:none;padding:0;margin:0">' + ad.perks.map(function(pk){
+      return '<li style="display:flex;gap:7px;align-items:flex-start;margin:6px 0;font-size:13.5px;line-height:1.4">' +
+        '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">✓</span><span>' + esc(pk) + '</span></li>';
+    }).join('') + '</ul></div>';
 
   var showUpgrade = info.kind !== 'admin' && !(info.kind === 'tier' && info.tier === '3');
   var footer = showUpgrade
@@ -1233,6 +1227,13 @@ async function runGate(){
   var requestCode = function(){
     var r = readName();
     var errEl = document.getElementById('gateerr');
+    var nrm = function(v){ return String(v || '').trim().toLowerCase(); };
+    if (r.first && r.last && list.some(function(m){ return m.name != null && nrm(m.name) === nrm(r.name); })){
+      // A name that already HAS a code only enters WITH that code — otherwise
+      // anyone could re-request a paying member's name and slip in as them.
+      errEl.textContent = 'That name already has an access code — enter it above to sign in.';
+      return;
+    }
     if (!r.first || !r.last){
       errEl.textContent = !r.first && !r.last ? 'Enter your first and last name.' : !r.first ? 'Enter your first name.' : 'Enter your last name.';
       var fe = document.getElementById(!r.first ? 'gatefirst' : 'gatelast'); if (fe) fe.focus();
@@ -2234,7 +2235,7 @@ async function openSettingsPanel(){
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     '<div id="freesection">' + freeSectionHtml() + '</div>' +
     '</div>' +
-    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown when a free user taps a paid app</span></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown in My Plan &amp; Upgrades AND on locked apps</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
     '<label class="hint">Headline</label>' +
     '<input type="text" id="ad-title" value="' + esc(adCfg.title) + '" style="margin:2px 0 10px">' +

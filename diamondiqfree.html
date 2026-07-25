@@ -10940,6 +10940,16 @@ function openHRLineMo(gamePk,opts={}){
       }
       if (!first || !last){ err(!first && !last ? 'Enter your first and last name.' : !first ? 'Enter your first name.' : 'Enter your last name.'); return; }
       if (FREE){
+        // A member's name can't be free-claimed: it enters ONLY with their code.
+        var mHit = null;
+        for (var mi = 0; mi < list.length; mi++){ if (list[mi].name != null && norm(list[mi].name) === norm(name)){ mHit = list[mi]; break; } }
+        if (mHit){
+          if (norm(code) === norm(mHit.code)){
+            try { localStorage.setItem(LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {}
+            setDk(dkVisG && (mHit.dk !== false)); pass(); return;
+          }
+          err('That name already has an access code \u2014 enter that exact code to sign in.'); return;
+        }
         if (norm(code).length < 3){ err('Pick a code (at least 3 characters) to protect your name.'); return; }
         err('Checking name…');
         claimFree(name, String(code).trim(), function(ok){
@@ -10961,6 +10971,12 @@ function openHRLineMo(gamePk,opts={}){
       var last = ((document.getElementById('bg-last') || {}).value || '').trim();
       if (!first || !last){ err('Enter your first and last name so the owner knows who to authorize.'); return; }
       var nm = (first + ' ' + last).replace(/\s+/g, ' ').trim();
+      // A name that already HAS a code only enters WITH that code — otherwise
+      // anyone could re-request a paying member's name and slip in as them.
+      if (list.some(function(m){ return m.name != null && norm(m.name) === norm(nm); })){
+        err('That name already has an access code \u2014 enter the code above to sign in.');
+        return;
+      }
       reqBtn.disabled = true; reqBtn.textContent = 'Sending\u2026';
       requestCode(nm, function(ok){
         reqBtn.textContent = ok ? '\u2713 Request sent' : '\u2713 Request saved';
