@@ -188,6 +188,24 @@ body{
 .gearbtn{ position:relative; margin-left:auto; background:none; border:1px solid var(--hair); color:var(--dim);
   border-radius:8px; padding:5px 9px; font-size:14px; line-height:1; cursor:pointer; }
 .gearbtn:active{ color:var(--bone); background:var(--face); }
+/* Super Locks is the premium tab — it should not look like a sibling of "The Board" */
+#viewpills{ align-items:stretch; }
+.vpill.sl{
+  position:relative; overflow:hidden; border:1px solid rgba(245,182,66,.75) !important;
+  background:linear-gradient(135deg,#f5b642 0%,#e0a63c 45%,#c9a84c 100%) !important;
+  color:#14100a !important; font-weight:900 !important; letter-spacing:.02em;
+  box-shadow:0 2px 14px rgba(245,182,66,.22); line-height:1.15;
+}
+.vpill.sl .sl-t{ display:block; font-size:13.5px; text-transform:uppercase; letter-spacing:.06em; }
+.vpill.sl .sl-s{ display:block; font-size:9.5px; font-weight:800; opacity:.72; letter-spacing:.05em; margin-top:2px; text-transform:uppercase; }
+.vpill.sl::after{
+  content:''; position:absolute; top:0; bottom:0; width:38%; left:-45%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+  transform:skewX(-18deg); animation:slshine 4.2s ease-in-out infinite;
+}
+@keyframes slshine{ 0%,72%{ left:-45%; } 100%{ left:125%; } }
+.vpill.sl.locked{ filter:saturate(.72); }
+@media (prefers-reduced-motion: reduce){ .vpill.sl::after{ animation:none; display:none; } }
 /* unread badge: new free sign-ins that still have no access code */
 .newdot{ position:absolute; top:-6px; right:-6px; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
   border-radius:999px; background:#ff5d5d; color:#fff; font:800 10px/17px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -243,7 +261,7 @@ body{
 
   <div id="viewpills" style="display:flex;gap:8px;margin:0 0 14px">
     <button class="vpill on" id="vBoard" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">The Board</button>
-    <button class="vpill" id="vSuper" style="flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--hair);background:transparent;color:inherit;font-weight:700;cursor:pointer">&#9889; Super Locks</button>
+    <button class="vpill sl" id="vSuper" style="flex:1.25;padding:9px 0;border-radius:10px;cursor:pointer">&#9889; Super Locks</button>
   </div>
 
   <main id="cards"><!-- cards injected --></main>
@@ -971,7 +989,10 @@ function gateSuperPill(){
   // Always visible — everyone sees it exists. A padlock hints it's a paid perk;
   // tapping it when they don't have it opens the upgrade panel (see showView).
   var ok = superLocksAllowed();
-  vs.innerHTML = ok ? '⚡ Super Locks' : '⚡ Super Locks 🔒';
+  vs.classList.toggle('locked', !ok);
+  vs.innerHTML = ok
+    ? '<span class="sl-t">\u26a1 Super Locks</span><span class="sl-s">only the 80%+ bet types</span>'
+    : '<span class="sl-t">\u26a1 Super Locks \ud83d\udd12</span><span class="sl-s">premium \u00b7 tap to unlock</span>';
   if (!ok){ // if access was just revoked while they were viewing it, drop them out
     var sl = document.getElementById('superlocks');
     if (sl && sl.style.display !== 'none') showView('board');
@@ -987,7 +1008,7 @@ var DEFAULT_AD = {
     '$40 / month \u2014 everything, plus unlimited DraftKings odds all month',
     'Every pick graded walk-forward \u2014 check the record before you tap in'
   ],
-  cta: 'Text me to upgrade',
+  cta: 'Click here to ask about upgrading',
   contact: 'Text me and I\u2019ll switch your access on right away.',
   phone: '503-278-6961'
 };
@@ -996,7 +1017,8 @@ function normalizeAd(raw){
   var a = {};
   a.title = (raw && typeof raw.title === 'string' && raw.title.trim()) ? raw.title : DEFAULT_AD.title;
   a.pitch = (raw && typeof raw.pitch === 'string' && raw.pitch.trim()) ? raw.pitch : DEFAULT_AD.pitch;
-  a.cta = (raw && typeof raw.cta === 'string' && raw.cta.trim()) ? raw.cta : DEFAULT_AD.cta;
+  // the old wording is treated as unset so the new default takes over
+  a.cta = (raw && typeof raw.cta === 'string' && raw.cta.trim() && raw.cta.trim() !== 'Text me to upgrade') ? raw.cta : DEFAULT_AD.cta;
   a.contact = (raw && typeof raw.contact === 'string') ? raw.contact : DEFAULT_AD.contact;
   a.phone = (raw && typeof raw.phone === 'string') ? raw.phone : DEFAULT_AD.phone;
   var perks = null;
@@ -1012,7 +1034,7 @@ function smsHref(phone){
 // CTA rendered as an SMS link (opens Messages to the number) when a phone is set.
 function ctaButtonHtml(ad, id){
   var href = smsHref(ad.phone);
-  var label = esc(ad.cta) + (ad.phone ? ' · ' + esc(ad.phone) : '');
+  var label = esc(ad.cta);   // the number is the link, not the label
   if (href) return '<a class="go" id="' + id + '" href="' + href + '" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box">' + label + '</a>';
   return '<button class="go" id="' + id + '">' + label + '</button>';
 }
@@ -1118,10 +1140,9 @@ function regDevice(){
    free member coming back tomorrow never re-rings the bell, and clears itself
    the moment you open settings. Owner's device only — members never see it. */
 var NEW_SIGNINS = [];
-function isOwnerDevice(){ var m = savedMember() || {}; return adminPinOk(m.code); }
 async function refreshNewSignins(){
   var g = document.getElementById('gearbtn');
-  if (!g || !isOwnerDevice()) return;
+  if (!g) return;
   try {
     var raw = await fsGetRaw(ADMIN, 'app_settings/free_log');
     var flds = (raw && raw.fields) || {};
@@ -1132,7 +1153,9 @@ async function refreshNewSignins(){
     var norm = function(v){ return String(v || '').trim().toLowerCase(); };
     NEW_SIGNINS = list.filter(function(x){
       if (mems.some(function(m){ return norm(m.name) === norm(x.n); })) return false; // already has a code
-      return (x.fs || x.t || 0) > seenAt;
+      if (x.ig) return false;                       // you chose to ignore this one
+      if (x.req) return true;                       // ASKED for a code — stays pending until they get one
+      return (x.fs || x.t || 0) > seenAt;           // passive sign-in — only until you've looked
     });
     var old = g.querySelector('.newdot');
     if (old) old.remove();
@@ -1140,17 +1163,24 @@ async function refreshNewSignins(){
       var b = document.createElement('span');
       b.className = 'newdot';
       b.textContent = NEW_SIGNINS.length > 99 ? '99+' : String(NEW_SIGNINS.length);
-      b.setAttribute('aria-label', NEW_SIGNINS.length + ' new free sign-in(s) with no access code yet');
+      var asks = NEW_SIGNINS.filter(function(x){ return x.req; }).length;
+      b.setAttribute('aria-label', NEW_SIGNINS.length + ' waiting for a code');
       g.appendChild(b);
-      g.title = NEW_SIGNINS.length + ' new free sign-in' + (NEW_SIGNINS.length > 1 ? 's' : '') + ' waiting for a code';
+      g.title = asks
+        ? asks + ' ' + (asks > 1 ? 'people have' : 'person has') + ' asked for a code'
+        : NEW_SIGNINS.length + ' new free sign-in' + (NEW_SIGNINS.length > 1 ? 's' : '') + ' with no code yet';
     } else { g.title = 'Settings'; }
   } catch (e) {}
 }
 function clearNewSigninBadge(){
+  /* Only the "haven't looked yet" part clears. Someone who ASKED for a code is
+     still waiting after you've looked, so their count stays on the gear until
+     they're given one (or ignored). */
   var g = document.getElementById('gearbtn');
+  var pending = NEW_SIGNINS.filter(function(x){ return x.req; }).length;
   var d = g && g.querySelector('.newdot');
-  if (d) d.remove();
-  NEW_SIGNINS = [];
+  if (d){ if (pending) d.textContent = String(pending); else d.remove(); }
+  NEW_SIGNINS = NEW_SIGNINS.filter(function(x){ return x.req; });
   // stamp on the shared doc (field-masked, so the sign-in list is untouched)
   try {
     fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=seenAt', {
@@ -1994,6 +2024,62 @@ async function openSettingsPanel(){
     if (mins < 1440) return Math.round(mins / 60) + 'h ago';
     return Math.round(mins / 1440) + 'd ago';
   };
+  /* Free sign-ins, triaged. Only people actually WAITING show by default —
+     anyone already given a code, plus anyone you've ignored, folds away into a
+     collapsed list with the ignored ones last. */
+  var normN = function(v){ return String(v || '').trim().toLowerCase(); };
+  var isMemberName = function(n){ return members.some(function(m){ return normN(m.name) === normN(n); }); };
+  var freeWrite = function(){
+    return fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=list', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(freeLog) } } })
+    });
+  };
+  var freeOpen = false;
+  var freeRowHtml = function(x, opts){
+    var waiting = opts.waiting, ignored = opts.ignored, hasCode = opts.hasCode;
+    return '<div class="row" style="margin:3px 0;align-items:center' + (ignored ? ';opacity:.55' : '') + '">' +
+      '<span class="hint" style="flex:1">' + esc(x.n) +
+        (waiting && x.req ? ' <b style="color:#ffb454;font-size:10px;letter-spacing:.08em">ASKED FOR A CODE</b>' : '') +
+        (waiting && !x.req && (x.fs || x.t || 0) > freeSeenAt ? ' <b style="color:#ff5d5d;font-size:10px;letter-spacing:.08em">NEW</b>' : '') +
+        (hasCode ? ' <span style="color:#7fd99a;font-size:10px">\u2713 has a code</span>' : '') +
+        (ignored ? ' <span style="color:var(--dim2);font-size:10px">ignored</span>' : '') +
+        ' <span style="color:var(--dim2)">\u00b7 ' + devHtml(x.n) + '</span></span>' +
+      (hasCode ? '' : '<button class="close m-promote" data-name="' + esc(x.n) + '" style="width:auto;margin:0 4px 0 0;padding:3px 8px;border:1px solid var(--hair);border-radius:7px;font-size:11.5px">give a code</button>') +
+      (hasCode ? '' : '<button class="close m-ignore" data-name="' + esc(x.n) + '" data-on="' + (ignored ? '0' : '1') + '" style="width:auto;margin:0;padding:3px 8px;border:1px solid var(--hair);border-radius:7px;font-size:11.5px;color:var(--dim2)">' + (ignored ? 'un-ignore' : 'ignore') + '</button>') +
+      '<span class="hint" style="min-width:74px;text-align:right">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>' +
+      devDetailHtml(x.n);
+  };
+  var freeSectionHtml = function(){
+    if (!freeLog.length) return '';
+    var waiting = [], coded = [], ignored = [];
+    freeLog.slice(0, 60).forEach(function(x){
+      if (isMemberName(x.n)) coded.push(x);
+      else if (x.ig) ignored.push(x);
+      else waiting.push(x);
+    });
+    // people who actually asked come first, then the most recent
+    waiting.sort(function(a, b){ return (b.req ? 1 : 0) - (a.req ? 1 : 0) || (b.rt || b.fs || b.t || 0) - (a.rt || a.fs || a.t || 0); });
+    var askCount = waiting.filter(function(x){ return x.req; }).length;
+    var hidden = coded.concat(ignored);   // ignored sink to the bottom
+    var head = '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b>' +
+      (askCount ? ' \u00b7 <b style="color:#ffb454">' + askCount + ' asked for a code</b>' : waiting.length ? ' \u00b7 <b style="color:#ff5d5d">' + waiting.length + ' waiting</b>' : ' \u00b7 <span style="color:#7fd99a">all caught up</span>') + '</div>' +
+      '<p class="sub" style="margin:2px 0 6px;color:var(--dim2)">Only people waiting on you are shown. \u201cGive a code\u201d fills their name into the member list above; \u201cignore\u201d drops them to the bottom of the folded list and off the badge.</p>';
+    var body = waiting.length
+      ? waiting.map(function(x){ return freeRowHtml(x, { waiting: true, ignored: false, hasCode: false }); }).join('')
+      : '<div class="hint" style="color:var(--dim2);padding:2px 0 4px">Nobody is waiting \u2014 everyone here either has a code or was ignored.</div>';
+    var fold = '';
+    if (hidden.length){
+      fold = '<div id="freetog" style="cursor:pointer;font-size:12px;font-weight:700;color:var(--dim);margin:6px 0 3px">' +
+          (freeOpen ? '\u25b4 Hide' : '\u25be Show') + ' ' + hidden.length + ' more <span style="color:var(--dim2);font-weight:600">(' +
+          coded.length + ' with a code' + (ignored.length ? ' \u00b7 ' + ignored.length + ' ignored' : '') + ')</span></div>' +
+        '<div id="freehidden" style="display:' + (freeOpen ? '' : 'none') + '">' +
+          coded.map(function(x){ return freeRowHtml(x, { waiting: false, ignored: false, hasCode: true }); }).join('') +
+          ignored.map(function(x){ return freeRowHtml(x, { waiting: false, ignored: true, hasCode: false }); }).join('') +
+        '</div>';
+    }
+    return head + body + fold;
+  };
   var devHtml = function(name){
     var list = devByName[String(name || '').trim().toLowerCase()] || [];
     if (!list.length) return '<span class="hint" style="color:var(--dim2)">no devices seen yet</span>';
@@ -2146,27 +2232,7 @@ async function openSettingsPanel(){
     })() +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
-    (function(){
-      if (!freeLog.length) return '';
-      var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-      var isMember = function(n){ return members.some(function(m){ return norm(m.name) === norm(n); }); };
-      var rows = freeLog.slice(0, 40).map(function(x){
-        var fresh = !isMember(x.n) && (x.fs || x.t || 0) > freeSeenAt;
-        var hasCode = isMember(x.n);
-        return '<div class="row" style="margin:3px 0;align-items:center">' +
-          '<span class="hint" style="flex:1">' + esc(x.n) +
-            (x.req ? ' <b style="color:#ffb454;font-size:10px;letter-spacing:.08em">ASKED FOR A CODE</b>' : fresh ? ' <b style="color:#ff5d5d;font-size:10px;letter-spacing:.08em">NEW</b>' : '') +
-            (hasCode ? ' <span style="color:#7fd99a;font-size:10px">\u2713 has a code</span>' : '') +
-            ' <span style="color:var(--dim2)">\u00b7 ' + devHtml(x.n) + '</span></span>' +
-          (hasCode ? '' : '<button class="close m-promote" data-name="' + esc(x.n) + '" style="width:auto;margin:0;padding:3px 8px;border:1px solid var(--hair);border-radius:7px;font-size:11.5px">give a code</button>') +
-          '<span class="hint" style="min-width:74px;text-align:right">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>' +
-          devDetailHtml(x.n);
-      }).join('');
-      var newCount = freeLog.filter(function(x){ return !isMember(x.n) && (x.fs || x.t || 0) > freeSeenAt; }).length;
-      return '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> \u2014 names claimed on the free app' +
-        (newCount ? ' \u00b7 <b style="color:#ff5d5d">' + newCount + ' new</b> with no code yet' : '') + '</div>' +
-        '<p class="sub" style="margin:2px 0 6px;color:var(--dim2)">\u201cGive a code\u201d drops them into the member list above with their name filled in \u2014 set their code and tier, then Save.</p>' + rows;
-    })() +
+    '<div id="freesection">' + freeSectionHtml() + '</div>' +
     '</div>' +
     '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown when a free user taps a paid app</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
@@ -2280,8 +2346,37 @@ async function openSettingsPanel(){
     });
   }
   wireDevices();
+  /* Re-render just the sign-ins block after a change, keeping everything else
+     (including half-typed member rows) exactly as it was. */
+  function wireFree(){
+    var sec = box.querySelector('#freesection');
+    if (!sec) return;
+    var tog = sec.querySelector('#freetog');
+    if (tog) tog.addEventListener('click', function(){
+      freeOpen = !freeOpen;
+      var h = sec.querySelector('#freehidden');
+      if (h) h.style.display = freeOpen ? '' : 'none';
+      tog.innerHTML = tog.innerHTML.replace(freeOpen ? '\u25be Show' : '\u25b4 Hide', freeOpen ? '\u25b4 Hide' : '\u25be Show');
+    });
+    sec.querySelectorAll('.m-ignore').forEach(function(b){
+      b.addEventListener('click', function(){
+        var nm = b.getAttribute('data-name'), on = b.getAttribute('data-on') === '1';
+        for (var i = 0; i < freeLog.length; i++){
+          if (normN(freeLog[i].n) === normN(nm)){ if (on) freeLog[i].ig = true; else delete freeLog[i].ig; break; }
+        }
+        b.disabled = true;
+        freeWrite().then(function(){
+          sec.innerHTML = freeSectionHtml();
+          wireFree(); wirePromote(); wireDevices();
+          refreshNewSignins();          // the gear count follows immediately
+        }).catch(function(){ b.disabled = false; });
+      });
+    });
+  }
+  wireFree();
   /* One tap turns a free sign-in into a member row with their name already in,
      scrolled to and focused on the code field — the only thing left to type. */
+  function wirePromote(){
   box.querySelectorAll('.m-promote').forEach(function(b){
     b.addEventListener('click', function(){
       var nm = b.getAttribute('data-name') || '';
@@ -2298,6 +2393,8 @@ async function openSettingsPanel(){
       if (codeIn) setTimeout(function(){ codeIn.focus(); }, 350);
     });
   });
+  }
+  wirePromote();
   function wireDel(){
     box.querySelectorAll('.m-del').forEach(function(b){
       b.onclick = function(){ b.closest('[data-memrow]').remove(); };
@@ -3050,7 +3147,14 @@ function showView(which){
   if (isSuper && !superLocksAllowed()){ showDeniedNote('superlocks'); return; } // locked — pitch the upgrade
   document.getElementById('cards').style.display = isSuper ? 'none' : '';
   document.getElementById('superlocks').style.display = isSuper ? '' : 'none';
-  var on = function(b, v){ b.classList.toggle('on', v); b.style.borderColor = v ? '#7fd99a' : 'var(--hair)'; b.style.color = v ? '#7fd99a' : ''; };
+  var on = function(b, v){
+    b.classList.toggle('on', v);
+    if (b.classList.contains('sl')){ // premium pill keeps its gold; depth shows the active state
+      b.style.boxShadow = v ? '0 0 0 2px rgba(245,182,66,.5), 0 6px 20px rgba(245,182,66,.3)' : '0 2px 14px rgba(245,182,66,.22)';
+      return;
+    }
+    b.style.borderColor = v ? '#7fd99a' : 'var(--hair)'; b.style.color = v ? '#7fd99a' : '';
+  };
   on(document.getElementById('vBoard'), !isSuper);
   on(document.getElementById('vSuper'), isSuper);
   if (isSuper) refreshSuperLocks(false);
