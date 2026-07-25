@@ -10816,7 +10816,50 @@ function openHRLineMo(gamePk,opts={}){
     document.body.appendChild(ov);
     document.documentElement.style.overflow = 'hidden';
   }
-  function pass(){ if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
+  /* ── DEVICE REGISTER ────────────────────────────────────────────────────
+     Every successful entry stamps THIS device against the name that got in,
+     one doc per device (member_devices/{id}) so two phones can never clobber
+     each other's row. The Board totals them per member, which is how you spot
+     one code doing the rounds. Throttled to one write per device per 6h, and
+     any failure is silent — access never depends on it. ── */
+  function devId(){
+    try {
+      var k = 'board_device_v1', v = localStorage.getItem(k);
+      if (!v){ v = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); localStorage.setItem(k, v); }
+      return v;
+    } catch (e){ return null; }
+  }
+  function devLabel(){
+    var u = navigator.userAgent || '';
+    var os = /iPhone/.test(u) ? 'iPhone' : /iPad/.test(u) ? 'iPad' : /Android/.test(u) ? 'Android'
+      : /Mac OS X/.test(u) ? 'Mac' : /Windows/.test(u) ? 'Windows' : /Linux/.test(u) ? 'Linux' : 'Device';
+    var br = /CriOS|Chrome\//.test(u) ? 'Chrome' : /FxiOS|Firefox/.test(u) ? 'Firefox'
+      : /Edg\//.test(u) ? 'Edge' : /Safari/.test(u) ? 'Safari' : 'browser';
+    return os + ' \u00b7 ' + br;
+  }
+  function regDevice(){
+    try {
+      var s = saved();
+      if (!s || !s.name) return;
+      var id = devId();
+      if (!id) return;
+      var stampKey = 'board_device_seen';
+      if (Date.now() - (+(localStorage.getItem(stampKey) || 0)) < 6 * 3600 * 1000) return;
+      localStorage.setItem(stampKey, String(Date.now()));
+      var mask = ['n','f','a','d','t'].map(function(k){ return 'updateMask.fieldPaths=' + k; }).join('&');
+      fetch(DOC + 'member_devices/' + encodeURIComponent(id) + '?key=' + MK + '&' + mask, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: {
+          n: { stringValue: String(s.name || '') },
+          f: { booleanValue: !!s.free },
+          a: { stringValue: String(APPKEY || '') },
+          d: { stringValue: devLabel() },
+          t: { integerValue: String(Date.now()) }
+        } })
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  function pass(){ regDevice(); if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
   function inp(id, ph, cap){ return '<input id="' + id + '" placeholder="' + ph + '" autocomplete="off" autocapitalize="' + cap + '" style="width:100%;box-sizing:border-box;background:#182231;border:1px solid #243146;border-radius:9px;color:#e8edf4;padding:12px;font-size:16px;margin-bottom:10px">'; }
   // Claim a free name with a self-chosen code. A name is owned by the first
   // code that claims it; anyone else using that name must match that code.
@@ -10830,7 +10873,7 @@ function openHRLineMo(gamePk,opts={}){
         else if (norm(hit.c) !== norm(code)){ cb(false); return; }             // taken — code mismatch
         else { hit.t = Date.now(); }                                            // returning owner
       } else {
-        arr.unshift({ n: name, c: code, t: Date.now() });
+        arr.unshift({ n: name, c: code, t: Date.now(), fs: Date.now() });
       }
       arr = arr.slice(0, 200);
       fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) }).catch(function(){});

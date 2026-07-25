@@ -185,9 +185,13 @@ body{
 }
 
 /* ---------- entry gate + admin settings ---------- */
-.gearbtn{ margin-left:auto; background:none; border:1px solid var(--hair); color:var(--dim);
+.gearbtn{ position:relative; margin-left:auto; background:none; border:1px solid var(--hair); color:var(--dim);
   border-radius:8px; padding:5px 9px; font-size:14px; line-height:1; cursor:pointer; }
 .gearbtn:active{ color:var(--bone); background:var(--face); }
+/* unread badge: new free sign-ins that still have no access code */
+.newdot{ position:absolute; top:-6px; right:-6px; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box;
+  border-radius:999px; background:#ff5d5d; color:#fff; font:800 10px/17px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  text-align:center; box-shadow:0 0 0 2px var(--board); pointer-events:none; }
 .ovl{ position:fixed; inset:0; z-index:300; background:rgba(4,6,10,.92);
   display:flex; align-items:center; justify-content:center; padding:24px; }
 .ovl.hidden{ display:none; }
@@ -941,7 +945,7 @@ function logFreeSignin(name){
     fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
       var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
       var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-      if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now() });
+      if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now(), fs: Date.now() });
       arr = arr.slice(0, 200);
       fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
     }).catch(function(){});
@@ -1059,6 +1063,93 @@ function memberMatch(name, code, list){
   }
   return { ok: false };
 }
+/* ── DEVICE REGISTER (same contract as every app) ──────────────────────────
+   One doc per device under member_devices/{id}. The Board totals them per
+   member so a shared code shows up as one name on five devices. Throttled to
+   a write per device per 6h; failures are silent — access never depends on it. */
+function devId(){
+  try {
+    var k = 'board_device_v1', v = localStorage.getItem(k);
+    if (!v){ v = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); localStorage.setItem(k, v); }
+    return v;
+  } catch (e){ return null; }
+}
+function devLabel(){
+  var u = navigator.userAgent || '';
+  var os = /iPhone/.test(u) ? 'iPhone' : /iPad/.test(u) ? 'iPad' : /Android/.test(u) ? 'Android'
+    : /Mac OS X/.test(u) ? 'Mac' : /Windows/.test(u) ? 'Windows' : /Linux/.test(u) ? 'Linux' : 'Device';
+  var br = /CriOS|Chrome\//.test(u) ? 'Chrome' : /FxiOS|Firefox/.test(u) ? 'Firefox'
+    : /Edg\//.test(u) ? 'Edge' : /Safari/.test(u) ? 'Safari' : 'browser';
+  return os + ' \u00b7 ' + br;
+}
+function regDevice(){
+  try {
+    var s = CURRENT_MEMBER && CURRENT_MEMBER.name ? CURRENT_MEMBER : savedMember();
+    if (!s || !s.name) return;
+    var id = devId();
+    if (!id) return;
+    if (Date.now() - (+(localStorage.getItem('board_device_seen') || 0)) < 6 * 3600 * 1000) return;
+    localStorage.setItem('board_device_seen', String(Date.now()));
+    var mask = ['n','f','a','d','t'].map(function(k){ return 'updateMask.fieldPaths=' + k; }).join('&');
+    fetch(FS + ADMIN.p + '/databases/(default)/documents/member_devices/' + encodeURIComponent(id) + '?key=' + ADMIN.k + '&' + mask, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: {
+        n: { stringValue: String(s.name || '') },
+        f: { booleanValue: !!s.free },
+        a: { stringValue: 'board' },
+        d: { stringValue: devLabel() },
+        t: { integerValue: String(Date.now()) }
+      } })
+    }).catch(function(){});
+  } catch (e) {}
+}
+/* ── NEW FREE SIGN-INS ─────────────────────────────────────────────────────
+   A dot on the settings gear when someone has claimed a name on the free app
+   but has no access code from you yet. Counts FIRST sign-ins only (fs), so a
+   free member coming back tomorrow never re-rings the bell, and clears itself
+   the moment you open settings. Owner's device only — members never see it. */
+var NEW_SIGNINS = [];
+function isOwnerDevice(){ var m = savedMember() || {}; return adminPinOk(m.code); }
+async function refreshNewSignins(){
+  var g = document.getElementById('gearbtn');
+  if (!g || !isOwnerDevice()) return;
+  try {
+    var raw = await fsGetRaw(ADMIN, 'app_settings/free_log');
+    var flds = (raw && raw.fields) || {};
+    var list = [];
+    try { list = JSON.parse((flds.list && flds.list.stringValue) || '[]') || []; } catch (e) {}
+    var seenAt = flds.seenAt ? +(flds.seenAt.integerValue || flds.seenAt.stringValue || 0) : 0;
+    var mems = parseMembers(await adminGetDoc('board_access'));
+    var norm = function(v){ return String(v || '').trim().toLowerCase(); };
+    NEW_SIGNINS = list.filter(function(x){
+      if (mems.some(function(m){ return norm(m.name) === norm(x.n); })) return false; // already has a code
+      return (x.fs || x.t || 0) > seenAt;
+    });
+    var old = g.querySelector('.newdot');
+    if (old) old.remove();
+    if (NEW_SIGNINS.length){
+      var b = document.createElement('span');
+      b.className = 'newdot';
+      b.textContent = NEW_SIGNINS.length > 99 ? '99+' : String(NEW_SIGNINS.length);
+      b.setAttribute('aria-label', NEW_SIGNINS.length + ' new free sign-in(s) with no access code yet');
+      g.appendChild(b);
+      g.title = NEW_SIGNINS.length + ' new free sign-in' + (NEW_SIGNINS.length > 1 ? 's' : '') + ' waiting for a code';
+    } else { g.title = 'Settings'; }
+  } catch (e) {}
+}
+function clearNewSigninBadge(){
+  var g = document.getElementById('gearbtn');
+  var d = g && g.querySelector('.newdot');
+  if (d) d.remove();
+  NEW_SIGNINS = [];
+  // stamp on the shared doc (field-masked, so the sign-in list is untouched)
+  try {
+    fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=seenAt', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { seenAt: { integerValue: String(Date.now()) } } })
+    }).catch(function(){});
+  } catch (e) {}
+}
 var CURRENT_MEMBER = null; // the resolved identity, for the "My plan" panel
 function savedMember(){ try { return JSON.parse(localStorage.getItem(GATE_LS) || 'null'); } catch (e){ return null; } }
 async function runGate(){
@@ -1134,6 +1225,7 @@ function updateGreeting(){
   el.textContent = name ? 'Hi, ' + name : 'Members only';
 }
 function markLockedCards(){
+  regDevice();     // access just resolved — stamp this device (throttled internally)
   updateGreeting();
   gateSuperPill(); // always run — even before the cards mount
   var els = document.querySelectorAll('.cta[data-app]');
@@ -1718,6 +1810,7 @@ async function openSettingsPanel(){
   ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
   ovl.innerHTML = '<div class="box" style="margin:24px 0;max-width:440px"><h3>Board Settings</h3><p class="sub">Loading current settings\u2026</p></div>';
   document.body.appendChild(ovl);
+  try { clearNewSigninBadge(); } catch (e) {} // opening settings = you've seen them
   var dk = (await adminGetDoc('dk_auto')) || {};
   var dkStat = (await adminGetDoc('dk_status')) || {};
   var access = (await adminGetDoc('board_access')) || {};
@@ -1758,8 +1851,50 @@ async function openSettingsPanel(){
   var iceTh = Object.assign({}, ICE_TH_DEF, (iceCfg && iceCfg.lockThresholds) || {});
   var iceTol = Object.assign({}, ICE_TOL_DEF, (iceCfg && iceCfg.hitTol) || {});
   var nascarTh = Object.assign({}, NASCAR_TH_DEF, (nascarCfg && nascarCfg.lockThresholds) || {});
-  var freeLog = [];
-  try { var flr = await fsGetRaw(ADMIN, 'app_settings/free_log'); if (flr && flr.fields && flr.fields.list){ freeLog = JSON.parse(flr.fields.list.stringValue || '[]'); } } catch (e) {}
+  var freeLog = [], freeSeenAt = 0;
+  try {
+    var flr = await fsGetRaw(ADMIN, 'app_settings/free_log');
+    var flf = (flr && flr.fields) || {};
+    if (flf.list) freeLog = JSON.parse(flf.list.stringValue || '[]');
+    if (flf.seenAt) freeSeenAt = +(flf.seenAt.integerValue || flf.seenAt.stringValue || 0);
+  } catch (e) {}
+  /* Devices signed in under each name (member_devices/{deviceId}, one doc per
+     device). Grouped by name so a member row can say "3 devices" — that's how
+     a shared code looks from here. */
+  var devByName = {};
+  try {
+    (await listAllDocs(ADMIN, 'member_devices')).forEach(function(d){
+      var n = String((d.data && d.data.n) || '').trim().toLowerCase();
+      if (!n) return;
+      (devByName[n] = devByName[n] || []).push({ label: (d.data && d.data.d) || 'Device', app: (d.data && d.data.a) || '', t: +((d.data && d.data.t) || 0) });
+    });
+    Object.keys(devByName).forEach(function(k){ devByName[k].sort(function(a, b){ return b.t - a.t; }); });
+  } catch (e) {}
+  var devAgo = function(t){
+    if (!t) return 'unknown';
+    var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (mins < 60) return mins + 'm ago';
+    if (mins < 1440) return Math.round(mins / 60) + 'h ago';
+    return Math.round(mins / 1440) + 'd ago';
+  };
+  var devHtml = function(name){
+    var list = devByName[String(name || '').trim().toLowerCase()] || [];
+    if (!list.length) return '<span class="hint" style="color:var(--dim2)">no devices seen yet</span>';
+    var col = list.length >= 3 ? '#ffb454' : 'var(--dim)';
+    return '<span class="devtog" data-dev="' + esc(String(name || '').trim().toLowerCase()) + '" style="cursor:pointer;color:' + col + ';border-bottom:1px dotted currentColor">' +
+      list.length + ' device' + (list.length > 1 ? 's' : '') + '</span>' +
+      '<span class="hint" style="color:var(--dim2)"> \u00b7 last ' + esc(devAgo(list[0].t)) + '</span>';
+  };
+  var devDetailHtml = function(name){
+    var list = devByName[String(name || '').trim().toLowerCase()] || [];
+    return '<div class="devlist" data-devlist="' + esc(String(name || '').trim().toLowerCase()) + '" style="display:none;margin:4px 0 2px;padding:6px 8px;border:1px solid var(--hair2);border-radius:8px">' +
+      list.map(function(d){
+        return '<div class="row" style="margin:1px 0"><span class="hint" style="flex:1">' + esc(d.label) + (d.app ? ' <span style="color:var(--dim2)">\u00b7 ' + esc(d.app) + '</span>' : '') + '</span>' +
+          '<span class="hint" style="color:var(--dim2)">' + esc(devAgo(d.t)) + '</span></div>';
+      }).join('') +
+      (list.length >= 3 ? '<div class="hint" style="color:#ffb454;margin-top:3px">Three or more devices on one code \u2014 worth a look.</div>' : '') +
+      '<div class="hint" style="color:var(--dim2);margin-top:3px">A device that clears its browser data counts as a new one.</div></div>';
+  };
   var members = parseMembers(access);
   if (!members.length) members = [{ name: 'Jaren', code: 'greenlight', apps: null, active: true }];
 
@@ -1774,6 +1909,8 @@ async function openSettingsPanel(){
         '<input type="text" class="m-name" value="' + esc(m.name || '') + '" placeholder="first & last name" autocapitalize="words" style="margin:0;flex:1;min-width:60px">' +
         '<input type="text" class="m-code" value="' + esc(m.code || '') + '" placeholder="their code" autocapitalize="none" style="margin:0;flex:1;min-width:60px">' +
       '</div>' +
+      '<div class="row" style="margin:0 0 6px"><span class="hint" style="flex:1">' + devHtml(m.name) + '</span></div>' +
+      devDetailHtml(m.name) +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="hint" style="white-space:nowrap">paid until</span>' +
         '<input type="date" class="m-paid" value="' + esc(m.paidUntil || '') + '" style="margin:0;flex:1">' +
         '<span class="hint" style="white-space:nowrap;color:' + (function(pu){ if (!pu) return 'var(--dim2)'; var t = new Date().toLocaleDateString('en-CA'); if (pu < t) return '#ff7a7a'; var soon = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA'); return pu <= soon ? '#ffb454' : '#7fd99a'; })(m.paidUntil) + '">' + (function(pu){ if (!pu) return 'no expiry'; var t = new Date().toLocaleDateString('en-CA'); return pu < t ? 'EXPIRED' : 'active'; })(m.paidUntil) + '</span>' +
@@ -1874,8 +2011,27 @@ async function openSettingsPanel(){
     })() +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
-    (freeLog.length ? '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> (name captured on the free app)</div>' +
-      freeLog.slice(0, 40).map(function(x){ return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(x.n) + '</span><span class="hint">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>'; }).join('') : '') +
+    (function(){
+      if (!freeLog.length) return '';
+      var norm = function(v){ return String(v || '').trim().toLowerCase(); };
+      var isMember = function(n){ return members.some(function(m){ return norm(m.name) === norm(n); }); };
+      var rows = freeLog.slice(0, 40).map(function(x){
+        var fresh = !isMember(x.n) && (x.fs || x.t || 0) > freeSeenAt;
+        var hasCode = isMember(x.n);
+        return '<div class="row" style="margin:3px 0;align-items:center">' +
+          '<span class="hint" style="flex:1">' + esc(x.n) +
+            (fresh ? ' <b style="color:#ff5d5d;font-size:10px;letter-spacing:.08em">NEW</b>' : '') +
+            (hasCode ? ' <span style="color:#7fd99a;font-size:10px">\u2713 has a code</span>' : '') +
+            ' <span style="color:var(--dim2)">\u00b7 ' + devHtml(x.n) + '</span></span>' +
+          (hasCode ? '' : '<button class="close m-promote" data-name="' + esc(x.n) + '" style="width:auto;margin:0;padding:3px 8px;border:1px solid var(--hair);border-radius:7px;font-size:11.5px">give a code</button>') +
+          '<span class="hint" style="min-width:74px;text-align:right">' + esc(String(new Date(x.t).toISOString()).slice(0, 10)) + '</span></div>' +
+          devDetailHtml(x.n);
+      }).join('');
+      var newCount = freeLog.filter(function(x){ return !isMember(x.n) && (x.fs || x.t || 0) > freeSeenAt; }).length;
+      return '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b> \u2014 names claimed on the free app' +
+        (newCount ? ' \u00b7 <b style="color:#ff5d5d">' + newCount + ' new</b> with no code yet' : '') + '</div>' +
+        '<p class="sub" style="margin:2px 0 6px;color:var(--dim2)">\u201cGive a code\u201d drops them into the member list above with their name filled in \u2014 set their code and tier, then Save.</p>' + rows;
+    })() +
     '</div>' +
     '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown when a free user taps a paid app</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
@@ -1977,7 +2133,35 @@ async function openSettingsPanel(){
     var div = document.createElement('div');
     div.innerHTML = memberRowHtml({ name: '', code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'limited' }, Date.now());
     box.querySelector('#memlist').appendChild(div.firstChild);
-    wireDel();
+    wireDel(); wireDevices();
+  });
+  /* Tap a device count to see which devices they are. */
+  function wireDevices(){
+    box.querySelectorAll('.devtog').forEach(function(t){
+      t.onclick = function(){
+        var el = box.querySelector('[data-devlist="' + t.getAttribute('data-dev') + '"]');
+        if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+      };
+    });
+  }
+  wireDevices();
+  /* One tap turns a free sign-in into a member row with their name already in,
+     scrolled to and focused on the code field — the only thing left to type. */
+  box.querySelectorAll('.m-promote').forEach(function(b){
+    b.addEventListener('click', function(){
+      var nm = b.getAttribute('data-name') || '';
+      var div = document.createElement('div');
+      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'limited' }, Date.now());
+      var row = div.firstChild;
+      box.querySelector('#memlist').appendChild(row);
+      wireDel(); wireDevices();
+      b.textContent = 'added below \u2014 set their code';
+      b.disabled = true;
+      b.style.opacity = '.6';
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      var codeIn = row.querySelector('.m-code');
+      if (codeIn) setTimeout(function(){ codeIn.focus(); }, 350);
+    });
   });
   function wireDel(){
     box.querySelectorAll('.m-del').forEach(function(b){
@@ -2745,7 +2929,7 @@ document.addEventListener('DOMContentLoaded', function(){
   var vb = document.getElementById('vBoard'), vs = document.getElementById('vSuper');
   if (vb) vb.addEventListener('click', function(){ showView('board'); });
   if (vs) vs.addEventListener('click', function(){ showView('super'); });
-  runGate();
+  runGate().then(function(){ try { refreshNewSignins(); } catch (e) {} });
 });
 document.addEventListener('DOMContentLoaded', boot);
 </script>
