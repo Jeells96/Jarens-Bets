@@ -2003,6 +2003,60 @@ async function openSettingsPanel(){
   var iceTh = Object.assign({}, ICE_TH_DEF, (iceCfg && iceCfg.lockThresholds) || {});
   var iceTol = Object.assign({}, ICE_TOL_DEF, (iceCfg && iceCfg.hitTol) || {});
   var nascarTh = Object.assign({}, NASCAR_TH_DEF, (nascarCfg && nascarCfg.lockThresholds) || {});
+  /* DK pull history — one entry per API call actually spent, written by each
+     app as it pulls. Newest first, grouped by Pacific day. */
+  var dkLog = [];
+  try {
+    var dlr = await fsGetRaw(ADMIN, 'app_settings/dk_log');
+    var dmap = (dlr && dlr.fields && dlr.fields.e) ? fsVal(dlr.fields.e) : null;
+    if (dmap) Object.keys(dmap).forEach(function(id){
+      var e2 = dmap[id] || {};
+      if (e2.t) dkLog.push({ id: id, app: e2.a || '', t: +e2.t, what: e2.w || '', games: e2.g || '', calls: e2.c || '' });
+    });
+    dkLog.sort(function(a, b){ return b.t - a.t; });
+    // keep the doc bounded: drop anything past the newest 200
+    if (dkLog.length > 200){
+      var kill = dkLog.slice(200).map(function(x){ return 'updateMask.fieldPaths=' + encodeURIComponent('e.' + x.id); }).join('&');
+      fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/dk_log?key=' + ADMIN.k + '&' + kill, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: {} })
+      }).catch(function(){});
+      dkLog = dkLog.slice(0, 200);
+    }
+  } catch (e) {}
+  var DK_APP_NAME = { mlb: 'Diamond IQ Premium', nfl: 'Gridline', nba: 'The Key', hockey: 'Icing' };
+  var DK_APP_COL = { mlb: 'var(--mlb)', nfl: 'var(--nfl)', nba: 'var(--nba)', hockey: 'var(--nhl)' };
+  var ptDayLabel = function(ms){
+    var d = new Date(ms);
+    var day = d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+    var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+    var yest = new Date(Date.now() - 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+    if (day === today) return 'Today';
+    if (day === yest) return 'Yesterday';
+    return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric' });
+  };
+  var ptTime = function(ms){ return new Date(ms).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }); };
+  var dkLogHtml = function(){
+    if (!dkLog.length){
+      return '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">No pulls recorded yet. Every DraftKings call an app spends from here on lands in this list \u2014 what it pulled, for which games, and when.</p>';
+    }
+    var out = '', lastDay = null;
+    dkLog.slice(0, 60).forEach(function(e3){
+      var dl = ptDayLabel(e3.t);
+      if (dl !== lastDay){
+        lastDay = dl;
+        out += '<div style="font:800 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:12px 0 5px">' + esc(dl) + '</div>';
+      }
+      out += '<div style="border-top:1px solid var(--hair2);padding:7px 0">' +
+        '<div style="display:flex;gap:8px;align-items:baseline">' +
+          '<span style="flex:0 0 auto;font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(ptTime(e3.t)) + '</span>' +
+          '<span style="flex:1;min-width:0;font-size:13px"><b style="color:' + (DK_APP_COL[e3.app] || 'var(--bone)') + '">' + esc(DK_APP_NAME[e3.app] || e3.app) + '</b> \u00b7 ' + esc(e3.what) + '</span>' +
+          (e3.calls ? '<span class="hint" style="flex:0 0 auto">' + esc(e3.calls) + ' left</span>' : '') +
+        '</div>' +
+        (e3.games ? '<div class="hint" style="color:var(--dim2);margin-top:2px">' + esc(e3.games) + '</div>' : '') +
+      '</div>';
+    });
+    return out + (dkLog.length > 60 ? '<div class="hint" style="color:var(--dim2);margin-top:6px">\u2026and ' + (dkLog.length - 60) + ' older (the newest 200 are kept)</div>' : '');
+  };
   var vhRaw = (await adminGetDoc('view_hours')) || {};
   var vhCfg = {}; try { vhCfg = JSON.parse(vhRaw.w || '{}') || {}; } catch (e) {}
   var VH_APPS = [['mlb','Diamond IQ Premium'],['mlbfree','Diamond IQ Free'],['nfl','Gridline (NFL)'],['nba','The Key (NBA)'],['hockey','Icing (NHL)'],['nascar','Pete\u2019s Picks (NASCAR)']];
@@ -2331,6 +2385,10 @@ async function openSettingsPanel(){
     '<div class="row" style="margin-top:10px"><span class="lbl">Icing \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-hon"' + (dk.hockeyOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before puck drop</b>, once per game.</div></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Pull history</span><span class="hint">newest first \u00b7 Pacific</span></div>' +
+    '<p class="sub" style="margin:6px 0 2px;color:var(--dim2)">Every DraftKings call actually spent \u2014 which app, what lines, which games, and how much quota was left afterwards.</p>' +
+    dkLogHtml() +
+    '</div>' +
     '</div>' +
     '<div id="stab-thresholds" style="display:none">' +
     lockSect('Lock grades \u00b7 Diamond IQ Premium',

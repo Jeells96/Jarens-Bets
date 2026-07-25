@@ -1938,6 +1938,26 @@ async function refreshQuotaOnly() {
   }
 }
 
+  /* ── DK PULL LOG ─ every call we actually spend gets one line in
+   app_settings/dk_log, keyed by a unique id and written with a nested field
+   mask so two sports pulling in the same minute can't overwrite each other.
+   The Board's DK Pulls tab reads it back as a history. ── */
+function dkLogPull(app, what, games, calls){
+  try {
+    var id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    var body = { fields: { e: { mapValue: { fields: {} } } } };
+    body.fields.e.mapValue.fields[id] = { mapValue: { fields: {
+      a: { stringValue: String(app) },
+      t: { integerValue: String(Date.now()) },
+      w: { stringValue: String(what || '') },
+      g: { stringValue: String(games || '').slice(0, 300) },
+      c: { stringValue: calls == null ? '' : String(calls) }
+    } } };
+    return fetch('https://firestore.googleapis.com/v1/projects/mlb-bets-d196c/databases/(default)/documents/' + 'app_settings/dk_log?key=' + 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' + '&updateMask.fieldPaths=' + encodeURIComponent('e.' + id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).catch(function(){});
+  } catch (e) {}
+}
 async function pullDKOdds(reason, opts) {
   opts = opts || {};
   const allToday = !!opts.allToday; // Sunday-morning mode: grab every game today at once
@@ -1947,6 +1967,7 @@ async function pullDKOdds(reason, opts) {
   const gameLines = sel.filter(m => ['h2h','spreads','totals'].includes(m));
   const playerMarkets = sel.filter(m => m.startsWith('player_'));
   const results = { fetchedAt: Date.now(), reason, byEvent: {} };
+  const pulledGames = [];   // what this run actually spent calls on
   // Seed with everything we've already stored so a pull can only ADD games,
   // never drop lines for games that have since dropped off the /odds feed.
   try { const pd = await fsGetDoc('gridline/dkOdds'); if (pd && pd.byEvent) results.byEvent = JSON.parse(JSON.stringify(pd.byEvent)); } catch (e) {}
@@ -1978,6 +1999,7 @@ async function pullDKOdds(reason, opts) {
           }
         }
         results.byEvent[ev.id] = cur;
+        pulledGames.push((ev.away_team || '') + ' @ ' + (ev.home_team || ''));
       }
     }
 
@@ -2026,6 +2048,7 @@ async function pullDKOdds(reason, opts) {
           }
           const bm = (d.bookmakers || []).find(b => b.key === 'draftkings');
           if (bm) for (const m of bm.markets) results.byEvent[ev.id].markets[m.key] = m.outcomes;
+          pulledGames.push((d.away_team || '') + ' @ ' + (d.home_team || '') + ' (props)');
         } catch (e) { logEvent('err', 'DK', 'player-props ev ' + ev.id + ' err: ' + e.message); }
       }
     }
@@ -2035,6 +2058,7 @@ async function pullDKOdds(reason, opts) {
     localStorage.setItem('gl_dk_last_pull', String(state.dkLastPullAt));
     try { localStorage.setItem('gl_dk_odds', JSON.stringify(results)); } catch {}
     try { await fsSetDoc('gridline/dkOdds', results); } catch (e) { logEvent('warn', 'DK', 'firebase persist failed: ' + e.message); }
+    if (pulledGames.length) await dkLogPull('nfl', pulledGames.length + ' pull(s) \u00b7 ' + sel.join(', '), pulledGames.join(', '), state.dkQuotaRemaining);
     logEvent('info', 'DK', 'pull complete, ' + Object.keys(results.byEvent).length + ' events stored');
     return results;
   } catch (e) {

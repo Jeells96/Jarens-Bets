@@ -1427,6 +1427,26 @@ async function autoCloudSync(){
    app is toggled on and the current PT day+hour is scheduled. Stores a per-date
    snapshot to nba_dk so the grading cron can bet against DK historically. */
 const MLBCFG = { p: 'mlb-bets-d196c', k: 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' };
+  /* ── DK PULL LOG ─ every call we actually spend gets one line in
+   app_settings/dk_log, keyed by a unique id and written with a nested field
+   mask so two sports pulling in the same minute can't overwrite each other.
+   The Board's DK Pulls tab reads it back as a history. ── */
+function dkLogPull(app, what, games, calls){
+  try {
+    var id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    var body = { fields: { e: { mapValue: { fields: {} } } } };
+    body.fields.e.mapValue.fields[id] = { mapValue: { fields: {
+      a: { stringValue: String(app) },
+      t: { integerValue: String(Date.now()) },
+      w: { stringValue: String(what || '') },
+      g: { stringValue: String(games || '').slice(0, 300) },
+      c: { stringValue: calls == null ? '' : String(calls) }
+    } } };
+    return fetch(('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/') + 'app_settings/dk_log?key=' + MLBCFG.k + '&updateMask.fieldPaths=' + encodeURIComponent('e.' + id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).catch(function(){});
+  } catch (e) {}
+}
 async function runCronDkPull(){
   window.__cronStatus = 'dk: starting';
   try {
@@ -1461,11 +1481,11 @@ async function runCronDkPull(){
     let remaining = null; try { remaining = res.headers.get('x-requests-remaining'); } catch (e) {}
     const arr = await res.json();
     const snapGames = Object.assign({}, existing);
-    let n = 0;
+    let n = 0; const newKeys = [];
     for (const ev of (arr || [])){
       if (ptDateStr(new Date(ev.commence_time)) !== date) continue;
       const m = mapOddsEvent(ev, games);
-      if (m && eligibleKeys.has(m.gm) && !snapGames[m.gm]){ snapGames[m.gm] = m; n++; }
+      if (m && eligibleKeys.has(m.gm) && !snapGames[m.gm]){ snapGames[m.gm] = m; n++; newKeys.push(m.gm); }
     }
     await fbWrite(FB_DK, date, { date: date, fetched: new Date().toISOString(), games: snapGames });
     if (remaining != null){
@@ -1475,6 +1495,7 @@ async function runCronDkPull(){
           body: JSON.stringify({ fields: { nbaCalls: { integerValue: String(parseInt(remaining, 10)) }, nbaAt: { integerValue: String(Date.now()) } } }) });
       } catch (e) {}
     }
+    if (n) await dkLogPull('nba', n + ' game(s) \u00b7 moneyline, spread, total', newKeys.join(', '), remaining);
     window.__cronStatus = 'dk: done — ' + n + ' new game(s) stored (2h window) · ' + Object.keys(snapGames).length + ' total today (' + (remaining != null ? remaining : '?') + ' calls left)';
   } catch (e){ window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
   window.__cronDone = true;

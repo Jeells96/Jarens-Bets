@@ -920,6 +920,18 @@ let ODDSP={date:null,events:null},DK_CALLS=null;
 
 function ptNow(){return new Date(new Date().toLocaleString('en-US',{timeZone:'America/Los_Angeles'}));}
 
+/* ── DK PULL LOG ─ one line per call we actually spend, in app_settings/dk_log.
+   Keyed by a unique id and merged, so two sports pulling in the same minute
+   can't overwrite each other. The Board reads it back as a history. ── */
+async function dkLogPull(app,what,games,calls){
+  try{
+    if(!FBH.ready)return;
+    const id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+    await withTO(FBH.db.collection('app_settings').doc('dk_log').set({e:{[id]:{
+      a:String(app),t:Date.now(),w:String(what||''),g:String(games||'').slice(0,300),c:calls==null?'':String(calls)
+    }}},{merge:true}),8000);
+  }catch(e){}
+}
 async function fetchDKPropsAndPush(date,onProg){
   const say=onProg||(()=>{});
   try{
@@ -973,6 +985,8 @@ async function fetchDKPropsAndPush(date,onProg){
       try{await withTO(FBH.db.collection('app_settings').doc('props_'+date).set({date,events:newOnly,fetchedAt:Date.now(),updatedAt:Date.now()},{merge:true}),10000);}catch(e){}
     }
     ODDSP={date,events:results};
+    await dkLogPull('mlb',fetched+' game(s) \u00b7 player props ('+PLAYER_PROP_MARKETS.length+' markets)',
+      toFetch.slice(0,8).map(ev=>(ev.away_team||'')+' @ '+(ev.home_team||'')).join(', '),DK_CALLS);
     // publish remaining API quota so the Board can show it next to the toggle
     if(FBH.ready&&DK_CALLS!=null){
       try{await withTO(FBH.db.collection('app_settings').doc('dk_status').set({premiumCalls:DK_CALLS,premiumAt:Date.now()},{merge:true}),6000);}catch(e){}
@@ -1016,6 +1030,8 @@ async function fetchDKGameOddsAndPush(date,windowGames,onProg){
     if(FBH.ready){
       try{await withTO(FBH.db.collection('app_settings').doc('odds_'+date).set({date,games,fetchedAt:Date.now(),fetchedBy:'premium-cron'},{merge:true}),10000);}catch(e){}
     }
+    await dkLogPull('mlb',add.length+' game(s) \u00b7 moneyline, total, run line',
+      add.map(ev=>(ev.away_team||'')+' @ '+(ev.home_team||'')).join(', '),DK_CALLS);
     return{ok:true,count:add.length,calls:DK_CALLS};
   }catch(e){return{ok:false,reason:e.message};}
 }
