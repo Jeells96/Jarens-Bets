@@ -1942,7 +1942,23 @@ async function refreshQuotaOnly() {
    app_settings/dk_log, keyed by a unique id and written with a nested field
    mask so two sports pulling in the same minute can't overwrite each other.
    The Board's DK Pulls tab reads it back as a history. ── */
-function dkLogPull(app, what, games, calls){
+/* Per-game market lines, capped so the log doc can't outgrow itself:
+   16 lines a game, 10 games an entry, and a hard character ceiling. */
+function dkDetailStr(detail){
+  try {
+    if (!detail || !detail.length) return '';
+    var out = detail.slice(0, 10).map(function(x){
+      var lines = (x.l || []).slice(0, 16);
+      var extra = (x.l || []).length - lines.length;
+      if (extra > 0) lines.push('+ ' + extra + ' more market' + (extra > 1 ? 's' : ''));
+      return { g: x.g, l: lines };
+    });
+    if (detail.length > 10) out.push({ g: '+ ' + (detail.length - 10) + ' more game(s)', l: [] });
+    var str = JSON.stringify(out);
+    return str.length > 1600 ? JSON.stringify(out.slice(0, 4)) : str;
+  } catch (e){ return ''; }
+}
+function dkLogPull(app, what, games, calls, detail){
   try {
     var id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     var body = { fields: { e: { mapValue: { fields: {} } } } };
@@ -1951,7 +1967,8 @@ function dkLogPull(app, what, games, calls){
       t: { integerValue: String(Date.now()) },
       w: { stringValue: String(what || '') },
       g: { stringValue: String(games || '').slice(0, 300) },
-      c: { stringValue: calls == null ? '' : String(calls) }
+      c: { stringValue: calls == null ? '' : String(calls) },
+      d: { stringValue: dkDetailStr(detail) }
     } } };
     return fetch('https://firestore.googleapis.com/v1/projects/mlb-bets-d196c/databases/(default)/documents/' + 'app_settings/dk_log?key=' + 'AIzaSyAm8TgK3Hl5ndWmqpYlBJs-u64JbeIg2W0' + '&updateMask.fieldPaths=' + encodeURIComponent('e.' + id), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -1968,6 +1985,35 @@ async function pullDKOdds(reason, opts) {
   const playerMarkets = sel.filter(m => m.startsWith('player_'));
   const results = { fetchedAt: Date.now(), reason, byEvent: {} };
   const pulledGames = [];   // what this run actually spent calls on
+  const pullDetail = [];    // and the actual lines it brought back
+  const nSgn = v => v == null ? '?' : ((v > 0 ? '+' : '') + v);
+  const nShort = n2 => String(n2 || '').trim().split(' ').slice(-1)[0];
+  const NFL_PROP_LBL = { player_pass_yds: 'pass yds', player_rush_yds: 'rush yds',
+    player_reception_yds: 'rec yds', player_receptions: 'receptions',
+    player_pass_tds: 'pass TDs', player_anytime_td: 'anytime TD' };
+  const nflLines = (ev, mkObj) => {
+    const ls = [], aS = nShort(ev.away_team || ev.away), hS = nShort(ev.home_team || ev.home);
+    const get = k => mkObj[k];
+    const h = get('h2h');
+    if (h){ const H = h.find(o => o.name === (ev.home_team || ev.home)), A = h.find(o => o.name === (ev.away_team || ev.away));
+      if (H || A) ls.push('Moneyline ' + aS + ' ' + nSgn(A && A.price) + ' / ' + hS + ' ' + nSgn(H && H.price)); }
+    const sp = get('spreads');
+    if (sp){ const H2 = sp.find(o => o.name === (ev.home_team || ev.home));
+      if (H2 && H2.point != null) ls.push('Spread ' + hS + ' ' + nSgn(H2.point) + (H2.price != null ? ' (' + nSgn(H2.price) + ')' : '')); }
+    const t = get('totals');
+    if (t){ const O = t.find(o => /over/i.test(o.name || ''));
+      if (O && O.point != null) ls.push('O/U ' + O.point); }
+    Object.keys(NFL_PROP_LBL).forEach(k => {
+      const arr = get(k);
+      if (!arr) return;
+      arr.forEach(o => {
+        if (k === 'player_anytime_td'){ if (o.price != null) ls.push((o.description || o.name || '?') + ' anytime TD ' + nSgn(o.price)); return; }
+        if (!/over/i.test(o.name || '') || o.point == null) return;
+        ls.push((o.description || '?') + ' ' + NFL_PROP_LBL[k] + ' O/U ' + o.point + (o.price != null ? ' (' + nSgn(o.price) + ')' : ''));
+      });
+    });
+    return ls;
+  };
   // Seed with everything we've already stored so a pull can only ADD games,
   // never drop lines for games that have since dropped off the /odds feed.
   try { const pd = await fsGetDoc('gridline/dkOdds'); if (pd && pd.byEvent) results.byEvent = JSON.parse(JSON.stringify(pd.byEvent)); } catch (e) {}
@@ -2000,6 +2046,7 @@ async function pullDKOdds(reason, opts) {
         }
         results.byEvent[ev.id] = cur;
         pulledGames.push((ev.away_team || '') + ' @ ' + (ev.home_team || ''));
+        pullDetail.push({ g: (ev.away_team || '') + ' @ ' + (ev.home_team || ''), l: nflLines(ev, cur.markets || {}) });
       }
     }
 
@@ -2049,6 +2096,8 @@ async function pullDKOdds(reason, opts) {
           const bm = (d.bookmakers || []).find(b => b.key === 'draftkings');
           if (bm) for (const m of bm.markets) results.byEvent[ev.id].markets[m.key] = m.outcomes;
           pulledGames.push((d.away_team || '') + ' @ ' + (d.home_team || '') + ' (props)');
+          pullDetail.push({ g: (d.away_team || '') + ' @ ' + (d.home_team || '') + ' \u00b7 props',
+            l: nflLines(d, results.byEvent[ev.id].markets || {}) });
         } catch (e) { logEvent('err', 'DK', 'player-props ev ' + ev.id + ' err: ' + e.message); }
       }
     }
@@ -2058,7 +2107,7 @@ async function pullDKOdds(reason, opts) {
     localStorage.setItem('gl_dk_last_pull', String(state.dkLastPullAt));
     try { localStorage.setItem('gl_dk_odds', JSON.stringify(results)); } catch {}
     try { await fsSetDoc('gridline/dkOdds', results); } catch (e) { logEvent('warn', 'DK', 'firebase persist failed: ' + e.message); }
-    if (pulledGames.length) await dkLogPull('nfl', pulledGames.length + ' pull(s) \u00b7 ' + sel.join(', '), pulledGames.join(', '), state.dkQuotaRemaining);
+    if (pulledGames.length) await dkLogPull('nfl', pulledGames.length + ' pull(s) \u00b7 ' + sel.join(', '), pulledGames.join(', '), state.dkQuotaRemaining, pullDetail);
     logEvent('info', 'DK', 'pull complete, ' + Object.keys(results.byEvent).length + ' events stored');
     return results;
   } catch (e) {

@@ -1020,7 +1020,23 @@ function switchTab(name){
    app_settings/dk_log, keyed by a unique id and written with a nested field
    mask so two sports pulling in the same minute can't overwrite each other.
    The Board's DK Pulls tab reads it back as a history. ── */
-function dkLogPull(app, what, games, calls){
+/* Per-game market lines, capped so the log doc can't outgrow itself:
+   16 lines a game, 10 games an entry, and a hard character ceiling. */
+function dkDetailStr(detail){
+  try {
+    if (!detail || !detail.length) return '';
+    var out = detail.slice(0, 10).map(function(x){
+      var lines = (x.l || []).slice(0, 16);
+      var extra = (x.l || []).length - lines.length;
+      if (extra > 0) lines.push('+ ' + extra + ' more market' + (extra > 1 ? 's' : ''));
+      return { g: x.g, l: lines };
+    });
+    if (detail.length > 10) out.push({ g: '+ ' + (detail.length - 10) + ' more game(s)', l: [] });
+    var str = JSON.stringify(out);
+    return str.length > 1600 ? JSON.stringify(out.slice(0, 4)) : str;
+  } catch (e){ return ''; }
+}
+function dkLogPull(app, what, games, calls, detail){
   try {
     var id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     var body = { fields: { e: { mapValue: { fields: {} } } } };
@@ -1029,7 +1045,8 @@ function dkLogPull(app, what, games, calls){
       t: { integerValue: String(Date.now()) },
       w: { stringValue: String(what || '') },
       g: { stringValue: String(games || '').slice(0, 300) },
-      c: { stringValue: calls == null ? '' : String(calls) }
+      c: { stringValue: calls == null ? '' : String(calls) },
+      d: { stringValue: dkDetailStr(detail) }
     } } };
     return fetch(('https://firestore.googleapis.com/v1/projects/' + MLBCFG.p + '/databases/(default)/documents/') + 'app_settings/dk_log?key=' + MLBCFG.k + '&updateMask.fieldPaths=' + encodeURIComponent('e.' + id), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -1084,7 +1101,7 @@ async function runCronDkPull(){
     if (!res.ok) throw new Error('odds API ' + res.status);
     let remaining = null; try { remaining = res.headers.get('x-requests-remaining'); } catch (e) {}
     const arr = await res.json();
-    const games = Object.assign({}, existing); let n = 0; const newKeys = [];
+    const games = Object.assign({}, existing); let n = 0; const newKeys = [], detail = [];
     for (const ev of (arr || [])){
       if (String(ev.commence_time).slice(0, 10) < date) continue;
       const hAb = toAb(ev.home_team), aAb = toAb(ev.away_team);
@@ -1099,6 +1116,16 @@ async function runCronDkPull(){
       const tO = tot && (tot.outcomes || []).find(function(x){ return x.name === 'Over'; });
       const sH = spr && (spr.outcomes || []).find(function(x){ return x.name === ev.home_team; });
       newKeys.push(gm);
+      (function(){
+        const sg = function(v){ return (v > 0 ? '+' : '') + v; };
+        const mlH = price(h2h, ev.home_team), mlA = price(h2h, ev.away_team);
+        const sH = spr && (spr.outcomes || []).find(function(x){ return x.name === ev.home_team; });
+        const ls = [];
+        if (mlH != null || mlA != null) ls.push('Moneyline ' + aAb + ' ' + sg(mlA) + ' / ' + hAb + ' ' + sg(mlH));
+        if (sH && sH.point != null) ls.push('Puck line ' + hAb + ' ' + sg(sH.point) + (sH.price != null ? ' (' + sg(sH.price) + ')' : ''));
+        if (tO && tO.point != null) ls.push('O/U ' + tO.point);
+        detail.push({ g: aAb + ' @ ' + hAb, l: ls });
+      })();
       games[gm] = { gm: gm, mlHome: price(h2h, ev.home_team), mlAway: price(h2h, ev.away_team), total: tO && tO.point != null ? tO.point : null,
         spreadHome: sH && sH.point != null ? sH.point : null, spHomeP: price(spr, ev.home_team), spAwayP: price(spr, ev.away_team) };
       n++;
@@ -1111,7 +1138,7 @@ async function runCronDkPull(){
           body: JSON.stringify({ fields: { hockeyCalls: { integerValue: String(parseInt(remaining, 10)) }, hockeyAt: { integerValue: String(Date.now()) } } }) });
       } catch (e) {}
     }
-    if (n) await dkLogPull('hockey', n + ' game(s) \u00b7 moneyline, total, puck line', newKeys.join(', '), remaining);
+    if (n) await dkLogPull('hockey', n + ' game(s) \u00b7 moneyline, total, puck line', newKeys.join(', '), remaining, detail);
     window.__cronStatus = 'dk: done — ' + n + ' DK lines stored for ' + date + ' (' + (remaining != null ? remaining : '?') + ' calls left)';
   } catch (e){ window.__cronStatus = 'dk: ERROR — ' + (e && e.message || e); }
   window.__cronDone = true;

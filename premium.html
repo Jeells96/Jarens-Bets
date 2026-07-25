@@ -923,12 +923,30 @@ function ptNow(){return new Date(new Date().toLocaleString('en-US',{timeZone:'Am
 /* ── DK PULL LOG ─ one line per call we actually spend, in app_settings/dk_log.
    Keyed by a unique id and merged, so two sports pulling in the same minute
    can't overwrite each other. The Board reads it back as a history. ── */
-async function dkLogPull(app,what,games,calls){
+/* Per-game market lines, capped so the log doc can't outgrow itself. */
+function dkDetailStr(detail){
+  try{
+    if(!detail||!detail.length)return '';
+    const out=detail.slice(0,10).map(x=>{
+      const lines=(x.l||[]).slice(0,16);
+      const extra=(x.l||[]).length-lines.length;
+      if(extra>0)lines.push('+ '+extra+' more market'+(extra>1?'s':''));
+      return {g:x.g,l:lines};
+    });
+    if(detail.length>10)out.push({g:'+ '+(detail.length-10)+' more game(s)',l:[]});
+    const str=JSON.stringify(out);
+    return str.length>1600?JSON.stringify(out.slice(0,4)):str;
+  }catch(e){return '';}
+}
+const dkShort=n=>String(n||'').trim().split(' ').slice(-1)[0];
+const dkSgn=v=>v==null?'?':((v>0?'+':'')+v);
+async function dkLogPull(app,what,games,calls,detail){
   try{
     if(!FBH.ready)return;
     const id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
     await withTO(FBH.db.collection('app_settings').doc('dk_log').set({e:{[id]:{
-      a:String(app),t:Date.now(),w:String(what||''),g:String(games||'').slice(0,300),c:calls==null?'':String(calls)
+      a:String(app),t:Date.now(),w:String(what||''),g:String(games||'').slice(0,300),c:calls==null?'':String(calls),
+      d:dkDetailStr(detail)
     }}},{merge:true}),8000);
   }catch(e){}
 }
@@ -985,8 +1003,21 @@ async function fetchDKPropsAndPush(date,onProg){
       try{await withTO(FBH.db.collection('app_settings').doc('props_'+date).set({date,events:newOnly,fetchedAt:Date.now(),updatedAt:Date.now()},{merge:true}),10000);}catch(e){}
     }
     ODDSP={date,events:results};
+    const PROP_LBL={batter_total_bases:'total bases',batter_walks:'walks',batter_strikeouts:'strikeouts',
+      pitcher_strikeouts:'pitcher K',pitcher_hits_allowed:'pitcher hits',pitcher_walks:'pitcher walks'};
+    const propDetail=Object.keys(newOnly).map(id=>{
+      const rec=newOnly[id],ls=[];
+      (rec.markets||[]).forEach(mk=>{
+        const lbl=PROP_LBL[mk.key]||mk.key;
+        (mk.outcomes||[]).forEach(o=>{
+          if(!/over/i.test(o.name||'')||o.point==null)return;   // one line per player+market
+          ls.push((o.description||'?')+' '+lbl+' O/U '+o.point+(o.price!=null?' ('+dkSgn(o.price)+')':''));
+        });
+      });
+      return {g:(rec.away_team||'')+' @ '+(rec.home_team||''),l:ls};
+    });
     await dkLogPull('mlb',fetched+' game(s) \u00b7 player props ('+PLAYER_PROP_MARKETS.length+' markets)',
-      toFetch.slice(0,8).map(ev=>(ev.away_team||'')+' @ '+(ev.home_team||'')).join(', '),DK_CALLS);
+      toFetch.slice(0,8).map(ev=>(ev.away_team||'')+' @ '+(ev.home_team||'')).join(', '),DK_CALLS,propDetail);
     // publish remaining API quota so the Board can show it next to the toggle
     if(FBH.ready&&DK_CALLS!=null){
       try{await withTO(FBH.db.collection('app_settings').doc('dk_status').set({premiumCalls:DK_CALLS,premiumAt:Date.now()},{merge:true}),6000);}catch(e){}
@@ -1030,8 +1061,23 @@ async function fetchDKGameOddsAndPush(date,windowGames,onProg){
     if(FBH.ready){
       try{await withTO(FBH.db.collection('app_settings').doc('odds_'+date).set({date,games,fetchedAt:Date.now(),fetchedBy:'premium-cron'},{merge:true}),10000);}catch(e){}
     }
+    const glDetail=add.map(ev=>{
+      const mks=(ev.bookmakers&&ev.bookmakers[0]&&ev.bookmakers[0].markets)||[];
+      const find=k=>mks.find(m=>m.key===k);
+      const aS=dkShort(ev.away_team),hS=dkShort(ev.home_team),ls=[];
+      const h=find('h2h');
+      if(h){const H=(h.outcomes||[]).find(o=>o.name===ev.home_team),A=(h.outcomes||[]).find(o=>o.name===ev.away_team);
+        if(H||A)ls.push('Moneyline '+aS+' '+dkSgn(A&&A.price)+' / '+hS+' '+dkSgn(H&&H.price));}
+      const sp=find('spreads');
+      if(sp){const H2=(sp.outcomes||[]).find(o=>o.name===ev.home_team);
+        if(H2&&H2.point!=null)ls.push('Run line '+hS+' '+dkSgn(H2.point)+(H2.price!=null?' ('+dkSgn(H2.price)+')':''));}
+      const t=find('totals');
+      if(t){const O=(t.outcomes||[]).find(o=>/over/i.test(o.name||''));
+        if(O&&O.point!=null)ls.push('O/U '+O.point);}
+      return {g:(ev.away_team||'')+' @ '+(ev.home_team||''),l:ls};
+    });
     await dkLogPull('mlb',add.length+' game(s) \u00b7 moneyline, total, run line',
-      add.map(ev=>(ev.away_team||'')+' @ '+(ev.home_team||'')).join(', '),DK_CALLS);
+      add.map(ev=>(ev.away_team||'')+' @ '+(ev.home_team||'')).join(', '),DK_CALLS,glDetail);
     return{ok:true,count:add.length,calls:DK_CALLS};
   }catch(e){return{ok:false,reason:e.message};}
 }

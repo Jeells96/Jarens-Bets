@@ -2040,7 +2040,10 @@ async function openSettingsPanel(){
     var dmap = (dlr && dlr.fields && dlr.fields.e) ? fsVal(dlr.fields.e) : null;
     if (dmap) Object.keys(dmap).forEach(function(id){
       var e2 = dmap[id] || {};
-      if (e2.t) dkLog.push({ id: id, app: e2.a || '', t: +e2.t, what: e2.w || '', games: e2.g || '', calls: e2.c || '' });
+      if (!e2.t) return;
+      var det = [];
+      try { det = e2.d ? (JSON.parse(e2.d) || []) : []; } catch (e3) {}
+      dkLog.push({ id: id, app: e2.a || '', t: +e2.t, what: e2.w || '', games: e2.g || '', calls: e2.c || '', det: det });
     });
     dkLog.sort(function(a, b){ return b.t - a.t; });
     // keep the doc bounded: drop anything past the newest 200
@@ -2064,9 +2067,10 @@ async function openSettingsPanel(){
     return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric' });
   };
   var ptTime = function(ms){ return new Date(ms).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }); };
+  var DK_OPEN = {};
   var dkLogHtml = function(){
     if (!dkLog.length){
-      return '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">No pulls recorded yet. Every DraftKings call an app spends from here on lands in this list \u2014 what it pulled, for which games, and when.</p>';
+      return '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">No pulls recorded yet. Every DraftKings call an app spends from here on lands in this list \u2014 the games, every market, and the line it came back with.</p>';
     }
     var out = '', lastDay = null;
     dkLog.slice(0, 60).forEach(function(e3){
@@ -2075,13 +2079,26 @@ async function openSettingsPanel(){
         lastDay = dl;
         out += '<div style="font:800 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:12px 0 5px">' + esc(dl) + '</div>';
       }
-      out += '<div style="border-top:1px solid var(--hair2);padding:7px 0">' +
-        '<div style="display:flex;gap:8px;align-items:baseline">' +
+      var open = !!DK_OPEN[e3.id];
+      var nLines = e3.det.reduce(function(a, x){ return a + ((x.l || []).length); }, 0);
+      out += '<div style="border-top:1px solid var(--hair2)">' +
+        '<div class="dktog" data-dk="' + e3.id + '" style="display:flex;gap:8px;align-items:baseline;padding:8px 0;cursor:' + (nLines ? 'pointer' : 'default') + '">' +
           '<span style="flex:0 0 auto;font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(ptTime(e3.t)) + '</span>' +
-          '<span style="flex:1;min-width:0;font-size:13px"><b style="color:' + (DK_APP_COL[e3.app] || 'var(--bone)') + '">' + esc(DK_APP_NAME[e3.app] || e3.app) + '</b> \u00b7 ' + esc(e3.what) + '</span>' +
+          '<span style="flex:1;min-width:0;font-size:13px"><b style="color:' + (DK_APP_COL[e3.app] || 'var(--bone)') + '">' + esc(DK_APP_NAME[e3.app] || e3.app) + '</b> \u00b7 ' + esc(e3.what) +
+            (nLines ? ' <span style="color:var(--dim2)">' + (open ? '\u25b4' : '\u25be') + '</span>' : '') + '</span>' +
           (e3.calls ? '<span class="hint" style="flex:0 0 auto">' + esc(e3.calls) + ' left</span>' : '') +
         '</div>' +
-        (e3.games ? '<div class="hint" style="color:var(--dim2);margin-top:2px">' + esc(e3.games) + '</div>' : '') +
+        (nLines
+          ? '<div class="dkdet" data-dkdet="' + e3.id + '" style="display:' + (open ? '' : 'none') + ';padding:0 0 9px 4px">' +
+              e3.det.map(function(gm){
+                return '<div style="margin:0 0 8px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:var(--bone);margin-bottom:2px">' + esc(gm.g) + '</div>' +
+                  (gm.l || []).map(function(ln){
+                    return '<div class="hint" style="color:var(--dim);padding:1px 0 1px 10px;font-variant-numeric:tabular-nums">' + esc(ln) + '</div>';
+                  }).join('') + '</div>';
+              }).join('') +
+            '</div>'
+          : (e3.games ? '<div class="hint" style="color:var(--dim2);padding:0 0 8px">' + esc(e3.games) + '</div>' : '')) +
       '</div>';
     });
     return out + (dkLog.length > 60 ? '<div class="hint" style="color:var(--dim2);margin-top:6px">\u2026and ' + (dkLog.length - 60) + ' older (the newest 200 are kept)</div>' : '');
@@ -2415,7 +2432,7 @@ async function openSettingsPanel(){
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before puck drop</b>, once per game.</div></div>' +
     '<div class="sect"><div class="row"><span class="lbl">Pull history</span><span class="hint">newest first \u00b7 Pacific</span></div>' +
-    '<p class="sub" style="margin:6px 0 2px;color:var(--dim2)">Every DraftKings call actually spent \u2014 which app, what lines, which games, and how much quota was left afterwards.</p>' +
+    '<p class="sub" style="margin:6px 0 2px;color:var(--dim2)">Every DraftKings call actually spent. Tap a pull to open it \u2014 each game, every market it bought, and the exact line that came back.</p>' +
     dkLogHtml() +
     '</div>' +
     '</div>' +
@@ -2524,6 +2541,17 @@ async function openSettingsPanel(){
     });
   }
   wireFree();
+  box.querySelectorAll('.dktog').forEach(function(t){
+    t.addEventListener('click', function(){
+      var id = t.getAttribute('data-dk');
+      var d2 = box.querySelector('[data-dkdet="' + id + '"]');
+      if (!d2) return;
+      DK_OPEN[id] = d2.style.display === 'none';
+      d2.style.display = DK_OPEN[id] ? '' : 'none';
+      var car = t.querySelector('span[style*="var(--dim2)"]');
+      if (car) car.textContent = DK_OPEN[id] ? '\u25b4' : '\u25be';
+    });
+  });
   box.querySelectorAll('.vh-day').forEach(function(c){
     c.addEventListener('click', function(){
       var on = !c.classList.contains('on');
