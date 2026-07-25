@@ -1487,6 +1487,31 @@ async function runCronGrade(){
   }
   function pass(){ regDevice(); if (ov){ ov.remove(); ov = null; } document.documentElement.style.overflow = ''; }
   function inp(id, ph, cap){ return '<input id="' + id + '" placeholder="' + ph + '" autocomplete="off" autocapitalize="' + cap + '" style="width:100%;box-sizing:border-box;background:#182231;border:1px solid #243146;border-radius:9px;color:#e8edf4;padding:12px;font-size:16px;margin-bottom:10px">'; }
+  // First and last go in their own boxes so a half-entered name can't slip through
+  function nameRow(){
+    return '<div style="display:flex;gap:8px">' +
+      '<div style="flex:1;min-width:0">' + inp('bg-first', 'First name', 'words') + '</div>' +
+      '<div style="flex:1;min-width:0">' + inp('bg-last', 'Last name', 'words') + '</div>' +
+    '</div>';
+  }
+  /* Ask the owner for a code. Recorded on the same free_log the Board already
+     watches, flagged req so an actual ASK stands out from a passive sign-in. */
+  function requestCode(name, cb){
+    try {
+      fetch(DOC + 'app_settings/free_log?key=' + MK, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+        var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
+        var hit = null;
+        for (var i = 0; i < arr.length; i++){ if (norm(arr[i].n) === norm(name)){ hit = arr[i]; break; } }
+        if (hit){ hit.req = true; hit.rt = Date.now(); if (!hit.fs) hit.fs = hit.t || Date.now(); }
+        else arr.unshift({ n: name, t: Date.now(), fs: Date.now(), req: true, rt: Date.now() });
+        arr = arr.slice(0, 200);
+        fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } })
+        }).then(function(){ cb(true); }).catch(function(){ cb(false); });
+      }).catch(function(){ cb(false); });
+    } catch (e){ cb(false); }
+  }
   function logFree(name){
     try {
       fetch(DOC + 'app_settings/free_log?key=' + MK).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
@@ -1499,24 +1524,30 @@ async function runCronGrade(){
   }
   function showGate(list){
     var fields = FREE
-      ? inp('bg-name', 'Your name', 'words')
-      : inp('bg-name', 'Your name', 'words') + inp('bg-code', 'Access code', 'none');
+      ? nameRow()
+      : nameRow() + inp('bg-code', 'Access code', 'none');
     cover('<div style="width:100%;max-width:340px;text-align:center">' +
       '<div style="font-size:26px;font-weight:800;margin-bottom:6px">Members only</div>' +
       '<div style="color:#8fa0b5;font-size:14px;line-height:1.5;margin-bottom:16px">' + (FREE ? 'Enter your first and last name to use the free app.' : 'Enter your first and last name, and your access code.') + '</div>' +
       fields +
       '<div id="bg-err" style="color:#ff7a7a;font-size:12.5px;min-height:16px;margin:6px 0"></div>' +
-      '<button id="bg-go" style="width:100%;border:0;border-radius:9px;padding:13px;font-weight:800;background:#e8edf4;color:#0b0d12;font-size:15px">Enter</button></div>');
+      '<button id="bg-go" style="width:100%;border:0;border-radius:9px;padding:13px;font-weight:800;background:#e8edf4;color:#0b0d12;font-size:15px">Enter</button>' +
+      (FREE ? '' :
+        '<button id="bg-req" style="width:100%;border:0;border-radius:11px;padding:16px;font-weight:800;background:#c9a84c;color:#0b0d12;font-size:16.5px;margin-top:14px">Request a code</button>' +
+        '<div id="bg-reqnote" style="color:#8fa0b5;font-size:12.5px;line-height:1.55;margin-top:10px">No code yet? Tap <b style="color:#e8edf4">Request a code</b> and the owner gets your name. <b style="color:#e8edf4">You can keep using the free edition while you wait to be authorized</b> \u2014 it needs no code.</div>' +
+        '<a href="./diamondiqfree.html" style="display:inline-block;margin-top:10px;color:#8fa0b5;font-size:13.5px">Open the free edition \u2192</a>') +
+      '</div>');
     var err = function(t){ document.getElementById('bg-err').textContent = t; };
-    var twoNames = function(n){ return String(n||'').trim().split(/\s+/).filter(Boolean).length >= 2; };
     var go = function(){
-      var name = ((document.getElementById('bg-name') || {}).value || '').trim();
+      var first = ((document.getElementById('bg-first') || {}).value || '').trim();
+      var last = ((document.getElementById('bg-last') || {}).value || '').trim();
+      var name = (first + ' ' + last).replace(/\s+/g, ' ').trim();
       var code = (document.getElementById('bg-code') || {}).value || '';
       if (pinOk(code) || pinOk(name)){ // admin PIN accepted from EITHER field
         try { localStorage.setItem(LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
         pass(); return;
       }
-      if (!twoNames(name)){ err('Enter your first and last name.'); return; }
+      if (!first || !last){ err(!first && !last ? 'Enter your first and last name.' : !first ? 'Enter your first name.' : 'Enter your last name.'); return; }
       if (FREE){
         try { localStorage.setItem(LS, JSON.stringify({ free: true, name: name })); } catch (e) {}
         logFree(name); pass(); return;
@@ -1527,8 +1558,21 @@ async function runCronGrade(){
       else { err('No match — check your name and code, or your access was turned off.'); }
     };
     document.getElementById('bg-go').addEventListener('click', go);
+    var reqBtn = document.getElementById('bg-req');
+    if (reqBtn) reqBtn.addEventListener('click', function(){
+      var first = ((document.getElementById('bg-first') || {}).value || '').trim();
+      var last = ((document.getElementById('bg-last') || {}).value || '').trim();
+      if (!first || !last){ err('Enter your first and last name so the owner knows who to authorize.'); return; }
+      var nm = (first + ' ' + last).replace(/\s+/g, ' ').trim();
+      reqBtn.disabled = true; reqBtn.textContent = 'Sending\u2026';
+      requestCode(nm, function(ok){
+        reqBtn.textContent = ok ? '\u2713 Request sent' : '\u2713 Request saved';
+        var note = document.getElementById('bg-reqnote');
+        if (note) note.innerHTML = '<b style="color:#7fd99a">Request sent for ' + esc(nm) + '.</b> You\u2019ll get a code once the owner authorizes you. Until then the <b style="color:#e8edf4">free edition</b> is open to you right now \u2014 no code needed.';
+      });
+    });
     ov.querySelectorAll('input').forEach(function(i){ i.addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); }); });
-    setTimeout(function(){ var i = document.getElementById('bg-name'); if (i) i.focus(); }, 200);
+    setTimeout(function(){ var i = document.getElementById('bg-first'); if (i) i.focus(); }, 200);
   }
   cover('<div style="color:#5c6b80;font:600 12px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase">Checking access…</div>');
   (async function(){

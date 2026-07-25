@@ -940,12 +940,17 @@ async function fsPatch(cfg, path, obj){
 }
 async function adminSetDoc(collection, doc, obj){ return fsPatch(ADMIN, collection + '/' + doc, obj); }
 var BOARD_DK_OK = true; // global DK-visibility, read from dk_auto on boot
-function logFreeSignin(name){
+function logFreeSignin(name, asRequest){
   try {
     fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
       var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
       var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-      if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now(), fs: Date.now() });
+      var hit = null;
+      for (var i = 0; i < arr.length; i++){ if (norm(arr[i].n) === norm(name)){ hit = arr[i]; break; } }
+      if (hit){ if (asRequest){ hit.req = true; hit.rt = Date.now(); if (!hit.fs) hit.fs = hit.t || Date.now(); } }
+      else arr.unshift(asRequest
+        ? { n: name, t: Date.now(), fs: Date.now(), req: true, rt: Date.now() }
+        : { n: name, t: Date.now(), fs: Date.now() });
       arr = arr.slice(0, 200);
       fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
     }).catch(function(){});
@@ -1176,26 +1181,51 @@ async function runGate(){
     (fixedName
       ? '<p class="sub">Welcome back, <b>' + esc(fixedName) + '</b>. Your access code changed or was reset — enter the current one to get back in.</p>'
       : '<p class="sub">Enter your first and last name and the access code you were given. This device will remember you.</p>' +
-        '<input type="text" id="gatename" placeholder="First and last name" autocomplete="off" autocapitalize="words">') +
+        '<div style="display:flex;gap:8px">' +
+          '<input type="text" id="gatefirst" placeholder="First name" autocomplete="off" autocapitalize="words" style="flex:1;min-width:0">' +
+          '<input type="text" id="gatelast" placeholder="Last name" autocomplete="off" autocapitalize="words" style="flex:1;min-width:0">' +
+        '</div>') +
     '<input type="text" id="gatein" placeholder="Access code" autocomplete="off" autocapitalize="none">' +
     '<div class="err" id="gateerr"></div>' +
     '<button class="go" id="gatego">Enter The Board</button>' +
-    '<button class="close" id="gatefree" style="margin-top:12px">No code? Enter the free app &rarr;</button></div>';
+    '<button class="go" id="gatereq" style="margin-top:14px;background:#c9a84c;color:#0b0d12;font-weight:800;font-size:16.5px;padding:16px">Request a code</button>' +
+    '<div class="sub" id="gatereqnote" style="margin-top:10px;font-size:12.5px;line-height:1.55">No code yet? Tap <b>Request a code</b> and I\u2019ll get your name. <b>You can keep using the free edition while you wait to be authorized.</b></div></div>';
   document.body.appendChild(ovl);
   document.body.style.overflow = 'hidden';
-  var enterFree = function(){
-    var nm = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
-    if (String(nm).split(/\s+/).filter(Boolean).length < 2){ document.getElementById('gateerr').textContent = 'Enter your first and last name — even for the free app.'; var gn = document.getElementById('gatename'); if (gn) gn.focus(); return; }
-    CURRENT_MEMBER = { free: true, name: nm };
-    GRANTS = new Set(['mlbfree']);
-    try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: nm })); } catch (e) {}
-    logFreeSignin(nm);
-    ovl.remove(); document.body.style.overflow = '';
-    markLockedCards();
+  var readName = function(){
+    if (fixedName != null) return { first: fixedName, last: 'x', name: fixedName };
+    var f = document.getElementById('gatefirst'), l = document.getElementById('gatelast');
+    var first = f ? f.value.trim() : '', last = l ? l.value.trim() : '';
+    return { first: first, last: last, name: (first + ' ' + last).replace(/\s+/g, ' ').trim() };
   };
-  document.getElementById('gatefree').addEventListener('click', enterFree);
+  /* Request a code: records the ask so it shows on the Board, then drops them
+     straight into the free edition — nobody waits at a locked door. */
+  var requestCode = function(){
+    var r = readName();
+    var errEl = document.getElementById('gateerr');
+    if (!r.first || !r.last){
+      errEl.textContent = !r.first && !r.last ? 'Enter your first and last name.' : !r.first ? 'Enter your first name.' : 'Enter your last name.';
+      var fe = document.getElementById(!r.first ? 'gatefirst' : 'gatelast'); if (fe) fe.focus();
+      return;
+    }
+    errEl.textContent = '';
+    var btn = document.getElementById('gatereq');
+    if (btn){ btn.disabled = true; btn.textContent = '\u2713 Request sent'; }
+    var note = document.getElementById('gatereqnote');
+    if (note) note.innerHTML = '<b style="color:#7fd99a">Request sent for ' + esc(r.name) + '.</b> You\u2019ll get a code once you\u2019re authorized \u2014 until then you\u2019re on the free edition.';
+    CURRENT_MEMBER = { free: true, name: r.name };
+    GRANTS = new Set(['mlbfree']);
+    try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: r.name })); } catch (e) {}
+    logFreeSignin(r.name, true);
+    setTimeout(function(){
+      ovl.remove(); document.body.style.overflow = '';
+      markLockedCards();
+    }, 1200);
+  };
+  document.getElementById('gatereq').addEventListener('click', requestCode);
   var tryIt = function(){
-    var name = fixedName != null ? fixedName : (document.getElementById('gatename') ? document.getElementById('gatename').value.trim() : '');
+    var r0 = readName();
+    var name = r0.name;
     var code = document.getElementById('gatein').value;
     if (adminPinOk(code) || adminPinOk(name)){ // admin PIN from EITHER field
       CURRENT_MEMBER = { admin: true };
@@ -1203,7 +1233,7 @@ async function runGate(){
       try { localStorage.setItem(GATE_LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
       ovl.remove(); document.body.style.overflow = ''; markLockedCards(); return;
     }
-    if (String(name).split(/\s+/).filter(Boolean).length < 2){ document.getElementById('gateerr').textContent = 'Enter your first and last name.'; return; }
+    if (!r0.first || !r0.last){ document.getElementById('gateerr').textContent = !r0.first && !r0.last ? 'Enter your first and last name.' : !r0.first ? 'Enter your first name.' : 'Enter your last name.'; return; }
     var g = memberMatch(name, code, list);
     if (g.ok){
       CURRENT_MEMBER = g.member;
@@ -1217,7 +1247,7 @@ async function runGate(){
   };
   document.getElementById('gatego').addEventListener('click', tryIt);
   ovl.querySelectorAll('input').forEach(function(i){ i.addEventListener('keydown', function(e){ if (e.key === 'Enter') tryIt(); }); });
-  setTimeout(function(){ var i = document.getElementById(fixedName ? 'gatein' : 'gatename'); if (i) i.focus(); }, 250);
+  setTimeout(function(){ var i = document.getElementById(fixedName ? 'gatein' : 'gatefirst'); if (i) i.focus(); }, 250);
 }
 function updateGreeting(){
   var el = document.getElementById('greet');
@@ -2125,7 +2155,7 @@ async function openSettingsPanel(){
         var hasCode = isMember(x.n);
         return '<div class="row" style="margin:3px 0;align-items:center">' +
           '<span class="hint" style="flex:1">' + esc(x.n) +
-            (fresh ? ' <b style="color:#ff5d5d;font-size:10px;letter-spacing:.08em">NEW</b>' : '') +
+            (x.req ? ' <b style="color:#ffb454;font-size:10px;letter-spacing:.08em">ASKED FOR A CODE</b>' : fresh ? ' <b style="color:#ff5d5d;font-size:10px;letter-spacing:.08em">NEW</b>' : '') +
             (hasCode ? ' <span style="color:#7fd99a;font-size:10px">\u2713 has a code</span>' : '') +
             ' <span style="color:var(--dim2)">\u00b7 ' + devHtml(x.n) + '</span></span>' +
           (hasCode ? '' : '<button class="close m-promote" data-name="' + esc(x.n) + '" style="width:auto;margin:0;padding:3px 8px;border:1px solid var(--hair);border-radius:7px;font-size:11.5px">give a code</button>') +
