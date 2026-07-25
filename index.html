@@ -1089,18 +1089,20 @@ function regDevice(){
     var id = devId();
     if (!id) return;
     if (Date.now() - (+(localStorage.getItem('board_device_seen') || 0)) < 6 * 3600 * 1000) return;
-    localStorage.setItem('board_device_seen', String(Date.now()));
-    var mask = ['n','f','a','d','t'].map(function(k){ return 'updateMask.fieldPaths=' + k; }).join('&');
-    fetch(FS + ADMIN.p + '/databases/(default)/documents/member_devices/' + encodeURIComponent(id) + '?key=' + ADMIN.k + '&' + mask, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: {
-        n: { stringValue: String(s.name || '') },
-        f: { booleanValue: !!s.free },
-        a: { stringValue: 'board' },
-        d: { stringValue: devLabel() },
-        t: { integerValue: String(Date.now()) }
-      } })
-    }).catch(function(){});
+    /* app_settings/devices, one map key per device (mask d.<id>), so devices
+       never overwrite each other AND the write stays in a collection the
+       database allows — a separate collection was rejected silently. */
+    var body = { fields: { d: { mapValue: { fields: {} } } } };
+    body.fields.d.mapValue.fields[id] = { mapValue: { fields: {
+      n: { stringValue: String(s.name || '') },
+      f: { booleanValue: !!s.free },
+      a: { stringValue: 'board' },
+      l: { stringValue: devLabel() },
+      t: { integerValue: String(Date.now()) }
+    } } };
+    fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/devices?key=' + ADMIN.k + '&updateMask.fieldPaths=' + encodeURIComponent('d.' + id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).then(function(r){ if (r && r.ok) localStorage.setItem('board_device_seen', String(Date.now())); }).catch(function(){});
   } catch (e) {}
 }
 /* ── NEW FREE SIGN-INS ─────────────────────────────────────────────────────
@@ -1863,10 +1865,13 @@ async function openSettingsPanel(){
      a shared code looks from here. */
   var devByName = {};
   try {
-    (await listAllDocs(ADMIN, 'member_devices')).forEach(function(d){
-      var n = String((d.data && d.data.n) || '').trim().toLowerCase();
+    var draw = await fsGetRaw(ADMIN, 'app_settings/devices');
+    var dmap = (draw && draw.fields && draw.fields.d) ? fsVal(draw.fields.d) : null;
+    if (dmap) Object.keys(dmap).forEach(function(id){
+      var e = dmap[id] || {};
+      var n = String(e.n || '').trim().toLowerCase();
       if (!n) return;
-      (devByName[n] = devByName[n] || []).push({ label: (d.data && d.data.d) || 'Device', app: (d.data && d.data.a) || '', t: +((d.data && d.data.t) || 0) });
+      (devByName[n] = devByName[n] || []).push({ label: e.l || 'Device', app: e.a || '', t: +(e.t || 0) });
     });
     Object.keys(devByName).forEach(function(k){ devByName[k].sort(function(a, b){ return b.t - a.t; }); });
   } catch (e) {}
@@ -2008,6 +2013,13 @@ async function openSettingsPanel(){
       if (expired.length) bits.push('<div class="hint" style="color:#ff7a7a;margin:2px 0"><b>EXPIRED (locked out):</b> ' + esc(expired.join(', ')) + '</div>');
       if (expiring.length) bits.push('<div class="hint" style="color:#ffb454;margin:2px 0"><b>Expiring within 7 days:</b> ' + esc(expiring.join(', ')) + '</div>');
       return bits.length ? '<div style="border:1px solid var(--hair2);border-radius:9px;padding:8px 10px;margin-bottom:10px">' + bits.join('') + '</div>' : '';
+    })() +
+    (function(){
+      var own = devByName['admin'] || [];
+      if (!own.length) return '';
+      return '<div class="row" style="margin:0 0 8px;padding:7px 9px;border:1px solid var(--hair2);border-radius:9px">' +
+        '<span class="hint" style="flex:1">Your devices <span style="color:var(--dim2)">(signed in with the owner PIN, so they show here rather than on a member row)</span></span>' +
+        '<span class="hint">' + devHtml('admin') + '</span></div>' + devDetailHtml('admin');
     })() +
     '<div id="memlist">' + members.map(memberRowHtml).join('') + '</div>' +
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +

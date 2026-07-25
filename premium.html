@@ -3361,19 +3361,27 @@ async function runLabPrem(){
       if (!s || !s.name) return;
       var id = devId();
       if (!id) return;
-      var stampKey = 'board_device_seen';
-      if (Date.now() - (+(localStorage.getItem(stampKey) || 0)) < 6 * 3600 * 1000) return;
-      localStorage.setItem(stampKey, String(Date.now()));
-      var mask = ['n','f','a','d','t'].map(function(k){ return 'updateMask.fieldPaths=' + k; }).join('&');
-      fetch(DOC + 'member_devices/' + encodeURIComponent(id) + '?key=' + MK + '&' + mask, {
+      if (Date.now() - (+(localStorage.getItem('board_device_seen') || 0)) < 6 * 3600 * 1000) return;
+      /* Lives in app_settings/devices as ONE map keyed by device id. Writing
+         with the nested field mask d.<id> touches only this device's key, so
+         two phones still can't overwrite each other — and it stays inside the
+         collection the database already allows (a separate collection was
+         rejected outright, silently, which is what left every row empty). */
+      var body = { fields: { d: { mapValue: { fields: {} } } } };
+      body.fields.d.mapValue.fields[id] = { mapValue: { fields: {
+        n: { stringValue: String(s.name || '') },
+        f: { booleanValue: !!s.free },
+        a: { stringValue: String(APPKEY || '') },
+        l: { stringValue: devLabel() },
+        t: { integerValue: String(Date.now()) }
+      } } };
+      fetch(DOC + 'app_settings/devices?key=' + MK + '&updateMask.fieldPaths=' + encodeURIComponent('d.' + id), {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: {
-          n: { stringValue: String(s.name || '') },
-          f: { booleanValue: !!s.free },
-          a: { stringValue: String(APPKEY || '') },
-          d: { stringValue: devLabel() },
-          t: { integerValue: String(Date.now()) }
-        } })
+        body: JSON.stringify(body)
+      }).then(function(r){
+        // only start the 6h cooldown once it actually LANDED, so a rejected
+        // write can never mute the next six hours of attempts
+        if (r && r.ok) localStorage.setItem('board_device_seen', String(Date.now()));
       }).catch(function(){});
     } catch (e) {}
   }
