@@ -240,7 +240,9 @@ body{
 @media (min-width:820px){ #adminovl .box{ max-width:780px !important; border-left:1px solid var(--hair2); border-right:1px solid var(--hair2); } }
 #adminovl #sethead{ position:sticky; top:0; z-index:7; display:flex; align-items:center; justify-content:space-between;
   gap:10px; background:var(--panel); margin:0 -16px; border-bottom:1px solid var(--hair2);
-  padding:calc(14px + env(safe-area-inset-top)) 16px 10px; }
+  padding:calc(44px + env(safe-area-inset-top)) 16px 10px; }
+/* Dead space above the title so the close button always clears the iPhone's
+   status bar / Dynamic Island in Home-Screen app mode. */
 #adminovl #sethead h3{ margin:0; font-size:18px; }
 #adminovl #sethead .xclose{ flex:0 0 auto; width:34px; height:34px; border-radius:9px; border:1px solid var(--hair);
   background:transparent; color:var(--dim); font-size:16px; cursor:pointer; }
@@ -477,6 +479,34 @@ function esc(s){
   });
 }
 var REDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- page scroll lock ----------
+   iOS ignores `body{overflow:hidden}` — the page keeps scrolling under an open
+   overlay and steals the swipe, so the overlay itself feels frozen. Pinning the
+   body with position:fixed is the only thing Safari respects; we remember the
+   scroll position and put it back on close. Nested opens are counted so closing
+   one overlay while another is still open can't unlock the page early. */
+var PAGE_LOCK = { on: {}, n: 0, y: 0 };
+function lockPage(key){
+  key = key || 'ovl';
+  if (PAGE_LOCK.on[key]) return;          // same overlay re-opened: already locked
+  PAGE_LOCK.on[key] = 1;
+  if (PAGE_LOCK.n++ > 0) return;          // something else holds the lock
+  PAGE_LOCK.y = window.pageYOffset || document.documentElement.scrollTop || 0;
+  var b = document.body;
+  b.style.position = 'fixed'; b.style.top = (-PAGE_LOCK.y) + 'px';
+  b.style.left = '0'; b.style.right = '0'; b.style.width = '100%'; b.style.overflow = 'hidden';
+}
+function unlockPage(key){
+  key = key || 'ovl';
+  if (!PAGE_LOCK.on[key]) return;
+  delete PAGE_LOCK.on[key];
+  if (--PAGE_LOCK.n > 0) return;          // another overlay is still open
+  var b = document.body;
+  b.style.position = ''; b.style.top = ''; b.style.left = ''; b.style.right = ''; b.style.width = ''; b.style.overflow = '';
+  window.scrollTo(0, PAGE_LOCK.y);
+}
+window.__pageLock = PAGE_LOCK; // test hook
 
 var FS = 'https://firestore.googleapis.com/v1/projects/';
 function docUrl(cfg){ return FS + cfg.projectId + '/databases/(default)/documents/' + cfg.path + '?key=' + cfg.apiKey; }
@@ -755,8 +785,8 @@ async function openPlanPanel(){
   var info = currentPlanInfo();
   var ad; try { ad = await loadAd(); } catch (e){ ad = normalizeAd({}); }
   var ovl = document.createElement('div'); ovl.className = 'ovl';
-  document.body.appendChild(ovl); document.body.style.overflow = 'hidden';
-  var close = function(){ ovl.remove(); document.body.style.overflow = ''; };
+  document.body.appendChild(ovl); lockPage('plan');
+  var close = function(){ ovl.remove(); unlockPage('plan'); };
   ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
 
   var banner;
@@ -833,7 +863,7 @@ function openAppObj(s){
   fr.src = s.url;                       // lazy-load the app now
   view.classList.remove('hidden');
   view.setAttribute('aria-hidden', 'false');
-  document.body.style.overflow = 'hidden';
+  lockPage('app');
   document.title = s.name + ' \u2014 The Board';
   if (location.hash !== '#' + s.key){
     try { history.pushState({ app: s.key }, '', '#' + s.key); } catch (e) {}
@@ -872,7 +902,7 @@ function closeApp(fromPop){
   view.setAttribute('aria-hidden', 'true');
   fr.onload = null; fr.removeAttribute('src');   // unload the app
   hideAppEmpty();
-  document.body.style.overflow = '';
+  unlockPage('app');
   currentSite = null;
   document.title = 'The Board \u2014 MLB \u00b7 NFL \u00b7 NBA models';
   // Using an app can change its record — re-read the board on the way out.
@@ -1094,8 +1124,8 @@ function showDeniedNote(key){
   ovl.className = 'ovl';
   ovl.innerHTML = '<div class="box"><div class="statemsg" style="text-align:center;color:var(--dim)">Loading\u2026</div></div>';
   document.body.appendChild(ovl);
-  document.body.style.overflow = 'hidden';
-  var close = function(){ ovl.remove(); document.body.style.overflow = ''; };
+  lockPage('note');
+  var close = function(){ ovl.remove(); unlockPage('note'); };
   ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
   loadAd().then(function(ad){
     var perks = ad.perks.map(function(p){
@@ -1264,7 +1294,7 @@ async function runGate(){
     '<button class="go" id="gatereq" style="margin-top:14px;background:#c9a84c;color:#0b0d12;font-weight:800;font-size:16.5px;padding:16px">Request a code</button>' +
     '<div class="sub" id="gatereqnote" style="margin-top:10px;font-size:12.5px;line-height:1.55">No code yet? Tap <b>Request a code</b> and I\u2019ll get your name. <b>You can keep using the free edition while you wait to be authorized.</b></div></div>';
   document.body.appendChild(ovl);
-  document.body.style.overflow = 'hidden';
+  lockPage('gate');
   var readName = function(){
     if (fixedName != null) return { first: fixedName, last: 'x', name: fixedName };
     var f = document.getElementById('gatefirst'), l = document.getElementById('gatelast');
@@ -1298,7 +1328,7 @@ async function runGate(){
     try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: r.name })); } catch (e) {}
     logFreeSignin(r.name, true);
     setTimeout(function(){
-      ovl.remove(); document.body.style.overflow = '';
+      ovl.remove(); unlockPage('gate');
       markLockedCards();
     }, 1200);
   };
@@ -1311,7 +1341,7 @@ async function runGate(){
       CURRENT_MEMBER = { admin: true };
       GRANTS = null;
       try { localStorage.setItem(GATE_LS, JSON.stringify({ name: 'admin', code: atob('MjMyNQ==') })); } catch (e) {}
-      ovl.remove(); document.body.style.overflow = ''; markLockedCards(); return;
+      ovl.remove(); unlockPage('gate'); markLockedCards(); return;
     }
     if (!r0.first || !r0.last){ document.getElementById('gateerr').textContent = !r0.first && !r0.last ? 'Enter your first and last name.' : !r0.first ? 'Enter your first name.' : 'Enter your last name.'; return; }
     var g = memberMatch(name, code, list);
@@ -1319,7 +1349,7 @@ async function runGate(){
       CURRENT_MEMBER = g.member;
       GRANTS = g.apps ? new Set(g.apps) : null;
       try { localStorage.setItem(GATE_LS, JSON.stringify({ name: name, code: String(code).trim() })); } catch (e) {}
-      ovl.remove(); document.body.style.overflow = '';
+      ovl.remove(); unlockPage('gate');
       markLockedCards();
     } else {
       document.getElementById('gateerr').textContent = 'No match — check the name and code (or your access may have been turned off).';
@@ -1993,7 +2023,7 @@ async function openSettingsPanel(){
   ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
   ovl.innerHTML = '<div class="box" style="margin:24px 0;max-width:440px"><h3>Board Settings</h3><p class="sub">Loading current settings\u2026</p></div>';
   document.body.appendChild(ovl);
-  document.body.style.overflow = 'hidden'; // page behind must not steal the scroll (iOS)
+  lockPage('settings'); // page behind must not steal the scroll (iOS)
   try { clearNewSigninBadge(); } catch (e) {} // opening settings = you've seen them
   var dk = (await adminGetDoc('dk_auto')) || {};
   var dkStat = (await adminGetDoc('dk_status')) || {};
@@ -2105,6 +2135,131 @@ async function openSettingsPanel(){
       '</div>';
     });
     return out + (dkLog.length > 60 ? '<div class="hint" style="color:var(--dim2);margin-top:6px">\u2026and ' + (dkLog.length - 60) + ' older (the newest 200 are kept)</div>' : '');
+  };
+  /* \u2500\u2500 PULL SCHEDULE \u2500\u2500 the slate ahead and the exact half-hour tick that will
+     buy each game's DK lines. The event lists come from the odds API's FREE
+     /events endpoint (zero quota, same list the cron itself reads), NASCAR's
+     from ESPN. Per game we only ever state the SCHEDULED tick; what actually
+     got bought comes from the pull history, never guessed. */
+  var ODDS_FREE_KEY = '370bfb0e8958dcfc4e4880fedfb548b1'; // the-odds-api \u2014 /events costs 0 quota
+  var SCHED_APPS = [
+    { id: 'mlb',    name: 'Diamond IQ Premium', league: 'MLB', sport: 'baseball_mlb',         span: 'day',  onKey: 'premiumOn', verb: 'first pitch' },
+    { id: 'nfl',    name: 'Gridline',           league: 'NFL', sport: 'americanfootball_nfl', span: 'week', onKey: 'nflOn',     verb: 'kickoff' },
+    { id: 'nba',    name: 'The Key',            league: 'NBA', sport: 'basketball_nba',       span: 'day',  onKey: 'nbaOn',     verb: 'tip-off' },
+    { id: 'hockey', name: 'Icing',              league: 'NHL', sport: 'icehockey_nhl',        span: 'day',  onKey: 'hockeyOn',  verb: 'puck drop' }
+  ];
+  /* The workflow ticks at :05 and :35 every hour; a game is bought on the first
+     tick that falls inside its 10-45 minute pre-game window. */
+  var schedTick = function(startMs){
+    var from = startMs - 45 * 60000, to = startMs - 10 * 60000;
+    var top = Math.floor(from / 3600000) * 3600000;
+    for (var i = 0; i < 3; i++){
+      var a = top + i * 3600000 + 5 * 60000, b = top + i * 3600000 + 35 * 60000;
+      if (a >= from && a <= to) return a;
+      if (b >= from && b <= to) return b;
+    }
+    return null;
+  };
+  var schedIn = function(ms){
+    var d = ms - Date.now();
+    if (d <= 0) return '';
+    var m = Math.round(d / 60000);
+    if (m < 60) return 'in ' + m + 'm';
+    var h = Math.floor(m / 60), r = m % 60;
+    return 'in ' + h + 'h' + (r ? ' ' + r + 'm' : '');
+  };
+  var schedDay = function(ms){ return new Date(ms).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }); };
+  var ptDate = function(ms){ return new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); };
+  /* What each app ACTUALLY bought in this window, straight from the pull log \u2014
+     distinct game labels so Premium's two calls per wave count once. */
+  var schedPulled = function(id, span){
+    var cut = span === 'week' ? Date.now() - 7 * 86400000 : null, today = ptDate(Date.now());
+    var seen = {}, n = 0, last = 0;
+    dkLog.forEach(function(e3){
+      if (e3.app !== id) return;
+      if (cut ? e3.t < cut : ptDate(e3.t) !== today) return;
+      if (e3.t > last) last = e3.t;
+      var labels = (e3.det && e3.det.length) ? e3.det.map(function(g){ return g.g; })
+                 : (e3.games ? String(e3.games).split(',') : []);
+      labels.forEach(function(g){
+        var k = String(g).trim().toLowerCase();
+        if (!k || seen[k]) return; seen[k] = 1; n++;
+      });
+    });
+    return { games: n, last: last };
+  };
+  var schedRows = function(games, verb, span){
+    var shown = games.slice(0, 14);
+    return shown.map(function(g){
+      var tick = schedTick(g.t), rel = tick ? schedIn(tick) : '';
+      var when = (span === 'week' ? schedDay(g.t) + ' ' : '') + ptTime(g.t);
+      var right = g.noPull ? 'no DK pull'
+        : !tick ? 'pull \u2014'
+        : 'pull ' + (span === 'week' ? schedDay(tick) + ' ' : '') + ptTime(tick) + ' \u00b7 ' + (rel || 'window passed');
+      return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid var(--hair2)">' +
+        '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.g) + '</span>' +
+        '<span class="hint" style="flex:0 0 auto;color:' + (rel ? 'var(--dim)' : 'var(--dim2)') + '">' + esc(right) + '</span>' +
+      '</div>';
+    }).join('') + (games.length > shown.length
+      ? '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (games.length - shown.length) + ' more, same rule: one pull each, 10\u201345 min before ' + verb + '</div>' : '');
+  };
+  var SCHED_DONE = false;
+  var loadDkSched = async function(force){
+    var el = box && box.querySelector('#dksched');
+    if (!el || (SCHED_DONE && !force)) return;
+    SCHED_DONE = true;
+    el.innerHTML = '<div class="hint">Reading the slate\u2026</div>';
+    var now = Date.now(), today = ptDate(now);
+    var lists = await Promise.all(SCHED_APPS.map(async function(a){
+      try {
+        var r = await fetch('https://api.the-odds-api.com/v4/sports/' + a.sport + '/events?apiKey=' + ODDS_FREE_KEY);
+        if (!r.ok) return { err: 'odds list ' + r.status };
+        var arr = await r.json();
+        var out = [];
+        (arr || []).forEach(function(ev){
+          var t = ev.commence_time ? new Date(ev.commence_time).getTime() : 0;
+          if (!t) return;
+          if (a.span === 'day' ? ptDate(t) !== today : (t < now - 4 * 3600000 || t > now + 7 * 86400000)) return;
+          out.push({ t: t, g: (ev.away_team || '?') + ' @ ' + (ev.home_team || '?') });
+        });
+        out.sort(function(x, y){ return x.t - y.t; });
+        return { games: out };
+      } catch (e){ return { err: 'couldn\u2019t reach the odds list' }; }
+    }));
+    var html = SCHED_APPS.map(function(a, i){
+      var res = lists[i], st = schedPulled(a.id, a.span), off = dk[a.onKey] === false;
+      var span = a.span === 'day' ? 'today' : 'in the next 7 days';
+      var head = '<div class="row" style="margin:12px 0 3px"><span class="lbl" style="color:' + (DK_APP_COL[a.id] || 'var(--bone)') + '">' + esc(a.name) + ' \u00b7 ' + a.league + '</span>' +
+        '<span class="hint">' + (res.err ? '' : (res.games.length ? res.games.length + ' game' + (res.games.length === 1 ? '' : 's') + ' ' + span : 'no games ' + span)) + '</span></div>';
+      var note = off
+        ? '<div class="hint" style="color:#ffb454;margin:0 0 3px">Auto-pull is OFF for this app \u2014 nothing below will be bought.</div>'
+        : '<div class="hint" style="color:var(--dim2);margin:0 0 3px">' + (st.games
+            ? st.games + ' game' + (st.games === 1 ? '' : 's') + ' already pulled ' + (a.span === 'day' ? 'today' : 'this week') + ' \u00b7 last at ' + esc(ptTime(st.last))
+            : 'nothing pulled ' + (a.span === 'day' ? 'yet today' : 'yet this week')) + '</div>';
+      var body = res.err ? '<div class="hint" style="color:#ff7a7a">' + esc(res.err) + ' \u2014 try Refresh</div>'
+        : res.games.length ? schedRows(res.games, a.verb, a.span)
+        : '<div class="hint" style="color:var(--dim2)">Nothing scheduled \u2014 no quota will be spent.</div>';
+      return head + note + body;
+    }).join('');
+    // Pete's Picks: on the schedule for completeness, but it never buys odds.
+    var races = [];
+    try {
+      var rr = await fetch('https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard');
+      if (rr.ok){
+        var rj = await rr.json();
+        (rj.events || []).forEach(function(ev){
+          var t = ev.date ? new Date(ev.date).getTime() : 0;
+          if (t && t > now - 12 * 3600000 && t < now + 7 * 86400000) races.push({ t: t, g: ev.shortName || ev.name || 'Race', noPull: true });
+        });
+        races.sort(function(x, y){ return x.t - y.t; });
+      }
+    } catch (e) {}
+    html += '<div class="row" style="margin:12px 0 3px"><span class="lbl" style="color:#c9a84c">Pete\u2019s Picks \u00b7 NASCAR</span>' +
+      '<span class="hint">' + (races.length ? races.length + ' race' + (races.length === 1 ? '' : 's') + ' in the next 7 days' : 'no race in the next 7 days') + '</span></div>' +
+      '<div class="hint" style="color:var(--dim2);margin:0 0 3px">Never pulls DraftKings \u2014 no motorsport odds exist to buy.</div>' +
+      (races.length ? schedRows(races, 'the green flag', 'week') : '');
+    el.innerHTML = html + '<div class="hint" style="color:var(--dim2);margin-top:10px">Pull times are the scheduled half-hour tick (:05 / :35) inside each game\u2019s window. What actually got bought is in the pull history below \u2014 that list is the receipt.</div>';
   };
   var vhRaw = (await adminGetDoc('view_hours')) || {};
   var vhCfg = {}; try { vhCfg = JSON.parse(vhRaw.w || '{}') || {}; } catch (e) {}
@@ -2418,6 +2573,10 @@ async function openSettingsPanel(){
       '\u2022 <b>The Key</b> \u2014 moneyline, spread and total in one bulk call per wave.<br>' +
       '\u2022 <b>Icing</b> \u2014 moneyline, total and puck-line spread in one bulk call per wave.</p>' +
     '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">What gets pulled and when</span><span class="hint">Pacific \u00b7 live</span></div>' +
+    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Every game on the slate with the exact half-hour tick that will buy its DraftKings lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Reading this schedule costs zero API quota.</p>' +
+    '<div id="dksched"><div class="hint">Reading the slate\u2026</div></div>' +
+    '<button class="close" id="dksched-rf" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:10px">Refresh the schedule</button></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
     '<p class="sub" style="margin:6px 0 10px">Just flip a league on or off \u2014 the schedule above handles the rest. Each game is pulled once, 10\u201345 minutes before it starts.</p>' +
     '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
@@ -2472,6 +2631,14 @@ async function openSettingsPanel(){
     '<button class="close" id="s-close">Close</button>';
 
   var box = ovl.querySelector('.box');
+  /* Pin the tab bar directly under the title bar, measured — so however much
+     dead space the phone's status bar needs, the two never overlap. */
+  var fitTabs = function(){
+    var sh = box.querySelector('#sethead'), sb = box.querySelector('#stabbar');
+    if (sh && sb) sb.style.top = Math.round(sh.getBoundingClientRect().height) + 'px';
+  };
+  fitTabs();
+  window.addEventListener('resize', function(){ if (document.getElementById('adminovl')) fitTabs(); });
   loadHealthStrip(box);
   box.querySelectorAll('.stabbtn').forEach(function(b){
     b.addEventListener('click', function(){
@@ -2487,8 +2654,11 @@ async function openSettingsPanel(){
         if (el) el.style.display = t === want ? '' : 'none';
       });
       if (want === 'lab') wireLab(box);
+      if (want === 'dk') loadDkSched(false);
     });
   });
+  var schedRf = box.querySelector('#dksched-rf');
+  if (schedRf) schedRf.addEventListener('click', function(){ loadDkSched(true); });
   box.querySelector('#ad-preview').addEventListener('click', function(){
     AD_CACHE = normalizeAd({
       title: box.querySelector('#ad-title').value, pitch: box.querySelector('#ad-pitch').value,
@@ -2497,7 +2667,7 @@ async function openSettingsPanel(){
     });
     showDeniedNote('mlb'); // preview against the Premium app name
   });
-  var closeSettings = function(){ ovl.remove(); document.body.style.overflow = ''; };
+  var closeSettings = function(){ ovl.remove(); unlockPage('settings'); };
   box.querySelector('#s-close').addEventListener('click', closeSettings);
   var sx = box.querySelector('#s-x'); if (sx) sx.addEventListener('click', closeSettings);
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
@@ -3476,7 +3646,7 @@ document.addEventListener('DOMContentLoaded', boot);
         inst.textContent = (res && res.outcome === 'accepted') ? '\u2713 Installed' : 'Installer closed \u2014 use the steps above';
       } catch (e){ inst.textContent = 'Use the steps above'; }
     });
-    ovl.querySelector('#a2-close').addEventListener('click', function(){ ovl.remove(); document.body.style.overflow = ''; });
+    ovl.querySelector('#a2-close').addEventListener('click', function(){ ovl.remove(); unlockPage('a2hs'); });
   }
   btn.addEventListener('click', function(){
     try { standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; } catch (e) {}
@@ -3484,8 +3654,8 @@ document.addEventListener('DOMContentLoaded', boot);
     var ovl = document.createElement('div');
     ovl.className = 'ovl'; ovl.id = 'a2hsovl';
     ovl.innerHTML = '<div class="box" style="max-width:430px"></div>';
-    document.body.appendChild(ovl); document.body.style.overflow = 'hidden';
-    ovl.addEventListener('click', function(e){ if (e.target === ovl){ ovl.remove(); document.body.style.overflow = ''; } });
+    document.body.appendChild(ovl); lockPage('a2hs');
+    ovl.addEventListener('click', function(e){ if (e.target === ovl){ ovl.remove(); unlockPage('a2hs'); } });
     render(ovl);
   });
   // already on the home screen? the button says so instead of nagging
