@@ -456,6 +456,13 @@ function hitTol(key){
   return isFinite(v) && ht[key] !== '' && ht[key] != null && v > 0 ? Math.min(50, v) : TOL_DEFAULTS[key];
 }
 function unitQualifies(u){ return u.metric >= lockTh(CAT_META[u.cat].th); }
+/* Category labels carry a "\u00b1T" placeholder; T is whichever tolerance that
+   category is graded at, so it reads "Player Blocks \u00b11" instead of a
+   letter nobody can decode. */
+function catLabel(k){
+  var tk = TOL_KEY_BY_CAT[k];
+  return CAT_META[k].label.replace('\u00b1T', tk ? '\u00b1' + hitTol(tk) : '');
+}
 function unitHit(u){
   const tk = TOL_KEY_BY_CAT[u.cat];
   if (tk && u.adelta != null) return u.adelta <= hitTol(tk);
@@ -463,7 +470,7 @@ function unitHit(u){
 }
 function aggregateUnits(units){
   const cats = {};
-  for (const k in CAT_META){ if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(k)) continue; cats[k] = { hit: 0, n: 0, label: CAT_META[k].label }; }
+  for (const k in CAT_META){ if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(k)) continue; cats[k] = { hit: 0, n: 0, label: catLabel(k) }; }
   const all = { hit: 0, n: 0, label: 'All Locks' };
   for (const u of units){
     if (typeof window!=='undefined' && window.__DK_OK===false && /^dk/.test(u.cat)) continue; 
@@ -1586,6 +1593,11 @@ async function runLab(){
         await fbWrite(FB_NS, 'lab_cfg', newCfg);
         LAB_CFG = newCfg;
         report.autoActions = actions;
+        try {
+          const _h = (await fbRead(FB_NS, 'labHistory')) || {};
+          const _log = [{ t: new Date().toISOString(), by: 'auto', a: actions }].concat(_h.log || []).slice(0, 40);
+          await fbWrite(FB_NS, 'labHistory', { log: _log });
+        } catch (e) {}
         say('auto-deploy: ' + actions.join(' · '));
       }
     } catch (e){ say('auto-deploy warn: ' + (e && e.message || e)); }
@@ -2791,7 +2803,7 @@ function renderFactsBody(){
       const cq = pick(d, k);
       if (!cq.length) return '';
       const ch = cq.filter(unitHit).length;
-      return '<tr><td>' + esc(CAT_META[k].label) + '</td><td><b>' + Math.round(100 * ch / cq.length) + '%</b></td><td class="muted">' + ch + '/' + cq.length + '</td></tr>';
+      return '<tr><td>' + esc(catLabel(k)) + '</td><td><b>' + Math.round(100 * ch / cq.length) + '%</b></td><td class="muted">' + ch + '/' + cq.length + '</td></tr>';
     }).join('');
     const units = q.slice().sort(function(a, b){ return b.metric - a.metric; }).map(function(u){
       const h = unitHit(u);
@@ -2808,7 +2820,7 @@ function renderFactsBody(){
 
 function marketRows(s){
   return Object.keys(CAT_META).map(function(k){
-    return '<div class="row" style="padding:5px 0"><div class="grow small">' + esc(CAT_META[k].label) + '</div>' +
+    return '<div class="row" style="padding:5px 0"><div class="grow small">' + esc(catLabel(k)) + '</div>' +
       '<input type="checkbox" data-mkt="' + k + '"' + (s.markets[k] !== false ? ' checked' : '') + '></div>';
   }).join('');
 }

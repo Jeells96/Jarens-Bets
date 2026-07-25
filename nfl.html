@@ -1535,6 +1535,11 @@ async function runLab() {
         await fsSetDoc('accuracy/lab_cfg', { data: JSON.stringify(newCfg), t: new Date().toISOString() });
         LAB_CFG = newCfg;
         report.autoActions = actions;
+        try {
+          const _h = (await fsGetDoc('accuracy/labHistory').then(function(d){ return d && d.data ? JSON.parse(d.data) : null; })) || {};
+          const _log = [{ t: new Date().toISOString(), by: 'auto', a: actions }].concat(_h.log || []).slice(0, 40);
+          await fsSetDoc('accuracy/labHistory', { data: JSON.stringify({ log: _log }), t: new Date().toISOString() });
+        } catch (e) {}
         say('auto-deploy: ' + actions.join(' · '));
       }
     } catch (e){ say('auto-deploy warn: ' + (e && e.message || e)); }

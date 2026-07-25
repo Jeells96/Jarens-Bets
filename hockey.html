@@ -1206,6 +1206,11 @@ async function runLab(){
         await fbWrite(FB_NS, 'lab_cfg', newCfg);
         LAB_CFG = newCfg;
         report.autoActions = actions;
+        try {
+          const _h = (await fbRead(FB_NS, 'labHistory')) || {};
+          const _log = [{ t: new Date().toISOString(), by: 'auto', a: actions }].concat(_h.log || []).slice(0, 40);
+          await fbWrite(FB_NS, 'labHistory', { log: _log });
+        } catch (e) {}
         say('auto-deploy: ' + actions.join(' · '));
       }
     } catch (e){ say('auto-deploy warn: ' + (e && e.message || e)); }

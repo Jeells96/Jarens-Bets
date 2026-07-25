@@ -2916,6 +2916,12 @@ async function runLabPrem(){
         await withTO(FBH.db.collection('fable_settings').doc('lab_cfg').set({data:JSON.stringify(newCfg),t:new Date().toISOString()}),10000);
         LAB_CFG=newCfg;
         report.autoActions=actions;
+        try{
+          const _hd=await withTO(FBH.db.collection('fable_settings').doc('labHistory').get(),8000);
+          let _h={};try{_h=_hd.exists?JSON.parse(_hd.data().data||'{}'):{};}catch(e){}
+          const _log=[{t:new Date().toISOString(),by:'auto',a:actions}].concat(_h.log||[]).slice(0,40);
+          await withTO(FBH.db.collection('fable_settings').doc('labHistory').set({data:JSON.stringify({log:_log}),t:new Date().toISOString()}),10000);
+        }catch(e){}
         say('auto-deploy: '+actions.join(' · '));
       }
     }catch(e){say('auto-deploy warn: '+(e&&e.message||e));}
