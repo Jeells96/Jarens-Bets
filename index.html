@@ -233,7 +233,8 @@ body{
 .ovl{ z-index:1000; }
 /* Settings is a full-screen view: edge-to-edge on the phone, centered column
    on desktop, with the title bar and tab bar pinned while you scroll. */
-#adminovl{ padding:0; align-items:stretch; }
+#adminovl{ padding:0; align-items:flex-start; height:100%; overflow-y:auto;
+  -webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y; }
 #adminovl .box{ max-width:none !important; width:100%; min-height:100dvh; margin:0 auto !important;
   border-radius:0; box-sizing:border-box; padding:0 16px calc(30px + env(safe-area-inset-bottom)); }
 @media (min-width:820px){ #adminovl .box{ max-width:780px !important; border-left:1px solid var(--hair2); border-right:1px solid var(--hair2); } }
@@ -1992,6 +1993,7 @@ async function openSettingsPanel(){
   ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
   ovl.innerHTML = '<div class="box" style="margin:24px 0;max-width:440px"><h3>Board Settings</h3><p class="sub">Loading current settings\u2026</p></div>';
   document.body.appendChild(ovl);
+  document.body.style.overflow = 'hidden'; // page behind must not steal the scroll (iOS)
   try { clearNewSigninBadge(); } catch (e) {} // opening settings = you've seen them
   var dk = (await adminGetDoc('dk_auto')) || {};
   var dkStat = (await adminGetDoc('dk_status')) || {};
@@ -2495,8 +2497,9 @@ async function openSettingsPanel(){
     });
     showDeniedNote('mlb'); // preview against the Premium app name
   });
-  box.querySelector('#s-close').addEventListener('click', function(){ ovl.remove(); });
-  var sx = box.querySelector('#s-x'); if (sx) sx.addEventListener('click', function(){ ovl.remove(); });
+  var closeSettings = function(){ ovl.remove(); document.body.style.overflow = ''; };
+  box.querySelector('#s-close').addEventListener('click', closeSettings);
+  var sx = box.querySelector('#s-x'); if (sx) sx.addEventListener('click', closeSettings);
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
     var div = document.createElement('div');
