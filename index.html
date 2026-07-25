@@ -2233,9 +2233,11 @@ async function openSettingsPanel(){
   var ptDate = function(ms){ return new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); };
   /* What each app ACTUALLY bought in this window, straight from the pull log \u2014
      distinct game labels so Premium's two calls per wave count once. */
+  var SCHED_MATCH = { mlb: 1, nfl: 1 };   // these two log full team names, so their rows can be matched
+  var schedKey = function(g){ return String(g || '').replace(/\s*\u00b7\s*props\s*$/i, '').trim().toLowerCase(); };
   var schedPulled = function(id, span){
     var cut = span === 'week' ? Date.now() - 7 * 86400000 : null, today = ptDate(Date.now());
-    var seen = {}, n = 0, last = 0;
+    var when = {}, n = 0, last = 0;
     dkLog.forEach(function(e3){
       if (e3.app !== id) return;
       if (cut ? e3.t < cut : ptDate(e3.t) !== today) return;
@@ -2243,27 +2245,51 @@ async function openSettingsPanel(){
       var labels = (e3.det && e3.det.length) ? e3.det.map(function(g){ return g.g; })
                  : (e3.games ? String(e3.games).split(',') : []);
       labels.forEach(function(g){
-        var k = String(g).trim().toLowerCase();
-        if (!k || seen[k]) return; seen[k] = 1; n++;
+        var k = schedKey(g);
+        if (!k) return;
+        if (when[k] == null){ when[k] = e3.t; n++; }
+        else if (e3.t < when[k]) when[k] = e3.t;   // stamp the call that first bought it
       });
     });
-    return { games: n, last: last };
+    return { games: n, last: last, when: when };
   };
-  var schedRows = function(games, verb, span){
-    var shown = games.slice(0, 14);
-    return shown.map(function(g){
-      var tick = schedTick(g.t), rel = tick ? schedIn(tick) : '';
-      var when = (span === 'week' ? schedDay(g.t) + ' ' : '') + ptTime(g.t);
-      var right = g.noPull ? 'no DK pull'
-        : !tick ? 'pull \u2014'
-        : 'pull ' + (span === 'week' ? schedDay(tick) + ' ' : '') + ptTime(tick) + ' \u00b7 ' + (rel || 'window passed');
-      return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid var(--hair2)">' +
-        '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
-        '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.g) + '</span>' +
-        '<span class="hint" style="flex:0 0 auto;color:' + (rel ? 'var(--dim)' : 'var(--dim2)') + '">' + esc(right) + '</span>' +
-      '</div>';
-    }).join('') + (games.length > shown.length
-      ? '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (games.length - shown.length) + ' more, same rule: one pull each, 10\u201345 min before ' + verb + '</div>' : '');
+  var schedRow = function(g, span, st, matchable){
+    var tick = schedTick(g.t), rel = tick ? schedIn(tick) : '';
+    var when = (span === 'week' ? schedDay(g.t) + ' ' : '') + ptTime(g.t);
+    var tickLbl = tick ? 'pull ' + (span === 'week' ? schedDay(tick) + ' ' : '') + ptTime(tick) : 'pull \u2014';
+    var got = st && st.when ? st.when[schedKey(g.g)] : null;
+    var right, col;
+    if (g.noPull){ right = 'no DK pull'; col = 'var(--dim2)'; }
+    else if (got){ right = '\u2713 pulled ' + ptTime(got); col = '#7fd99a'; }
+    else if (rel){ right = tickLbl + ' \u00b7 ' + rel; col = 'var(--dim)'; }
+    else if (matchable){ right = tickLbl + ' \u00b7 no lines bought'; col = '#ffb454'; }
+    else { right = tickLbl + ' \u00b7 earlier'; col = 'var(--dim2)'; }
+    return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid var(--hair2)">' +
+      '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.g) + '</span>' +
+      '<span class="hint" style="flex:0 0 auto;color:' + col + '">' + esc(right) + '</span>' +
+    '</div>';
+  };
+  /* What is still coming reads first; anything whose tick has already come and
+     gone follows under its own heading, so a slate of finished pulls can never
+     look like a pile of misses. */
+  var schedRows = function(games, verb, span, st, matchable){
+    var now = Date.now(), soon = [], past = [];
+    games.forEach(function(g){
+      var at = g.noPull ? g.t : (schedTick(g.t) || g.t);
+      (at > now ? soon : past).push(g);
+    });
+    var out = '';
+    if (soon.length){
+      out += soon.slice(0, 12).map(function(g){ return schedRow(g, span, st, matchable); }).join('');
+      if (soon.length > 12) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (soon.length - 12) + ' more still to come, same rule: one pull each, 10\u201345 min before ' + verb + '</div>';
+    }
+    if (past.length){
+      out += '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:9px 0 1px">pull time already came</div>' +
+        past.slice(-8).map(function(g){ return schedRow(g, span, st, matchable); }).join('');
+      if (past.length > 8) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (past.length - 8) + ' earlier</div>';
+    }
+    return out;
   };
   var SCHED_DONE = false;
   var loadDkSched = async function(force){
@@ -2290,16 +2316,16 @@ async function openSettingsPanel(){
     }));
     var html = SCHED_APPS.map(function(a, i){
       var res = lists[i], st = schedPulled(a.id, a.span), off = dk[a.onKey] === false;
-      var span = a.span === 'day' ? 'today' : 'in the next 7 days';
+      var span = a.span === 'day' ? 'still to come today' : 'in the next 7 days';
       var head = '<div class="row" style="margin:12px 0 3px"><span class="lbl" style="color:' + (DK_APP_COL[a.id] || 'var(--bone)') + '">' + esc(a.name) + ' \u00b7 ' + a.league + '</span>' +
         '<span class="hint">' + (res.err ? '' : (res.games.length ? res.games.length + ' game' + (res.games.length === 1 ? '' : 's') + ' ' + span : 'no games ' + span)) + '</span></div>';
       var note = off
         ? '<div class="hint" style="color:#ffb454;margin:0 0 3px">Auto-pull is OFF for this app \u2014 nothing below will be bought.</div>'
         : '<div class="hint" style="color:var(--dim2);margin:0 0 3px">' + (st.games
-            ? st.games + ' game' + (st.games === 1 ? '' : 's') + ' already pulled ' + (a.span === 'day' ? 'today' : 'this week') + ' \u00b7 last at ' + esc(ptTime(st.last))
+            ? st.games + ' game' + (st.games === 1 ? '' : 's') + ' pulled so far ' + (a.span === 'day' ? 'today' : 'this week') + ' \u00b7 last at ' + esc(ptTime(st.last))
             : 'nothing pulled ' + (a.span === 'day' ? 'yet today' : 'yet this week')) + '</div>';
       var body = res.err ? '<div class="hint" style="color:#ff7a7a">' + esc(res.err) + ' \u2014 try Refresh</div>'
-        : res.games.length ? schedRows(res.games, a.verb, a.span)
+        : res.games.length ? schedRows(res.games, a.verb, a.span, st, !off && !!SCHED_MATCH[a.id])
         : '<div class="hint" style="color:var(--dim2)">Nothing scheduled \u2014 no quota will be spent.</div>';
       return head + note + body;
     }).join('');
@@ -2319,8 +2345,8 @@ async function openSettingsPanel(){
     html += '<div class="row" style="margin:12px 0 3px"><span class="lbl" style="color:#c9a84c">Pete\u2019s Picks \u00b7 NASCAR</span>' +
       '<span class="hint">' + (races.length ? races.length + ' race' + (races.length === 1 ? '' : 's') + ' in the next 7 days' : 'no race in the next 7 days') + '</span></div>' +
       '<div class="hint" style="color:var(--dim2);margin:0 0 3px">Never pulls DraftKings \u2014 no motorsport odds exist to buy.</div>' +
-      (races.length ? schedRows(races, 'the green flag', 'week') : '');
-    el.innerHTML = html + '<div class="hint" style="color:var(--dim2);margin-top:10px">Pull times are the scheduled half-hour tick (:05 / :35) inside each game\u2019s window. What actually got bought is in the pull history below \u2014 that list is the receipt.</div>';
+      (races.length ? schedRows(races, 'the green flag', 'week', null, false) : '');
+    el.innerHTML = html + '<div class="hint" style="color:var(--dim2);margin-top:10px">Pull times are the scheduled half-hour tick (:05 / :35) inside each game\u2019s window. <b style="color:#7fd99a">\u2713 pulled</b> means that exact game is in the pull log, with the time it was bought. <b style="color:#ffb454">No lines bought</b> means its tick came and went with nothing logged \u2014 usually DraftKings had no line posted, or the app was off at the time. The Key and Icing log team abbreviations rather than full names, so their past rows state the schedule only \u2014 use the pull history below for those.</div>';
   };
   var vhRaw = (await adminGetDoc('view_hours')) || {};
   var vhCfg = {}; try { vhCfg = JSON.parse(vhRaw.w || '{}') || {}; } catch (e) {}
@@ -2635,7 +2661,7 @@ async function openSettingsPanel(){
       '\u2022 <b>Icing</b> \u2014 moneyline, total and puck-line spread in one bulk call per wave.</p>' +
     '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
     '<div class="sect"><div class="row"><span class="lbl">What gets pulled and when</span><span class="hint">Pacific \u00b7 live</span></div>' +
-    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Every game on the slate with the exact half-hour tick that will buy its DraftKings lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Reading this schedule costs zero API quota.</p>' +
+    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Every game on the slate with the exact half-hour tick that will buy its DraftKings lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Reading this schedule costs zero API quota. DraftKings drops a game from its list the moment it ends, so this is what is left of the slate \u2014 the pull history below is the full record of the day.</p>' +
     '<div id="dksched"><div class="hint">Reading the slate\u2026</div></div>' +
     '<button class="close" id="dksched-rf" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:10px">Refresh the schedule</button></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
