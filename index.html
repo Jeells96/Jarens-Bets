@@ -1088,7 +1088,9 @@ function regDevice(){
     if (!s || !s.name) return;
     var id = devId();
     if (!id) return;
-    if (Date.now() - (+(localStorage.getItem('board_device_seen') || 0)) < 6 * 3600 * 1000) return;
+    // key is versioned: v1 stamps came from the build whose writes were being
+    // rejected, and would have muted every device for six more hours
+    if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 6 * 3600 * 1000) return;
     /* app_settings/devices, one map key per device (mask d.<id>), so devices
        never overwrite each other AND the write stays in a collection the
        database allows — a separate collection was rejected silently. */
@@ -1102,7 +1104,7 @@ function regDevice(){
     } } };
     fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/devices?key=' + ADMIN.k + '&updateMask.fieldPaths=' + encodeURIComponent('d.' + id), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    }).then(function(r){ if (r && r.ok) localStorage.setItem('board_device_seen', String(Date.now())); }).catch(function(){});
+    }).then(function(r){ if (r && r.ok) localStorage.setItem('board_device_seen2', String(Date.now())); }).catch(function(){});
   } catch (e) {}
 }
 /* ── NEW FREE SIGN-INS ─────────────────────────────────────────────────────
