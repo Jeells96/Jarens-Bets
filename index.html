@@ -1121,6 +1121,7 @@ function glMarkets(raw){
 }
 async function glFetch(app, date, label, evId){
   var want = glNorm(label), got = [], src = '';
+  var start = null, recvProps = null, recvLines = null;   // game start + when each pull landed
   var isGame = function(a, h){ return glNorm((a || '') + ' @ ' + (h || '')) === want; };
   if (app === 'mlb'){
     // player props: one masked read when we know the event id, else the day's doc
@@ -1130,18 +1131,26 @@ async function glFetch(app, date, label, evId){
     var rec = evId ? pev[evId] : null;
     if (!rec) for (var id in pev){ if (isGame(pev[id].away_team, pev[id].home_team)){ rec = pev[id]; break; } }
     if (rec && rec.markets) { got = got.concat(glMarkets(rec.markets)); src = 'player props'; }
+    if (rec){
+      if (rec.commence_time){ try { start = new Date(rec.commence_time).getTime(); } catch (e) {} }
+      if (rec.fetchedAt) recvProps = +rec.fetchedAt;
+    }
     var od = await adminGetDoc('odds_' + date);
     var g2 = ((od && od.games) || []).filter(function(e){ return isGame(e.away_team, e.home_team); })[0];
     var bm = g2 && (g2.bookmakers || []).filter(function(b){ return b.key === 'draftkings'; })[0];
     if (bm) { got = got.concat(glMarkets(bm.markets)); src = src ? src + ' + game lines' : 'game lines'; }
+    if (g2 && g2.commence_time && !start){ try { start = new Date(g2.commence_time).getTime(); } catch (e) {} }
+    if (bm && od && od.fetchedAt) recvLines = +od.fetchedAt;
   } else if (app === 'nfl'){
     var nd = fsDoc(await fsGetRaw(NFLP, 'gridline/dkOdds')) || {};
     var be = nd.byEvent || {}, r2 = evId ? be[evId] : null;
     if (!r2) for (var id2 in be){ if (isGame(be[id2].away, be[id2].home)){ r2 = be[id2]; break; } }
     if (r2 && r2.markets) { got = glMarkets(r2.markets); src = 'the stored pull'; }
+    if (r2 && r2.commenceTime){ try { start = new Date(r2.commenceTime).getTime(); } catch (e) {} }
   } else if (app === 'nba' || app === 'hockey'){
     var col = app === 'nba' ? 'nba_dk/' : 'nhl_dk/';
     var sd = fsDoc(await fsGetRaw(NFLP, col + date)) || {};
+    if (sd.fetched){ try { recvLines = new Date(sd.fetched).getTime(); } catch (e) {} }
     var gm = sd.games || {}, hit = null;
     for (var k2 in gm){ if (isGame(gm[k2].away, gm[k2].home)){ hit = gm[k2]; break; } }
     if (hit && hit.raw) { got = glMarkets(hit.raw); src = 'the stored pull'; }
@@ -1157,7 +1166,8 @@ async function glFetch(app, date, label, evId){
       src = 'partial';
     }
   }
-  return { markets: got.filter(function(m){ return m.outcomes.length; }), src: src };
+  return { markets: got.filter(function(m){ return m.outcomes.length; }), src: src,
+    start: start, recvProps: recvProps, recvLines: recvLines };
 }
 /* Pair an over/under market back into ONE line per player, and a two-sided game
    market into one line, so a game's whole ticket reads as a short list instead
@@ -1187,12 +1197,21 @@ function glRows(m){
   return out;
 }
 var GL_GAME = { h2h: 1, spreads: 1, totals: 1 };
-function glBodyHtml(res){
+/* Which pocket a DraftKings market belongs to when you shop it. */
+function glClass(key){
+  if (key === 'h2h') return 'winner';
+  if (key === 'totals') return 'ou';
+  if (key === 'spreads') return 'spread';
+  return 'props';
+}
+function glBodyHtml(res, filter){
   if (!res.markets.length){
     return '<div class="hint" style="color:var(--dim2);padding:4px 0 8px">Nothing stored for this game yet. Either its pull hasn’t run, or DraftKings had no lines posted when it did — the app never invents one.</div>';
   }
-  var game = res.markets.filter(function(m){ return GL_GAME[m.key]; });
-  var props = res.markets.filter(function(m){ return !GL_GAME[m.key]; });
+  var show = res.markets.filter(function(m){ return !filter || filter === 'all' || glClass(m.key) === filter; });
+  if (!show.length) return '<div class="hint" style="color:var(--dim2);padding:4px 0 8px">DraftKings sent nothing for this bet type on this game.</div>';
+  var game = show.filter(function(m){ return GL_GAME[m.key]; });
+  var props = show.filter(function(m){ return !GL_GAME[m.key]; });
   var block = function(title, list){
     if (!list.length) return '';
     return '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:9px 0 3px">' + title + '</div>' +
@@ -1212,6 +1231,48 @@ function glBodyHtml(res){
   };
   return block('Game odds', game) + block('Player props', props);
 }
+var GL_CHIPS = [['all', 'All bets'], ['winner', 'Winner'], ['ou', 'O/U'], ['spread', 'Spread'], ['props', 'Player props']];
+function glCountOf(res, f){
+  var n = 0;
+  res.markets.forEach(function(m){
+    if (f !== 'all' && glClass(m.key) !== f) return;
+    m.outcomes.forEach(function(){ n++; });
+  });
+  return n;
+}
+function glWhen(ms){
+  if (!ms) return '';
+  var day = new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  var t = new Date(ms).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+  return day === today ? t : new Date(ms).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }) + ' ' + t;
+}
+/* The open game: WHEN up top (start + exactly when each pull landed), then the
+   bet-type buttons, then the lines. Times are stated, never guessed — a pull
+   with no stored timestamp falls back to the pull log's clock, labelled the same. */
+function glDetailHtml(gid, res, startAttr, gotAttr){
+  var start = res.start || startAttr || 0;
+  var whenBits = [];
+  if (start) whenBits.push('<b style="color:var(--bone)">Starts ' + esc(glWhen(start)) + ' PT</b>');
+  if (res.recvProps && res.recvLines && Math.abs(res.recvProps - res.recvLines) > 60000){
+    whenBits.push('game lines received ' + esc(glWhen(res.recvLines)));
+    whenBits.push('player props received ' + esc(glWhen(res.recvProps)));
+  } else if (res.recvProps || res.recvLines || gotAttr){
+    whenBits.push('DK odds received ' + esc(glWhen(res.recvProps || res.recvLines || gotAttr)));
+  }
+  var chips = GL_CHIPS.map(function(c){
+    var n = glCountOf(res, c[0]);
+    if (!n && c[0] !== 'all') return '';
+    return '<button class="glchip" data-glfor="' + gid + '" data-glf="' + c[0] + '" style="border:1px solid ' +
+      (c[0] === 'all' ? '#c9a84c' : 'var(--hair)') + ';border-radius:999px;padding:6px 11px;background:transparent;color:' +
+      (c[0] === 'all' ? '#c9a84c' : 'var(--dim)') + ';font:700 11.5px/1 inherit;cursor:pointer">' +
+      c[1] + ' <span style="opacity:.65">' + n + '</span></button>';
+  }).join('');
+  return '<div class="hint" style="color:var(--dim2);padding:2px 0 6px">' + whenBits.join(' · ') + '</div>' +
+    '<div class="glchips" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px">' + chips + '</div>' +
+    '<div class="glbody">' + glBodyHtml(res, 'all') + '</div>';
+}
+var GL_RES = {};   // gid -> fetched result, so chip taps re-filter without re-reading
 async function adminGetDoc(doc){
   var j = await fsGetRaw(ADMIN, 'app_settings/' + doc);
   return j ? fsFields(j.fields || {}) : null;
@@ -2409,7 +2470,7 @@ async function openSettingsPanel(){
     var gid = 'gl' + app + (g.id || '') + Math.abs(g.t).toString(36);
     return '<div style="border-top:1px solid var(--hair2)">' +
       '<div class="glrow" data-gl-id2="' + gid + '" data-gl-app="' + esc(app) + '" data-gl-date="' + esc(ptDate(g.t)) +
-        '" data-gl-game="' + esc(g.g) + '" data-gl-id="' + esc(g.id || '') + '" data-gl-at="' + (got || '') + '"' +
+        '" data-gl-game="' + esc(g.g) + '" data-gl-id="' + esc(g.id || '') + '" data-gl-at="' + (got || '') + '" data-gl-start="' + g.t + '"' +
         ' style="display:flex;gap:8px;align-items:baseline;padding:5px 0;cursor:pointer">' +
         '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
         '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
@@ -2895,9 +2956,24 @@ async function openSettingsPanel(){
     });
   });
   box.addEventListener('click', async function(e){
+    // a bet-type chip inside an open game: re-filter from the kept result
+    var ch = e.target.closest ? e.target.closest('.glchip') : null;
+    if (ch && box.contains(ch)){
+      var gid2 = ch.getAttribute('data-glfor'), f = ch.getAttribute('data-glf');
+      var det2 = box.querySelector('#' + gid2), res2 = GL_RES[gid2];
+      if (!det2 || !res2) return;
+      det2.querySelectorAll('.glchip').forEach(function(x){
+        var on = x === ch;
+        x.style.borderColor = on ? '#c9a84c' : 'var(--hair)';
+        x.style.color = on ? '#c9a84c' : 'var(--dim)';
+      });
+      det2.querySelector('.glbody').innerHTML = glBodyHtml(res2, f);
+      return;
+    }
     var r = e.target.closest ? e.target.closest('.glrow') : null;
     if (!r || !box.contains(r)) return;
-    var det = box.querySelector('#' + r.getAttribute('data-gl-id2'));
+    var gid = r.getAttribute('data-gl-id2');
+    var det = box.querySelector('#' + gid);
     var car = r.querySelector('.glcar');
     if (!det) return;
     var open = det.style.display === 'none';
@@ -2909,8 +2985,9 @@ async function openSettingsPanel(){
     try {
       var res = await glFetch(r.getAttribute('data-gl-app'), r.getAttribute('data-gl-date'),
         r.getAttribute('data-gl-game'), r.getAttribute('data-gl-id'));
+      GL_RES[gid] = res;
       var n = res.markets.reduce(function(a, m){ return a + m.outcomes.length; }, 0);
-      det.innerHTML = glBodyHtml(res) +
+      det.innerHTML = glDetailHtml(gid, res, +r.getAttribute('data-gl-start') || 0, +r.getAttribute('data-gl-at') || 0) +
         (n ? '<div class="hint" style="color:var(--dim2);margin-top:6px">' + n + ' line' + (n === 1 ? '' : 's') +
              ' across ' + res.markets.length + ' market' + (res.markets.length === 1 ? '' : 's') + ' \u2014 everything DraftKings sent for this game.</div>' : '');
     } catch (err){
