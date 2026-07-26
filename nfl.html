@@ -1087,34 +1087,23 @@ body{font-size:16px}
 </div>
 
 <header>
+  <!-- A title bar, like every other app. The season/week controls and Load
+       Week moved into settings: the Bets page finds the live week itself, and
+       the arrows on it cover normal week-to-week browsing. -->
   <div class="brand">
     <div class="logo">Gridline</div>
     <span class="ver-badge" id="ver-badge">V6.0</span>
     <div class="tag">NFL · Fable Engine</div>
-    <button class="gear-btn" id="gear-btn" aria-label="Settings">⚙</button>
   </div>
-  <div class="controls">
-    <div class="control">
-      <label for="season">Season</label>
-      <select id="season"></select>
-    </div>
-    <div class="control">
-      <label for="week">Week</label>
-      <select id="week"></select>
-    </div>
-  </div>
-  <button class="load-btn" id="load-btn">Load Week</button>
 </header>
-
-<div id="status" class="status">
-  <span><span class="dot"></span><span id="status-text">Pick a week, then tap Load</span></span>
-  <span id="status-meta"></span>
-</div>
 
 <div class="tabs">
   <button class="tab active" data-tab="gamebets">Bets</button>
-  <button class="tab" data-tab="games">Today</button>
-  <button class="tab" data-tab="facts">Results</button>
+  <!-- Today and Results are hidden — nobody opens them. Both views stay wired
+       (the cron and the grader still drive them), they just have no button. -->
+  <button class="tab" data-tab="games" hidden>Today</button>
+  <button class="tab" data-tab="facts" hidden>Results</button>
+  <button class="tab" id="gear-btn" style="margin-left:auto" aria-label="Settings">⚙</button>
 </div>
 
 <div class="modal-overlay" id="settings-modal">
@@ -1134,6 +1123,23 @@ body{font-size:16px}
 
     <!-- Settings body (hidden until unlocked) -->
     <div class="modal-body" id="settings-unlocked" style="display:none">
+      <!-- Week picker (was in the header) -->
+      <div class="setting-section">
+        <div class="setting-label" style="margin-bottom:6px">Season &amp; week</div>
+        <div class="controls">
+          <div class="control">
+            <label for="season">Season</label>
+            <select id="season"></select>
+          </div>
+          <div class="control">
+            <label for="week">Week</label>
+            <select id="week"></select>
+          </div>
+        </div>
+        <button class="load-btn" id="load-btn">Load Week</button>
+        <div class="setting-note">The Bets page opens on the live week by itself and the arrows there move a week at a time — this is for jumping somewhere specific. The model only uses data from weeks BEFORE the one selected, so it is blind to that week's outcomes.</div>
+      </div>
+
       <!-- Weather -->
       <div class="setting-section">
         <div class="setting-row">
@@ -1255,14 +1261,12 @@ body{font-size:16px}
 </div>
 
 <main id="main">
+  <!-- Replaced by the Bets page on the first render; only ever seen if the
+       scripts fail to run at all. -->
   <div class="hint">
     <div class="icon">🏈</div>
-    <div class="title">Ready to project</div>
-    <div class="sub">
-      Pick a week above and tap Load Week. The model only uses
-      data from weeks before the selected one — so it's blind to the current
-      week's outcomes. Change the season under the ⚙ settings button.
-    </div>
+    <div class="title">Loading Gridline…</div>
+    <div class="sub">Pulling this week's slate. If this stays up, the page didn't finish loading — close it and open it again.</div>
   </div>
 </main>
 
@@ -1642,6 +1646,38 @@ function defaultSeasonYear() {
   const y = now.getFullYear();
   const m = now.getMonth(); // 0=Jan
   return m >= 2 ? y : y - 1; // March onward → current year
+}
+
+/* Which week is it actually? ESPN's scoreboard says so — the same call the
+   Super Locks publisher already makes. Answered once per session (10 min) so
+   flipping tabs or reopening from the Board doesn't re-ask. season.type 2 is
+   the regular season; anything else (or an empty slate) means there is no
+   football on right now, and the Bets page says that plainly rather than
+   loading a week that hasn't happened. */
+const CURWEEK_LS = 'gl_curweek_v1';
+async function glCurrentWeek() {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(CURWEEK_LS) || 'null');
+    if (c && Date.now() - c.at < 10 * 60 * 1000) return c.v;
+  } catch (e) {}
+  let v;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+      { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const sb = await r.json();
+    const season = (sb && sb.season && sb.season.year) || defaultSeasonYear();
+    const week = (sb && sb.week && sb.week.number) || null;
+    const inSeason = !!(sb && sb.season && sb.season.type === 2 && week && (sb.events || []).length);
+    v = { season: season, week: week, inSeason: inSeason, failed: false };
+  } catch (e) {
+    v = { season: defaultSeasonYear(), week: null, inSeason: false, failed: true };
+  }
+  try { sessionStorage.setItem(CURWEEK_LS, JSON.stringify({ at: Date.now(), v: v })); } catch (e) {}
+  return v;
 }
 
 // ============================================================================
@@ -2204,14 +2240,40 @@ async function saveMemberPin(pin) {
 // ============================================================================
 // Helpers
 // ============================================================================
+/* The status strip only exists on the old chrome, so every call here has to
+   survive it being gone. Kept as a function (not deleted) because the Today
+   tab and the cron runs still narrate through it when it is present. */
 function setStatus(cls, text, meta = '') {
   const el = document.getElementById('status');
+  if (!el) return;
   el.className = 'status ' + cls;
-  document.getElementById('status-text').textContent = text;
-  document.getElementById('status-meta').textContent = meta;
+  const t = document.getElementById('status-text'); if (t) t.textContent = text;
+  const m = document.getElementById('status-meta'); if (m) m.textContent = meta;
+}
+// Same story for the old header's Load Week button — it lives in settings now.
+function setLoadBtn(disabled) {
+  const b = document.getElementById('load-btn');
+  if (b) b.disabled = disabled;
 }
 
+/* Progress. When the Bets page is on screen it has already drawn its header
+   card, so writing over all of #main would tear the layout down mid-load —
+   which is exactly what made Gridline feel like it had nothing in it. If the
+   Bets page put a #gb-prog card up, the progress goes INSIDE that card and the
+   page around it stays put. Everywhere else (the Today tab, cron) there is no
+   such node and this behaves exactly as it always did. */
 function showLoader(pct, msg, detail = '') {
+  const slot = document.getElementById('gb-prog');
+  if (slot) {
+    slot.innerHTML =
+      '<div style="font-size:.72rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d">LOADING ' +
+        state.season + ' · WEEK ' + state.week + ' <span style="color:rgba(255,255,255,.4);font-weight:600">' + pct + '%</span></div>' +
+      '<div style="height:5px;border-radius:3px;background:rgba(255,255,255,.09);margin:7px 0 6px;overflow:hidden">' +
+        '<div style="height:100%;width:' + pct + '%;background:#ff5d5d;transition:width .2s"></div></div>' +
+      '<div style="font-size:.68rem;color:rgba(255,255,255,.5)">' + escapeHtml(msg) + '</div>' +
+      (detail ? '<div style="font-size:.62rem;color:rgba(255,255,255,.35);margin-top:2px">' + escapeHtml(detail) + '</div>' : '');
+    return;
+  }
   document.getElementById('main').innerHTML =
     '<div class="loader">' +
       '<div class="loader-title">Loading ' + state.season + ' · Week ' + state.week + '</div>' +
@@ -2541,7 +2603,7 @@ async function loadWeek() {
   state.scanWeekOpen = {};
   state.betSearch = '';
   loadRemoteDKOdds(); // adopt newer background odds if the Action pulled since
-  document.getElementById('load-btn').disabled = true;
+  setLoadBtn(true);
   setStatus('loading', 'Loading Week ' + state.week + '…');
 
   try {
@@ -2553,7 +2615,7 @@ async function loadWeek() {
       state.games = [];
       state.loading = false;
       state.loaded = true;
-      document.getElementById('load-btn').disabled = false;
+      setLoadBtn(false);
       setStatus('err', 'No games found');
       document.getElementById('main').innerHTML =
         '<div class="hint">' +
@@ -2720,14 +2782,19 @@ async function loadWeek() {
     setStatus('live', state.season + ' · Week ' + state.week, state.games.length + ' games');
     state.loading = false;
     state.loaded = true;
-    document.getElementById('load-btn').disabled = false;
+    setLoadBtn(false);
     render();
 
   } catch (err) {
     console.error('Load error:', err);
     state.loading = false;
-    document.getElementById('load-btn').disabled = false;
+    setLoadBtn(false);
     setStatus('err', 'Load failed');
+    /* On the Bets page the failure belongs INSIDE the page, under the header
+       card, with a way to try again — not as a panel that replaces everything
+       and leaves you looking at a wall. */
+    GB.err = (err && err.message) || String(err || 'unknown');
+    if (state.activeTab === 'gamebets'){ GB.loading = false; render(); return; }
     document.getElementById('main').innerHTML =
       '<div class="error-panel">' +
         '<h4>Could not load data</h4>' +
@@ -3422,8 +3489,9 @@ function render() {
   const main = document.getElementById('main');
   // Facts works pre-load: all-time record + season scan need no loaded week
   if (state.activeTab === 'facts') return renderFacts(main);
-  if (!state.loaded) return;
+  // Bets draws itself before anything is loaded — the page loads underneath it
   if (state.activeTab === 'gamebets') return renderGameBets(main);
+  if (!state.loaded) return;
   return renderGames(main);
 }
 
@@ -5258,7 +5326,54 @@ function gatherCountProps() {
    One card per bet type, ordered by its REAL all-time success rate. Collapsed
    card = qualifying locks; tap the card = every candidate with a hard BET
    LINE divider. Tap a NAME = why. Red numbers are confidence grades. */
-const GB = { open: {}, why: null, mybOpen: false };
+const GB = { open: {}, why: null, mybOpen: false,
+  loading: false, tried: {}, err: null, offseason: false, resolved: null };
+window.__gbEnsureCalls = 0;   // harness counter — proves cron never auto-loads
+function gbKey(){ return state.season + '-W' + state.week; }
+/* Gridline used to open onto "pick a week and tap Load Week" and do nothing
+   until you did. Every other app loads itself the moment its Bets page is on
+   screen (The Key's nbEnsure), so this does the same: work out the real week,
+   load it, and let the page redraw around it.
+
+   It runs from renderGameBets and nowhere else — never at boot — so it can't
+   fire under ?cron= (which owns state.week while it publishes Super Locks) and
+   costs nothing for anyone who never reaches the Bets page. */
+async function gbEnsure(){
+  if (new URLSearchParams(location.search).get('cron')) return;   // automation drives itself
+  const pw = document.getElementById('paywall');
+  if (pw && !pw.classList.contains('hidden')) return;             // not a member yet — buy no data
+  if (GB.loading) return;
+  window.__gbEnsureCalls++;
+  GB.loading = true; GB.err = null;
+  try {
+    if (!GB.resolved){
+      GB.resolved = await glCurrentWeek();
+      if (GB.resolved.week){ state.season = GB.resolved.season; state.week = GB.resolved.week; }
+      else state.season = GB.resolved.season;
+      try { populateSeasonDropdown(); populateWeekDropdown(); } catch (e) {}
+    }
+    GB.offseason = !GB.resolved.inSeason && !GB.resolved.failed;
+    if (GB.tried[gbKey()]){ GB.loading = false; render(); return; }
+    GB.tried[gbKey()] = true;
+    if (GB.offseason){ GB.loading = false; render(); return; }     // no football on — say so, load nothing
+    if (GB.resolved.failed && !GB.resolved.week){
+      GB.err = 'Couldn’t reach ESPN to find the current week.';
+      GB.loading = false; render(); return;
+    }
+    render();                                                      // paint the loading card first
+    await loadWeek();                                              // writes progress into #gb-prog
+  } catch (e){
+    GB.err = (e && e.message) || String(e);
+    logEvent('warn', 'bets', 'bets auto-load failed: ' + GB.err);
+  }
+  GB.loading = false;
+  render();
+}
+function gbRetry(){
+  GB.err = null; GB.resolved = null; GB.tried = {};
+  try { sessionStorage.removeItem(CURWEEK_LS); } catch (e) {}
+  gbEnsure();
+}
 /* ═══ MY BETS — personal slip (device-local; grades sync from the same marks
    the Bets page already computes). ═══ */
 const MYB_KEY = 'nfl_mybets_v1';
@@ -5430,20 +5545,34 @@ function gbRowHtml(row, grey) {
     (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.68rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why +
       '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
 }
+// n === 0 means "put me back on the week that's actually on" — same as the
+// today button on every other app's Bets page.
 function gbShiftWeek(n) {
-  state.week = Math.max(1, Math.min(18, (state.week || 1) + n));
+  const cur = GB.resolved && GB.resolved.week;
+  state.week = n === 0 && cur ? cur : Math.max(1, Math.min(18, (state.week || 1) + n));
   const ws = document.getElementById('week');
   if (ws) ws.value = state.week;
-  GB.open = {}; GB.why = null;
+  GB.open = {}; GB.why = null; GB.err = null;
+  delete GB.tried[gbKey()];
   logEvent('info', 'ui', 'bets week → W' + state.week);
-  loadWeek();
+  gbEnsure();
 }
 function gbNavHtml() {
   const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:9px;padding:7px 0;font-size:.66rem;font-weight:700;cursor:pointer';
+  const cur = GB.resolved && GB.resolved.week;
   return '<div style="display:flex;gap:8px;margin-top:10px">' +
     '<button class="gbnav" data-n="-1" style="' + btn + '">‹ prev week</button>' +
+    (cur && state.week !== cur
+      ? '<button class="gbnav" data-n="0" style="' + btn + ';border-color:rgba(255,93,93,.5);color:#ff5d5d;font-weight:800">this week</button>'
+      : '') +
     '<button class="gbnav" data-n="1" style="' + btn + '">next week ›</button>' +
     '</div>';
+}
+function wireMyb(main) {
+  main.querySelectorAll('.mybbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybToggle(b.getAttribute('data-key'), b.getAttribute('data-desc'), b.getAttribute('data-d')); render(); }); });
+  const mh = main.querySelector('.mybhead');
+  if (mh) mh.addEventListener('click', function(){ GB.mybOpen = !GB.mybOpen; render(); });
+  main.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); render(); }); });
 }
 function gbWireNav(main) {
   main.querySelectorAll('.gbnav').forEach(b => b.addEventListener('click', () => gbShiftWeek(parseInt(b.getAttribute('data-n'), 10))));
@@ -5459,11 +5588,34 @@ function renderGameBets(main) {
       '<span>tap a <b style="color:#fff">name</b> — why</span>' +
       '<span>tap a <b style="color:#fff">card</b> — bet line</span>' +
     '</div>' + gbNavHtml() + '</div><!--MYB-->';
-  if (!state.games.length) {
-    main.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + '<div class="bcard" style="font-size:.72rem;color:rgba(255,255,255,.5)">No games loaded for this week — use the arrows above, or Load Week in the header, to pull a slate.</div>';
-    gbWireNav(main);
-    return;
+  /* The page is drawn before anything is loaded and stays drawn all the way
+     through, so there is never a moment where Gridline looks like an empty
+     app. Whatever state we're in gets said in a card of its own. */
+  const note = function(body){
+    main.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + body;
+    gbWireNav(main); wireMyb(main);
+    main.querySelectorAll('.gbretry').forEach(b => b.addEventListener('click', gbRetry));
+    main.querySelectorAll('.gbweek1').forEach(b => b.addEventListener('click', () => {
+      GB.offseason = false; state.week = 1; GB.tried = {}; GB.resolved = { season: state.season, week: 1, inSeason: true, failed: false };
+      gbEnsure();
+    }));
+  };
+  const card = function(inner, id){ return '<div class="bcard"' + (id ? ' id="' + id + '"' : '') +
+    ' style="font-size:.68rem;color:rgba(255,255,255,.5);line-height:1.55">' + inner + '</div>'; };
+  const chip = 'display:inline-block;margin-top:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,93,93,.5);color:#ff5d5d;border-radius:9px;padding:7px 14px;font-size:.66rem;font-weight:800;cursor:pointer;font:inherit';
+
+  if (GB.loading) return note(card('Loading Week ' + state.week + '…', 'gb-prog'));
+  if (GB.err) return note(card('<b style="color:#ffb454">Couldn’t load this week.</b> ' + escapeHtml(GB.err) +
+    '<br>Gridline reads ESPN’s public schedule — a captive WiFi login, Private Relay or a content blocker will stop it.' +
+    '<br><button class="gbretry" style="' + chip + '">Try again</button>'));
+  if (GB.offseason) return note(card('<b style="color:#fff">No NFL games right now.</b> The regular season hasn’t started, ' +
+    'so there is nothing to project — this fills in by itself the week it kicks off.' +
+    '<br><button class="gbweek1" style="' + chip + '">Look at Week 1 anyway</button>'));
+  if (!state.loaded){
+    if (!GB.tried[gbKey()]) gbEnsure();
+    return note(card('Working out the current week…', 'gb-prog'));
   }
+  if (!state.games.length) return note(card('No games scheduled for Week ' + state.week + '.'));
   const earlyNote = (function(){
     for (const g of state.games){ const e = gbEarly(g); if (e) return e; }
     return null;
@@ -5509,10 +5661,7 @@ function renderGameBets(main) {
     html += '</div>';
   }
   main.innerHTML = html.replace('<!--MYB-->', mybStripHtml());
-    main.querySelectorAll('.mybbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybToggle(b.getAttribute('data-key'), b.getAttribute('data-desc'), b.getAttribute('data-d')); render(); }); });
-    const mh = main.querySelector('.mybhead');
-    if (mh) mh.addEventListener('click', function(){ GB.mybOpen = !GB.mybOpen; render(); });
-    main.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); render(); }); });
+  wireMyb(main);
   gbWireNav(main);
   main.querySelectorAll('.gbhead').forEach(h => h.addEventListener('click', () => { const k = h.getAttribute('data-k'); GB.open[k] = !GB.open[k]; render(); }));
   main.querySelectorAll('.gbname').forEach(nm => nm.addEventListener('click', e => { e.stopPropagation(); const tok = nm.getAttribute('data-tok'); GB.why = GB.why === tok ? null : tok; render(); }));
@@ -5686,7 +5835,10 @@ document.getElementById('week').addEventListener('change', e => {
 document.getElementById('load-btn').addEventListener('click', () => {
   closeSettings();
   logEvent('info', 'load', 'loading ' + state.season + ' W' + state.week);
-  loadWeek();
+  // picking a week by hand overrides whatever the live week was
+  GB.err = null; GB.offseason = false; GB.open = {}; GB.why = null;
+  delete GB.tried[gbKey()];
+  gbEnsure();
 });
 
 document.getElementById('gear-btn').addEventListener('click', openSettings);
@@ -5877,9 +6029,10 @@ document.querySelectorAll('.lock-th-row input[data-lockth]').forEach(inp => {
 });
 document.getElementById('log-clear').addEventListener('click', clearEventLog);
 
-document.querySelectorAll('.tab').forEach(tab => {
+// [data-tab] only — the gear shares the .tab look but switches no view
+document.querySelectorAll('.tab[data-tab]').forEach(tab => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     state.activeTab = tab.dataset.tab;
     state.openGameId = null;

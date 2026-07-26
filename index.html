@@ -389,6 +389,17 @@ body{
                 Leave projectId '' to skip the fetch and show the
                 "connect this record" state (never a fake number).
    ================================================================ */
+/* Build stamp. Nothing here uses a service worker, so an app opened from the
+   Board is served straight out of the browser's HTTP cache — and a home-screen
+   app has no address bar and no pull-to-refresh, so a phone can sit on an old
+   copy of an app for days with no way out. Every URL that reaches the browser
+   carries this, so bumping it on a deploy makes the next open fetch fresh.
+   BUMP THIS whenever an app changes. */
+var BOARD_BUILD = '2026-07-26a';
+function bust(u){
+  if (!u) return u;
+  return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
+}
 var SITES = [
   {
     key: 'mlb',
@@ -706,7 +717,7 @@ function cardShell(s){
   var secondary = s.secondary ? (
     freeReadout +
     '<div class="subcap">' + esc(s.secondary.caption) + '</div>' +
-    '<a class="cta cta2" href="' + esc(s.secondary.url) + '" data-app="' + esc(s.secondary.key) + '" target="_blank" rel="noopener">' +
+    '<a class="cta cta2" href="' + esc(bust(s.secondary.url)) + '" data-app="' + esc(s.secondary.key) + '" target="_blank" rel="noopener">' +
       '<span class="btnbadge">' + esc(s.secondary.badge) + '</span>' +
       '<span>' + esc(s.secondary.label) + '</span><span class="arrow">&rarr;</span></a>'
   ) : '';
@@ -721,7 +732,7 @@ function cardShell(s){
       '<div class="sb state" id="sb-' + s.key + '">' +
         '<div class="lab">Most accurate markets</div>' +
         '<div class="readout"><div class="shimmer"></div></div></div>' +
-      '<a class="cta" href="' + esc(s.url) + '" data-app="' + s.key + '" target="_blank" rel="noopener">' +
+      '<a class="cta" href="' + esc(bust(s.url)) + '" data-app="' + s.key + '" target="_blank" rel="noopener">' +
         '<span>' + esc(s.cta || ('Enter ' + s.name)) + '</span><span class="arrow">&rarr;</span></a>' +
       secondary +
     '</div>' +
@@ -916,12 +927,12 @@ function openAppObj(s){
   currentSite = s;
   var view = byId('appview'), fr = byId('appiframe');
   byId('apptitle').textContent = s.name + '  \u00b7  ' + s.sport;
-  byId('appout').href = s.url;
+  byId('appout').href = bust(s.url);
   view.style.setProperty('--lane', s.lane);
   hideAppEmpty();
   byId('apploading').style.display = '';
   fr.onload = onAppLoad;
-  fr.src = s.url;                       // lazy-load the app now
+  fr.src = bust(s.url);                 // lazy-load the app now, on this build
   view.classList.remove('hidden');
   view.setAttribute('aria-hidden', 'false');
   lockPage('app');
@@ -951,7 +962,7 @@ function showAppEmpty(){
   div.innerHTML =
     '<div class="t">' + esc(s.name) + ' isn\u2019t deployed yet</div>' +
     '<div class="d">Its page on GitHub Pages is still empty. Push the app to the repo and it\u2019ll open right here.</div>' +
-    '<a class="cta" style="width:auto;padding:12px 18px" href="' + esc(s.url) + '" target="_blank" rel="noopener">' +
+    '<a class="cta" style="width:auto;padding:12px 18px" href="' + esc(bust(s.url)) + '" target="_blank" rel="noopener">' +
       '<span>Open the page</span><span class="arrow">&rarr;</span></a>';
   f.appendChild(div);
 }
@@ -2240,7 +2251,7 @@ function labRunScan(box){
     st.textContent = 'Scanning ' + app.name + '… (replaying its whole stored season — a minute or two)';
     var fr = document.createElement('iframe');
     fr.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none';
-    fr.src = './' + app.file + '?lab=1';
+    fr.src = bust('./' + app.file + '?lab=1');
     var done = false;
     var finish = function(ok, msg){
       if (done) return; done = true;
