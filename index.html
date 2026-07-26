@@ -3481,6 +3481,20 @@ async function slConfigs(){
 async function slPremiumLane(cfgs){
   var days = await slEnsure('prem', 'fable_hits', ADMIN, null);
   var qual = slQualified(premiumRates(days, cfgs.prem));
+  /* The Premium app shows a pick when its LAB-CALIBRATED, rounded grade clears
+     the lock. Super Locks has to use that same number or the two lists disagree
+     — which is exactly how picks went missing here. Same doc, same math. */
+  var labCfg = null;
+  try { labCfg = fsDoc(await fsGetRaw(ADMIN, 'fable_settings/lab_cfg')); } catch (e) {}
+  var calApply = function(map, g){
+    if (!map || !map.bins) return g;
+    for (var i = 0; i < map.bins.length; i++){ var b = map.bins[i]; if (g >= b.lo && g < b.hi) return b.rate; }
+    return g;
+  };
+  var calGrade = function(m, g){ var c = labCfg && labCfg.cats && labCfg.cats[m]; return c ? calApply(c, g) : g; };
+  var pGrade = function(m, p){ return Math.round(calGrade(m, p * 100)); };       // 0-100, as shown in the app
+  var pLock = function(v){ return Math.round((v || 0) * 100); };
+  var p1of = function(r){ return r && r.prob != null ? r.prob : (r && r.exp != null ? 1 - Math.exp(-r.exp) : null); };
   var L = { hits: 'BATTER HITS', hr: 'HOME RUNS', gm: 'GAME', kB: 'BATTER K', bbB: 'BATTER BB', kP: 'PITCHER K', bbP: 'PITCHER BB', tb: 'TOTAL BASES', gmT: 'GAME TOTALS', phA: 'PITCHER HITS', gmR: 'RUN LINE' };
   var today = SL_DATE || slTodayPT();
   var raw = await fsGetRaw(ADMIN, 'fable_hits/' + today);
@@ -3493,33 +3507,37 @@ async function slPremiumLane(cfgs){
        the amber notice — but they are NEVER graded until confirmed. */
     var push = function(m, desc, metric, hit, unconf){ locks.push({ cat: L[m] || m, catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric, hit: unconf ? null : hit, unconf: !!unconf }); };
     if (qual.hits) (day.rows || []).forEach(function(r){
-      if (!r.gradeFlag && r.prob != null && r.prob >= cfgs.prem.lock){
-        var o = res ? res[r.id] : null;
-        push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', Math.round(r.prob * 100) + '%', played(o) ? ((o.h || 0) >= 1) : null, !r.verified);
-      }
+      if (r.gradeFlag || r.prob == null) return;
+      var g = pGrade('hits', r.prob);
+      if (g < pLock(cfgs.prem.lock)) return;
+      var o = res ? res[r.id] : null;
+      push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', g + '%', played(o) ? ((o.h || 0) >= 1) : null, !r.verified);
     });
     var mk = day.mk || {};
     if (qual.gm) (mk.gm || []).forEach(function(r){
-      if ((r.conf || 0) >= (cfgs.prem.gmLock || 0)){
-        var g = res ? res['g' + r.id] : null;
-        var gh = (g && g.hs != null && g.as != null && g.hs !== g.as) ? ((g.hs > g.as) === (r.pick === r.team)) : null;
-        push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — pick ' + r.pick, r.conf != null ? Math.round(r.conf) + '%' : '', gh, !r.verified);
-      }
+      if (r.conf == null) return;
+      var gg = pGrade('gm', r.conf);
+      if (gg < pLock(cfgs.prem.gmLock)) return;
+      var g = res ? res['g' + r.id] : null;
+      var gh = (g && g.hs != null && g.as != null && g.hs !== g.as) ? ((g.hs > g.as) === (r.pick === r.team)) : null;
+      push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — ' + r.pick + ' wins', gg + '%', gh, !r.verified);
     });
     if (qual.hr) (mk.hr || []).forEach(function(r){
-      if (!r.gradeFlag && (r.prob || 0) >= cfgs.prem.hrLock){
-        var oh = res ? res[r.id] : null;
-        push('hr', r.name + ' (' + (r.team || '') + ') — home run', Math.round((r.prob || 0) * 100) + '%', played(oh) ? ((oh.hr || 0) >= 1) : null, !r.verified);
-      }
+      if (r.gradeFlag || r.prob == null) return;
+      var gh2 = pGrade('hr', r.prob);
+      if (gh2 < pLock(cfgs.prem.hrLock)) return;
+      var oh = res ? res[r.id] : null;
+      push('hr', r.name + ' (' + (r.team || '') + ') — home run', gh2 + '%', played(oh) ? ((oh.hr || 0) >= 1) : null, !r.verified);
     });
     [['kB', 'so', 'kbLock', '1+ strikeout'], ['bbB', 'bb', 'bbbLock', '1+ walk']].forEach(function(c){
       if (!qual[c[0]]) return;
       (mk[c[0]] || []).forEach(function(r){
-        var p = r.prob != null ? r.prob : (r.exp != null ? 1 - Math.exp(-r.exp) : null);
-        if (!r.gradeFlag && p != null && p >= cfgs.prem[c[2]]){
-          var ob = res ? res[r.id] : null;
-          push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], Math.round(p * 100) + '%', played(ob) ? ((ob[c[1]] || 0) >= 1) : null, !r.verified);
-        }
+        var p = p1of(r);
+        if (r.gradeFlag || p == null) return;
+        var gb = pGrade(c[0], p);
+        if (gb < pLock(cfgs.prem[c[2]])) return;
+        var ob = res ? res[r.id] : null;
+        push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], gb + '%', played(ob) ? ((ob[c[1]] || 0) >= 1) : null, !r.verified);
       });
     });
     var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmT: 'gtEdge', phA: 'phEdge', gmR: 'grEdge' };
@@ -3527,9 +3545,11 @@ async function slPremiumLane(cfgs){
       if (!qual[m]) return;
       (mk[m] || []).forEach(function(r){
         if (r.gradeFlag || r.line == null || r.exp == null) return;
+        // the app ranks edge markets on the edge rounded to a tenth — match it
         var d = r.exp - r.line, th = cfgs.prem[edgeKey[m]];
-        var lean = d >= th ? 'OVER' : d <= -th ? 'UNDER' : null;
-        if (!lean) return;
+        var edge = Math.round(Math.abs(d) * 10) / 10;
+        if (edge < th) return;
+        var lean = d >= 0 ? 'OVER' : 'UNDER';
         var oe = res ? res[r.id] : null;
         var act = oe ? (m === 'gmT' ? (oe.hs != null && oe.as != null ? oe.hs + oe.as : null)
           : m === 'gmR' ? (oe.hs != null && oe.as != null ? oe.hs - oe.as : null)
@@ -3540,7 +3560,7 @@ async function slPremiumLane(cfgs){
           var sgn = function(v){ return (v > 0 ? '+' : '') + v; };
           desc = (lean === 'OVER' ? (r.team || '') + ' ' + sgn(r.hSpread) : (r.opp || '') + ' ' + sgn(-r.hSpread)) + ' covers the run line (' + r.name + ')';
         }
-        push(m, desc, 'exp ' + r.exp, eh, !r.verified);
+        push(m, desc, edge + ' edge', eh, !r.verified);
       });
     });
   }
@@ -3616,11 +3636,11 @@ async function refreshSuperLocks(force){
   // with an updating note, drop the caches, and re-read everything live.
   delete PREVIEW_CACHE.prem; delete PREVIEW_CACHE.nba; delete PREVIEW_CACHE.ice; delete PREVIEW_CACHE.nfl; delete PREVIEW_CACHE.nascar;
   if (SL_CACHE){
-    el.innerHTML = '<div class="statusline" style="padding:0 0 10px">↻ Updating to the latest grades…</div>' + SL_CACHE;
+    el.innerHTML = '<div style="padding:0 0 10px;font-size:12.5px;color:var(--dim2)">↻ Updating to the latest grades…</div>' + SL_CACHE;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
     el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   }
-  else el.innerHTML = '<div class="statusline" style="padding:20px 0">Reading every app’s graded record… takes a few seconds.</div>';
+  else el.innerHTML = '<div style="padding:20px 0;font-size:13px;color:var(--dim2)">Reading every app’s graded record… takes a few seconds.</div>';
   try {
     var cfgs = await slConfigs();
     var lanes = await Promise.all([
@@ -3654,6 +3674,8 @@ async function refreshSuperLocks(force){
     var graded = 0, hits = 0;
     lanes.forEach(function(a){ a.locks.forEach(function(l){ if (l.hit === true || l.hit === false){ graded++; if (l.hit) hits++; } }); });
     var LANE_COL = { mlb: 'var(--mlb)', nfl: 'var(--nfl)', nba: 'var(--nba)', hockey: 'var(--nhl)', nascar: '#ff5d5d' };
+    var live = lanes.filter(function(a){ return a.locks.length > 0; });
+    var quiet = lanes.filter(function(a){ return a.locks.length === 0; });
 
     /* ── HEADER: kicker, big date, day picker, and a live/results summary ── */
     var navBtn = 'flex:1;background:var(--panel);border:1px solid var(--hair);color:var(--bone);border-radius:10px;padding:9px 0;font:600 12.5px/1 inherit;cursor:pointer';
@@ -3662,81 +3684,74 @@ async function refreshSuperLocks(force){
       '<div style="font:800 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.22em;text-transform:uppercase;color:' + (past ? 'var(--dim)' : 'var(--bulb)') + '">' +
         (past ? 'Results · how the super locks did' : '⚡ Super Locks · live') + '</div>' +
       '<div style="font-weight:900;font-size:24px;letter-spacing:-.01em;margin:5px 0 2px">' + esc(slPrettyDate(dShown)) + '</div>' +
-      '<div class="statusline" style="margin:0">' + (past
+      '<div style="font-size:13px;line-height:1.45;color:var(--dim2)">' + (past
         ? (graded ? '<b style="color:' + (hits * 2 >= graded ? '#7fd99a' : '#ff7a7a') + '">' + hits + '/' + graded + ' hit</b> · ' + Math.round(100 * hits / Math.max(1, graded)) + '% of that day’s super locks'
                   : 'Nothing graded on this date.')
-        : '<b>' + total + '</b> live · only locks from categories graded 80%+ all-time (min ' + SL_MIN_N + ' picks)') + '</div>' +
+        : '<b style="color:var(--bone)">' + total + ' live</b> · every pick from bet types graded 80%+ all-time (min ' + SL_MIN_N + ')' +
+          (live.length ? ' · ' + live.map(function(a){ return esc(a.name) + ' ' + a.locks.length; }).join(' · ') : '')) + '</div>' +
       '<div style="display:flex;gap:8px;margin-top:12px">' +
         '<button class="slnav" data-n="-1" style="' + navBtn + '">‹ prev day</button>' +
         (past ? '<button class="slnav" data-n="0" style="' + navBtn + ';border-color:rgba(245,182,66,.5);color:var(--bulb);font-weight:800">today</button>' : '') +
         '<button class="slnav" data-n="1" style="' + navBtn + (past ? '' : ';opacity:.35') + '">next day ›</button>' +
       '</div></div>';
 
-    /* ── lane chips: at-a-glance counts for the apps that have something ── */
-    var live = lanes.filter(function(a){ return a.locks.length > 0; });
-    var quiet = lanes.filter(function(a){ return a.locks.length === 0; });
-    if (!past && live.length){
-      html += '<div style="display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px">' + live.map(function(a){
-        var col = LANE_COL[a.key] || 'var(--dim)';
-        return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid ' + col + ';border-radius:999px;padding:5px 11px;font:600 11.5px/1 inherit;color:var(--bone)">' +
-          '<span style="width:6px;height:6px;border-radius:999px;background:' + col + '"></span>' + esc(a.name) + ' <b style="color:' + col + '">' + a.locks.length + '</b></span>';
-      }).join('') + '</div>';
-    }
+    /* ── ONE LIST ──
+       Every super lock from every app in a single card, grouped app > bet type,
+       so the whole day reads top to bottom instead of as a pile of separate
+       cards and chips. Apps with nothing get one quiet line at the bottom. */
     if (!live.length){
-      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:14px;padding:16px;text-align:center">' +
+      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:14px;padding:18px;text-align:center">' +
         '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Nothing clears the bar ' + (past ? 'for this day' : 'right now') + '</div>' +
-        '<div class="statusline" style="margin:0">That\u2019s the system working \u2014 no filler.</div></div>';
-    }
-
-    /* Full cards ONLY for lanes with picks. Apps that are out of season or
-       simply have nothing today collapse into one quiet line — no empty cards
-       taking up the screen. */
-    live.forEach(function(a){
-      var col = LANE_COL[a.key] || 'var(--dim)';
-      var laneHits = 0, laneGraded = 0;
-      a.locks.forEach(function(l){ if (l.hit === true || l.hit === false){ laneGraded++; if (l.hit) laneHits++; } });
-      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-left:3px solid ' + (a.locks.length ? col : 'var(--hair2)') + ';border-radius:14px;padding:13px 15px;margin-bottom:11px">' +
-        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">' +
-        '<span style="font-weight:800;font-size:15px">' + esc(a.name) + '</span>' +
-        '<span class="statusline" style="margin:0">' + (a.locks.length
-          ? (laneGraded ? '<b style="color:' + (laneHits * 2 >= laneGraded ? '#7fd99a' : '#ff7a7a') + '">' + laneHits + '/' + laneGraded + ' hit</b>'
-                        : a.locks.length + ' super lock' + (a.locks.length > 1 ? 's' : ''))
-          : '—') + '</span></div>';
-      if (a.locks.length){
+        '<div style="font-size:13px;color:var(--dim2)">That’s the system working — no filler.</div></div>';
+    } else {
+      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:16px;padding:4px 15px 14px;margin-bottom:12px">';
+      live.forEach(function(a, ai){
+        var col = LANE_COL[a.key] || 'var(--dim)';
+        var laneHits = 0, laneGraded = 0;
+        a.locks.forEach(function(l){ if (l.hit === true || l.hit === false){ laneGraded++; if (l.hit) laneHits++; } });
+        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 0 2px' +
+            (ai ? ';border-top:1px solid var(--hair2);margin-top:8px' : '') + '">' +
+          '<span style="display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:15.5px">' +
+            '<span style="width:8px;height:8px;border-radius:999px;background:' + col + ';flex:0 0 auto"></span>' + esc(a.name) + '</span>' +
+          '<span style="font-size:12.5px;color:var(--dim2)">' + (laneGraded
+            ? '<b style="color:' + (laneHits * 2 >= laneGraded ? '#7fd99a' : '#ff7a7a') + '">' + laneHits + '/' + laneGraded + ' hit</b>'
+            : a.locks.length + ' pick' + (a.locks.length > 1 ? 's' : '')) + '</span></div>';
         var groups = [], byCat = {};
         a.locks.forEach(function(l){
           if (!byCat[l.cat]){ byCat[l.cat] = { cat: l.cat, catPct: l.catPct, catN: l.catN, rows: [] }; groups.push(byCat[l.cat]); }
           byCat[l.cat].rows.push(l);
         });
         groups.forEach(function(g){
-          html += '<div style="margin-top:11px">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px">' +
-            '<span style="font:800 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;color:' + col + '">' + esc(g.cat) + '</span>' +
-            '<span style="border:1px solid rgba(127,217,154,.35);border-radius:999px;padding:3px 8px;font:700 10.5px/1 ui-monospace,Menlo,monospace;color:#7fd99a;white-space:nowrap">' + g.catPct + '% all-time' + (g.catN ? ' · ' + g.catN : '') + '</span></div>';
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:12px 0 2px">' +
+            '<span style="font:800 11px/1.2 inherit;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)">' + esc(g.cat) + '</span>' +
+            '<span style="border:1px solid rgba(127,217,154,.35);border-radius:999px;padding:3px 9px;font:700 11px/1 inherit;color:#7fd99a;white-space:nowrap">' +
+              g.catPct + '% all-time' + (g.catN ? ' · ' + g.catN + ' graded' : '') + '</span></div>';
           g.rows.forEach(function(l){
-            var mark = l.hit === true ? '<span style="color:#7fd99a;font-weight:800;min-width:13px;text-align:center">✓</span>'
-                     : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;min-width:13px;text-align:center">✗</span>'
-                     : (past ? '<span style="color:var(--dim2);min-width:13px;text-align:center">—</span>' : '');
-            html += '<div style="display:flex;gap:9px;align-items:baseline;padding:6px 0;border-top:1px solid var(--hair2)">' + mark +
-              '<span style="flex:1;font-size:14px;min-width:0">' + esc(l.desc) +
-                (l.unconf ? ' <span style="color:#ffb454;font-size:10.5px;font-weight:700;white-space:nowrap">\u25cb lineup not confirmed</span>' : '') + '</span>' +
+            var mark = l.hit === true ? '<span style="color:#7fd99a;font-weight:800;flex:0 0 14px;text-align:center">✓</span>'
+                     : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;flex:0 0 14px;text-align:center">✗</span>'
+                     : '<span style="color:var(--dim2);flex:0 0 14px;text-align:center">' + (past ? '—' : '·') + '</span>';
+            html += '<div style="display:flex;gap:9px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hair2)">' + mark +
+              '<span style="flex:1;min-width:0;font-size:14px;line-height:1.35">' + esc(l.desc) +
+                (l.unconf ? '<br><span style="color:#ffb454;font-size:11px;font-weight:700">○ lineup not confirmed</span>' : '') + '</span>' +
               '<span style="flex:0 0 auto;font:800 13px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span></div>';
           });
         });
-      }
+      });
       html += '</div>';
-    });
+    }
     if (quiet.length){
-      html += '<div style="border:1px solid var(--hair2);border-radius:12px;padding:10px 13px;margin-top:2px">' +
-        '<div style="font:800 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin-bottom:6px">Not in play</div>' +
+      html += '<div style="border:1px solid var(--hair2);border-radius:14px;padding:12px 15px;margin-top:2px">' +
+        '<div style="font:800 10.5px/1 inherit;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2);margin-bottom:7px">Not in play</div>' +
         quiet.map(function(a){
-          return '<div style="display:flex;gap:10px;align-items:baseline;padding:3px 0">' +
-            '<span style="flex:0 0 auto;font-size:12.5px;color:var(--dim)">' + esc(a.name) + '</span>' +
-            '<span class="statusline" style="margin:0;flex:1;text-align:right">' + esc(a.note || 'Nothing today.') + '</span></div>';
+          return '<div style="padding:4px 0;font-size:13px;line-height:1.4">' +
+            '<b style="color:var(--dim)">' + esc(a.name) + '</b> ' +
+            '<span style="color:var(--dim2)">' + esc(a.note || 'Nothing today.') + '</span></div>';
         }).join('') + '</div>';
     }
-    html += '<div class="statusline" style="margin-top:6px;line-height:1.6">Green pill = that bet type’s all-time graded hit rate (why it earned a spot). The coloured number = that pick’s own model odds. ' +
-      (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') + '</div>';
+    html += '<div style="margin-top:12px;font-size:12.5px;line-height:1.65;color:var(--dim2)">' +
+      'The green pill is that bet type’s all-time graded hit rate — why it earned a place here. The coloured number on each row is that pick’s own model number. ' +
+      (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') +
+      ' Every pick the app shows in a qualifying bet type is here — nothing is trimmed.</div>';
     SL_CACHE = html;
     el.innerHTML = html;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
