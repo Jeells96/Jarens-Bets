@@ -4,10 +4,13 @@ on:
   workflow_dispatch:
   schedule:
     # Every 30 minutes. Each app checks the FREE events list (0 quota) and
-    # pulls a game's DK lines exactly once shortly before its start (MLB 10-60
-    # minutes out, the other sports 10-45) -
-    # closest to gametime while leaving time to bet. Runs with no game
-    # entering the window report "skipped" without touching the odds API.
+    # pulls a game's DK lines exactly once at its designated buy time:
+    #   Diamond IQ (MLB)  10-60 minutes before first pitch
+    #   Gridline (NFL)    Sunday slate all at once on the 9:05 AM PT run;
+    #                     any other day 10-45 minutes before kickoff
+    #   NBA / NHL         10-45 minutes before the start
+    # Runs with no game at its buy time report "skipped" without touching the
+    # odds API.
     - cron: "5,35 * * * *"
 
 concurrency:

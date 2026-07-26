@@ -2,8 +2,10 @@
 /* Jaren's Bets — scheduled DK pulls (GitHub Actions)
    Loads each app with ?cron=dk. Every page reads the Board's settings doc
    (app_settings/dk_auto) and pulls ONLY if its toggle is on and one of its
-   games has entered the pre-game window: Diamond IQ buys 10-60 minutes before
-   first pitch, the other sports 10-45 before their start. Each game is bought
+   games has reached its buy time: Diamond IQ buys 10-60 minutes before first
+   pitch; Gridline buys its whole Sunday slate on the 9:05 AM PT run and keeps
+   the 10-45 window on other days; NBA and NHL buy 10-45 before their start.
+   Each game is bought
    once. A tick with no game in any window reports "skipped", not failure, and
    spends no API quota. */
 

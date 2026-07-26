@@ -1661,6 +1661,61 @@ function defaultSeasonYear() {
    the regular season; anything else (or an empty slate) means there is no
    football on right now, and the Bets page says that plainly rather than
    loading a week that hasn't happened. */
+/* ── WHEN GRIDLINE BUYS A GAME'S ODDS ──────────────────────────────────────
+   Sunday is bought as one slate: every game that kicks off on a Sunday has its
+   lines taken at 9:00 AM Pacific, so the whole board is up before the early
+   games instead of trickling in 45 minutes at a time. Every other day keeps
+   the old rule — one buy per game, 10-45 minutes before its own kickoff.
+
+   The automation ticks at :05 and :35 past the hour, so "9:00 AM" really lands
+   on the 9:05 run, and that is the time shown. The pull and the "line lands
+   at …" label both read this one function, so what the app promises can never
+   drift from what the automation does. */
+const DK_SUNDAY_HOUR = 9;
+function ptOffsetAt(ms){
+  const d = new Date(ms);
+  return new Date(d.toLocaleString('en-US', { timeZone: 'UTC' })) -
+         new Date(d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+}
+// a Pacific wall-clock time on the Pacific day that `ms` falls on
+function ptWallClock(ms, h, m){
+  const day = new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  const p = day.split('-').map(Number);
+  return Date.UTC(p[0], p[1] - 1, p[2], h, m || 0) + ptOffsetAt(ms);
+}
+function isPtSunday(ms){
+  return new Date(ms).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }) === 'Sun';
+}
+// the automation only runs at :05 and :35 — the first such tick at or after t
+function nextCronTick(t){
+  const top = Math.floor(t / 3600000) * 3600000;
+  if (t <= top + 5 * 60000) return top + 5 * 60000;
+  if (t <= top + 35 * 60000) return top + 35 * 60000;
+  return top + 3600000 + 5 * 60000;
+}
+function dkPullAt(startMs){
+  if (!startMs) return null;
+  if (isPtSunday(startMs)){
+    const t = nextCronTick(ptWallClock(startMs, DK_SUNDAY_HOUR, 0));
+    // a kickoff at or before 9am (London games) still buys on its own window
+    if (t <= startMs - 10 * 60000) return t;
+  }
+  const from = startMs - 45 * 60000, to = startMs - 10 * 60000;
+  const top = Math.floor(from / 3600000) * 3600000;
+  for (let i = 0; i < 3; i++){
+    const a = top + i * 3600000 + 5 * 60000, b = top + i * 3600000 + 35 * 60000;
+    if (a >= from && a <= to) return a;
+    if (b >= from && b <= to) return b;
+  }
+  return null;
+}
+function dkPullLabel(startMs){
+  const t = dkPullAt(startMs);
+  if (t == null) return null;
+  return new Date(t).toLocaleString('en-US', { timeZone: 'America/Los_Angeles',
+    weekday: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
 const CURWEEK_LS = 'gl_curweek_v1';
 async function glCurrentWeek() {
   try {
@@ -2121,9 +2176,13 @@ async function pullDKOdds(reason, opts) {
           continue; // already have this game's props — no API call
         }
         const ptDay = d => d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+        const pullAt = dkPullAt(st);
         const inWindow = allToday
           ? ptDay(new Date(ev.commence_time)) === ptDay(new Date()) // manual all-today pulls only
-          : (st > nowMs + 10 * 60 * 1000 && st <= nowMs + 45 * 60 * 1000); // auto: 10–45 min before kickoff, once
+          // auto: once this game's designated buy time has come and it hasn't
+          // started. Sunday games share one 9am buy; other days keep their own
+          // 10-45 minute window. Games already bought are skipped above.
+          : (pullAt != null && nowMs >= pullAt && st > nowMs + 10 * 60 * 1000);
         if (!inWindow) continue;
         const pUrl = ODDS_API.base + '/sports/' + ODDS_API.sport + '/events/' + ev.id + '/odds' +
           '?regions=' + ODDS_API.region +
@@ -5655,6 +5714,54 @@ function gbNavHtml() {
     '<button class="gbnav" data-n="1" style="' + btn + '">next week ›</button>' +
     '</div>';
 }
+/* A bet type waiting on DraftKings shows its card anyway, with a line per
+   game saying WHEN that game's odds get bought — in the same place the odds
+   themselves will appear. Read from dkPullAt(), the same function the
+   automation uses, so the promise and the pull cannot drift apart. */
+function gbPendingRows(){
+  const now = Date.now();
+  return (state.games || [])
+    .filter(function(g){ return !g.completed && g.date; })
+    .map(function(g){
+      const st = new Date(g.date).getTime();
+      return { gm: g.away.abbr + ' @ ' + g.home.abbr, st: st, at: dkPullAt(st), lbl: dkPullLabel(st) };
+    })
+    .filter(function(x){ return x.st > now; })
+    .sort(function(a, b){ return (a.at || a.st) - (b.at || b.st); });
+}
+function gbPendingHtml(){
+  const rows = gbPendingRows();
+  if (!rows.length) return '';
+  const now = Date.now();
+  /* Grouped by buy time, not one line per game: the whole Sunday slate shares
+     a single 9:05 buy, so listing all fourteen of them three times over (once
+     per waiting bet type) would be noise. One row per distinct time, naming
+     the game when it's the only one at that time. */
+  const groups = [];
+  rows.forEach(function(x){
+    const late = x.at != null && x.at <= now;
+    const key = x.at == null ? 'none' : late ? 'late' : String(x.at);
+    let g = groups.find(function(z){ return z.key === key; });
+    if (!g){ groups.push(g = { key: key, at: x.at, late: late, lbl: x.lbl, games: [] }); }
+    g.games.push(x.gm);
+  });
+  groups.sort(function(a, b){ return (a.at || 0) - (b.at || 0); });
+  return groups.map(function(g){
+    const right = g.key === 'none' ? 'no buy time'
+      : g.late ? 'buy time came \u2014 no line posted'
+      : g.lbl;
+    const left = g.games.length === 1 ? g.games[0]
+      : g.games.length + ' games \u00b7 ' + g.games.slice(0, 3).join(', ') + (g.games.length > 3 ? '\u2026' : '');
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.74rem">' +
+      '<span style="flex:1;min-width:0;color:rgba(255,255,255,.55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        escapeHtml(left) + '</span>' +
+      '<span style="font-size:.66rem;font-weight:700;color:' + (g.late ? '#ffb454' : 'rgba(255,255,255,.75)') + ';white-space:nowrap">' +
+        escapeHtml(right) + '</span></div>';
+  }).join('') +
+  '<div style="font-size:.62rem;color:rgba(255,255,255,.35);padding:5px 0 0;line-height:1.5">' +
+    'DraftKings odds are bought once per game \u2014 the Sunday slate all at once at 9:00 AM, other days 10\u201345 minutes before kickoff. ' +
+    'The picks appear here the moment they land.</div>';
+}
 function wireMyb(main) {
   main.querySelectorAll('.mybbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybToggle(b.getAttribute('data-key'), b.getAttribute('data-desc'), b.getAttribute('data-d')); render(); }); });
   const mh = main.querySelector('.mybhead');
@@ -5726,8 +5833,19 @@ function renderGameBets(main) {
     }
     const all = gbRows(k);
     if (!all.length) {
+      const pending = isDkCat(k) ? gbPendingHtml() : '';
+      if (pending) {
+        // the card stays, and where the picks will be it says when they arrive
+        html += '<div class="bcard" style="padding:12px 13px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+            '<div style="font-size:.76rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d">' + meta.tag + '</div>' +
+            '<span style="font-size:.62rem;font-weight:700;color:#ffb454">waiting on DraftKings</span></div>' +
+          '<div style="font-size:.66rem;color:rgba(255,255,255,.4);margin:2px 0 5px">Bet = ' + meta.what + '</div>' +
+          pending + '</div>';
+        continue;
+      }
       held.push({ tag: meta.tag, why: isDkCat(k)
-        ? 'waiting on DraftKings to post lines — they’re bought about an hour before kickoff'
+        ? 'waiting on DraftKings to post lines'
         : 'no candidates this week yet' });
       continue;
     }
@@ -6390,10 +6508,10 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
         }
       } catch (e) {}
       const on = c.nflOn !== false;
-      // Pull window: each game's lines are frozen ONCE, 10–45 minutes before
-      // its kickoff — closest to gametime with time left to bet. (Diamond IQ
-      // buys an hour out; every other sport buys at 45.) The
-      // free events list (0 API cost) decides whether this half-hour has work.
+      // Buy time: each game's lines are frozen ONCE. Sunday games are all
+      // bought together at 9:00 AM PT (the 9:05 run); any other day keeps the
+      // old rule of 10–45 minutes before that game's kickoff. The free events
+      // list (0 API cost) decides whether this half-hour has work.
       let go = false, within = 0;
       if (on) {
         try {
@@ -6401,13 +6519,20 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
           if (evRes.ok) {
             const evs = await evRes.json();
             const now = Date.now();
-            within = (evs || []).filter(e => { const st = new Date(e.commence_time).getTime(); return st > now + 10 * 60 * 1000 && st <= now + 45 * 60 * 1000; }).length;
+            /* Work this tick = a game whose designated buy time has just come
+               (this tick or the one before, so a failed run gets one retry)
+               and that hasn't started. Games already bought cost nothing —
+               pullDKOdds skips them. */
+            within = (evs || []).filter(e => {
+              const st = new Date(e.commence_time).getTime(), t = dkPullAt(st);
+              return t != null && t <= now && t > now - 60 * 60 * 1000 && st > now + 10 * 60 * 1000;
+            }).length;
             go = within > 0;
           }
         } catch (e) {}
       }
       if (!on) { window.__cronStatus = 'dk: skipped — auto pull is OFF in Board settings'; }
-      else if (!go) { window.__cronStatus = 'dk: skipped — no NFL game entering the pull window (10–45 min before kickoff)'; }
+      else if (!go) { window.__cronStatus = 'dk: skipped — no NFL game at its buy time (Sunday slate 9:00 AM PT; other days 10–45 min before kickoff)'; }
       else {
         await pullDKOdds('auto');
         // publish remaining API quota so the Board can show it next to the toggle

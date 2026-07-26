@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26c';
+var BOARD_BUILD = '2026-07-26d';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -2497,7 +2497,33 @@ async function openSettingsPanel(){
      tick that falls inside its pre-game window. Diamond IQ buys an hour out so
      the lines reach the board with time to spare; the rest buy at 45 minutes. */
   var SCHED_WINDOW = { mlb: 60, nfl: 45, nba: 45, hockey: 45 };
+  /* Gridline buys its Sunday slate in one go at 9:00 AM Pacific — the 9:05
+     run, since the automation ticks at :05 and :35 — instead of trickling in
+     45 minutes before each kickoff. This mirrors dkPullAt() in nfl.html; the
+     two must agree or this schedule would promise a time the app never keeps. */
+  var SCHED_SUNDAY = { nfl: 9 };
+  var schedPtOffset = function(ms){
+    var d = new Date(ms);
+    return new Date(d.toLocaleString('en-US', { timeZone: 'UTC' })) -
+           new Date(d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  };
+  var schedPtWall = function(ms, h){
+    var day = new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }).split('-').map(Number);
+    return Date.UTC(day[0], day[1] - 1, day[2], h, 0) + schedPtOffset(ms);
+  };
+  var schedNextTick = function(t){
+    var top = Math.floor(t / 3600000) * 3600000;
+    if (t <= top + 5 * 60000) return top + 5 * 60000;
+    if (t <= top + 35 * 60000) return top + 35 * 60000;
+    return top + 3600000 + 5 * 60000;
+  };
   var schedTick = function(startMs, app){
+    var sun = SCHED_SUNDAY[app];
+    if (sun != null &&
+        new Date(startMs).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }) === 'Sun'){
+      var t = schedNextTick(schedPtWall(startMs, sun));
+      if (t <= startMs - 10 * 60000) return t;
+    }
     var win = SCHED_WINDOW[app] || 45;
     var from = startMs - win * 60000, to = startMs - 10 * 60000;
     var top = Math.floor(from / 3600000) * 3600000;
@@ -2583,7 +2609,9 @@ async function openSettingsPanel(){
     var out = '';
     if (soon.length){
       out += soon.slice(0, 12).map(function(g){ return schedRow(g, span, st, matchable, app); }).join('');
-      if (soon.length > 12) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (soon.length - 12) + ' more still to come, same rule: one pull each, 10\u2013' + (SCHED_WINDOW[app] || 45) + ' min before ' + verb + '</div>';
+      if (soon.length > 12) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (soon.length - 12) + ' more still to come, same rule: ' +
+        (SCHED_SUNDAY[app] != null ? 'one pull each \u2014 Sunday games all at 9:00 AM, other days 10\u2013' + (SCHED_WINDOW[app] || 45) + ' min before ' + verb
+                                   : 'one pull each, 10\u2013' + (SCHED_WINDOW[app] || 45) + ' min before ' + verb) + '</div>';
     }
     if (past.length){
       out += '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:9px 0 1px">pull time already came</div>' +
