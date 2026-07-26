@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   schedule:
     # Every 30 minutes. Each app checks the FREE events list (0 quota) and
-    # pulls a game's DK lines exactly once, 10-45 minutes before its start -
+    # pulls a game's DK lines exactly once shortly before its start (MLB 10-60
+    # minutes out, the other sports 10-45) -
     # closest to gametime while leaving time to bet. Runs with no game
     # entering the window report "skipped" without touching the odds API.
     - cron: "5,35 * * * *"

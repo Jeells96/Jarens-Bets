@@ -2287,7 +2287,7 @@ async function loadHealthStrip(box){
     (anyFailed ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading run reported an error \u2014 check the repo\u2019s Actions tab.</div>'
      : anyStale ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading pipeline hasn\u2019t run in a while \u2014 check the repo\u2019s Actions tab (runs are every 1\u20132h).</div>'
      : waiting ? '<div class="hint" style="color:var(--dim2);margin-top:4px">Waiting on first heartbeats \u2014 each app records one at the end of its next grading run. Times shown are that app\u2019s last data write until then.</div>'
-     : '<div class="hint" style="color:var(--dim2);margin-top:4px">All pipelines healthy. \u201cRan\u201d is the last completed grading run (a run with nothing new to grade still counts). DK pulls fire 10\u201345 min before games; the Lab runs Sunday mornings.</div>');
+     : '<div class="hint" style="color:var(--dim2);margin-top:4px">All pipelines healthy. \u201cRan\u201d is the last completed grading run (a run with nothing new to grade still counts). DK pulls fire shortly before each game (Diamond IQ an hour out, the rest 45 min); the Lab runs Sunday mornings.</div>');
 }
 async function openSettingsPanel(){
   if (!isOwnerAccount()){
@@ -2415,9 +2415,12 @@ async function openSettingsPanel(){
     { id: 'hockey', name: 'Icing',              league: 'NHL', sport: 'icehockey_nhl',        span: 'day',  onKey: 'hockeyOn',  verb: 'puck drop' }
   ];
   /* The workflow ticks at :05 and :35 every hour; a game is bought on the first
-     tick that falls inside its 10-45 minute pre-game window. */
-  var schedTick = function(startMs){
-    var from = startMs - 45 * 60000, to = startMs - 10 * 60000;
+     tick that falls inside its pre-game window. Diamond IQ buys an hour out so
+     the lines reach the board with time to spare; the rest buy at 45 minutes. */
+  var SCHED_WINDOW = { mlb: 60, nfl: 45, nba: 45, hockey: 45 };
+  var schedTick = function(startMs, app){
+    var win = SCHED_WINDOW[app] || 45;
+    var from = startMs - win * 60000, to = startMs - 10 * 60000;
     var top = Math.floor(from / 3600000) * 3600000;
     for (var i = 0; i < 3; i++){
       var a = top + i * 3600000 + 5 * 60000, b = top + i * 3600000 + 35 * 60000;
@@ -2459,7 +2462,7 @@ async function openSettingsPanel(){
     return { games: n, last: last, when: when };
   };
   var schedRow = function(g, span, st, matchable, app){
-    var tick = schedTick(g.t), rel = tick ? schedIn(tick) : '';
+    var tick = schedTick(g.t, app), rel = tick ? schedIn(tick) : '';
     var when = (span === 'week' ? schedDay(g.t) + ' ' : '') + ptTime(g.t);
     var tickLbl = tick ? 'pull ' + (span === 'week' ? schedDay(tick) + ' ' : '') + ptTime(tick) : 'pull \u2014';
     var got = st && st.when ? st.when[schedKey(g.g)] : null;
@@ -2495,13 +2498,13 @@ async function openSettingsPanel(){
   var schedRows = function(games, verb, span, st, matchable, app){
     var now = Date.now(), soon = [], past = [];
     games.forEach(function(g){
-      var at = g.noPull ? g.t : (schedTick(g.t) || g.t);
+      var at = g.noPull ? g.t : (schedTick(g.t, app) || g.t);
       (at > now ? soon : past).push(g);
     });
     var out = '';
     if (soon.length){
       out += soon.slice(0, 12).map(function(g){ return schedRow(g, span, st, matchable, app); }).join('');
-      if (soon.length > 12) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (soon.length - 12) + ' more still to come, same rule: one pull each, 10\u201345 min before ' + verb + '</div>';
+      if (soon.length > 12) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (soon.length - 12) + ' more still to come, same rule: one pull each, 10\u2013' + (SCHED_WINDOW[app] || 45) + ' min before ' + verb + '</div>';
     }
     if (past.length){
       out += '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:9px 0 1px">pull time already came</div>' +
@@ -2873,7 +2876,7 @@ async function openSettingsPanel(){
     '<div id="stab-dk" style="display:none">' +
     '<div class="sect"><div class="row" id="dkhow-t" style="cursor:pointer"><span class="lbl">How pulls work</span><span class="hint">tap to read \u00b7 quota-safe <span id="dkhow-c">\u25be</span></span></div>' +
     '<div id="dkhow" style="display:none">' +
-    '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once, 10\u201345 minutes before its start</b> \u2014 as close to gametime as possible for the freshest lines, while still leaving time to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
+    '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once</b> shortly before it starts \u2014 <b>10\u201360 minutes</b> out for Diamond IQ, <b>10\u201345</b> for the rest \u2014 close enough to gametime for fresh lines, early enough to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
     '<p class="sub" style="margin:0 0 8px;color:var(--dim2)"><b>What each app pulls when its games hit the window:</b><br>' +
       '\u2022 <b>Diamond IQ Premium</b> \u2014 <b>player props</b> (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks), one call per game, <b>plus MLB game lines</b> (moneyline, total + run-line spread) in one bulk call per wave \u2014 those feed Game Predictions, Game Totals and the Run Line.<br>' +
       '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled \u2014 including <b>receptions</b> and <b>pass TDs</b>, which are graded straight against DraftKings\u2019 line (one call per game).<br>' +
@@ -2885,12 +2888,12 @@ async function openSettingsPanel(){
     '<div id="dksched"><div class="hint">Reading the slate\u2026</div></div>' +
     '<button class="close" id="dksched-rf" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:10px">Refresh the schedule</button></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Just flip a league on or off \u2014 the schedule above handles the rest. Each game is pulled once, 10\u201345 minutes before it starts.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Just flip a league on or off \u2014 the schedule above handles the rest. Each game is pulled once, shortly before it starts (Diamond IQ an hour out, the rest 45 minutes).</p>' +
     '<div class="row" style="margin-bottom:6px"><span class="lbl">Show DK lines to members</span><label class="tog"><input type="checkbox" id="s-dkvis"' + (dk.dkVisible !== false ? ' checked' : '') + '><span></span></label></div>' +
     '<p class="sub" style="margin:0 0 12px">Master switch. Off = no DraftKings info (lines, edges, vs-DK records) is viewable in any app, for anyone.</p>' +
     '<div class="row"><span class="lbl">Diamond IQ \u00b7 props and game lines</span><label class="tog"><input type="checkbox" id="s-pon"' + (dk.premiumOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.premiumCalls, dkStat.premiumAt) +
-    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201345 min before first pitch</b> (one call per game), plus that wave\u2019s moneyline, total + run-line spread in a single bulk call. Once per game.</div>' +
+    '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s player props <b>10\u201360 min before first pitch</b> (one call per game), plus that wave\u2019s moneyline, total + run-line spread in a single bulk call. Once per game \u2014 and the lines are written onto today\u2019s picks the moment they land.</div>' +
     '<div class="row" style="margin-top:10px"><span class="lbl">Gridline \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-non"' + (dk.nflOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.nflCalls, dkStat.nflAt) +
     '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before kickoff</b>, once per game (a Sunday wave lands in one bulk call).</div>' +

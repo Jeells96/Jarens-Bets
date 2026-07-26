@@ -168,7 +168,7 @@ footer{padding:20px 16px;font-size:.62rem;color:var(--mt2);line-height:1.6;borde
     <button class="abtn" style="width:100%;margin-top:10px" onclick="saveThresholds()">Save all league-wide</button>
     <div style="font-size:.62rem;color:var(--mt2);margin-top:6px">Locks gate the tier badges and every success stat. Edges decide when a K/BB pick leans OVER or UNDER vs the DK line. Syncs to everyone.</div>
     <div class="smh">DK LINES — PREMIUM-ONLY PULL</div>
-    <div style="font-size:.62rem;color:var(--mt2);line-height:1.5">Auto-pull runs once when the first person logs in — only if today's lines aren't pulled yet AND it's before 9 AM PT. Past 9am or already pulled: nothing happens automatically. This button works any time.</div>
+    <div style="font-size:.62rem;color:var(--mt2);line-height:1.5">Lines are bought automatically, once per game, 10–60 minutes before its first pitch — and written straight onto today's picks. This button pulls any game that is inside that window right now; games further out have nothing posted yet.</div>
     <div class="inrow">
       <button class="abtn" style="flex:1" onclick="manualPullDK()">Pull DK lines now</button>
     </div>
@@ -889,7 +889,9 @@ async function fetchLeagueGameOdds(date){
   try{
     const doc=await withTO(FBH.db.collection('app_settings').doc('odds_'+date).get(),8000);
     if(!doc.exists)return;
+    const docAt=doc.data().fetchedAt??null;
     (doc.data().games||[]).forEach(g=>{
+      if(!dkPreGame({commence_time:g.commence_time,fetchedAt:g.dkAt??null}))return; // bought after first pitch: not ours to use
       const markets=g.bookmakers?.[0]?.markets||g.markets||[];
       const out={home_team:g.home_team,away_team:g.away_team,ml:null,total:null,spread:null};
       markets.forEach(m=>{
@@ -916,6 +918,11 @@ const amerProb=p=>p==null?null:(p<0?(-p)/((-p)+100):100/(p+100));
    same props_{date} doc shape, so both sites keep reading identically. ── */
 const ODDS_API_KEY='370bfb0e8958dcfc4e4880fedfb548b1';
 const PLAYER_PROP_MARKETS=['batter_total_bases','batter_walks','batter_strikeouts','pitcher_strikeouts','pitcher_hits_allowed','pitcher_walks'];
+/* How far out MLB buys its DraftKings numbers: a game is bought once, on the
+   first half-hourly tick that falls between 10 and this many minutes before
+   first pitch. An hour out gives the lines time to reach the board and gives
+   you time to place the bet; the other sports still buy at 45. */
+const DK_WINDOW_MIN=60;
 let ODDSP={date:null,events:null},DK_CALLS=null;
 
 function ptNow(){return new Date(new Date().toLocaleString('en-US',{timeZone:'America/Los_Angeles'}));}
@@ -963,8 +970,8 @@ async function fetchDKPropsAndPush(date,onProg){
        a 7pm PT first pitch is 02:00 UTC the NEXT day, so a local-date compare
        silently dropped every evening game — which is most of the slate. */
     const ptDay=iso=>{ try { return new Date(iso).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'}); } catch(e){ return ''; } };
-    const dateEvents=events.filter(ev=>ev.commence_time&&ptDay(ev.commence_time)===date).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now+10*60*1000&&st<=now+45*60*1000;}); // pull window: 10–45 min before first pitch — closest to gametime with time left to bet
-    if(!dateEvents.length)return{ok:false,reason:'no MLB games entering the pull window (10\u201345 min before first pitch)',windowGames:[]};
+    const dateEvents=events.filter(ev=>ev.commence_time&&ptDay(ev.commence_time)===date).filter(ev=>{const st=new Date(ev.commence_time).getTime();const now=Date.now();return st>now+10*60*1000&&st<=now+DK_WINDOW_MIN*60*1000;}); // pull window: 10–60 min before first pitch — an hour out, with time left to bet
+    if(!dateEvents.length)return{ok:false,reason:'no MLB games entering the pull window (10\u2013'+DK_WINDOW_MIN+' min before first pitch)',windowGames:[]};
     // QUOTA SAVER: player props cost one API call PER GAME. Read what we've
     // already pulled for this date and fetch ONLY games we don't have yet, so
     // repeated scheduled runs never re-pull the same game. Each game's props
@@ -1055,7 +1062,10 @@ async function fetchDKGameOddsAndPush(date,windowGames,onProg){
     if(rem!=null)DK_CALLS=parseInt(rem,10);
     if(!res.ok)throw new Error('odds API '+res.status);
     const arr=await res.json();
-    const add=(arr||[]).filter(ev=>want[keyOf(ev)]);
+    const nowAt=Date.now();
+    // stamp each game with the moment IT was bought — the doc-level fetchedAt is
+    // the last write and says nothing about a game added in an earlier wave
+    const add=(arr||[]).filter(ev=>want[keyOf(ev)]).map(ev=>Object.assign({},ev,{dkAt:nowAt}));
     if(!add.length)return{ok:true,count:0,reason:'no DK lines posted for those games yet'};
     const games=existing.concat(add);
     if(FBH.ready){
@@ -1100,6 +1110,86 @@ async function maybeAutoPullDK(){
   const r=await fetchDKPropsAndPush(date,prog);
   if(r.ok)prog(`DK lines pulled for the league (${r.count} games · ${r.calls??'?'} API calls left)`);
 }
+/* THE PULL FINISHES THE JOB.
+   Picks are generated hourly; DK lines are bought 10-60 minutes before first
+   pitch. Waiting for the next picks run to marry the two can miss first pitch
+   entirely, so the moment a pull lands it writes those lines onto the day's
+   SAVED board itself. The model is never re-run here: only DraftKings fields
+   are filled, only where the board has none, and edge/lean are re-derived from
+   the projection already frozen on the row. Rows the pull can't speak for are
+   left exactly as they were. */
+async function attachDkLinesToStoredDay(date){
+  if(!FBH.ready)return{patched:0,made:0};
+  /* Read the day's props ourselves rather than trusting whatever the pull left
+     in memory: three of fetchDKPropsAndPush's exits return without setting it
+     (nothing in the window, every per-game request failed, or it threw). Doing
+     our own read also makes EVERY half-hourly tick a repair opportunity for the
+     whole day's board, not just the tick that happened to buy something. */
+  if(!ODDSP.events||ODDSP.date!==date)await fetchLeagueProps(date);
+  const remote=await fbPull(date);
+  if(!remote||!remote.mk)return{patched:0,made:0};
+  const mk=remote.mk;
+  const PROP_MK={tb:'batter_total_bases',kB:'batter_strikeouts',bbB:'batter_walks',
+                 kP:'pitcher_strikeouts',bbP:'pitcher_walks',phA:'pitcher_hits_allowed'};
+  const TH={kP:CONFIG.kEdge??0.7,bbP:CONFIG.bbEdge??0.35,kB:CONFIG.kEdge??0.7,bbB:CONFIG.bbEdge??0.35,
+            tb:CONFIG.tbEdge??0.45,phA:CONFIG.phEdge??0.9};
+  let patched=0,made=0;
+  Object.keys(PROP_MK).forEach(m=>{
+    (mk[m]||[]).forEach(r=>{
+      if(!r||r.line!=null||r.exp==null||!r.name)return;
+      const dk=propFor(r.name,PROP_MK[m]);
+      if(!dk||dk.line==null)return;
+      r.line=dk.line;
+      if(dk.over!==undefined)r.pOver=dk.over??null;
+      if(dk.under!==undefined)r.pUnder=dk.under??null;
+      r.edge=Math.round((r.exp-dk.line)*100)/100;
+      r.lean=leanFor(r.exp,dk.line,TH[m]??0.5);
+      patched++;
+    });
+  });
+  // game lines: the moneyline and total onto the game row, and the two game
+  // markets that cannot exist at all until DraftKings posts a number
+  const byId={};(mk.gmT||[]).forEach(r=>byId['T'+r.id]=r);(mk.gmR||[]).forEach(r=>byId['R'+r.id]=r);
+  (mk.gm||[]).forEach(r=>{
+    if(!r||!r.hName||!r.aName)return;   // older boards carry no team names: they heal on the next picks run
+    const od=GAMEODDS.find(o=>o.home_team===r.hName&&o.away_team===r.aName);
+    if(!od)return;
+    if(r.mlPrice==null&&od.ml){
+      const price=r.pick===r.team?od.ml.home:od.ml.away;
+      const pickProb=r.hwp==null?null:(r.pick===r.team?r.hwp:1-r.hwp);
+      const imp=amerProb(price);
+      if(price!=null){r.mlPrice=price;patched++;}
+      if(pickProb!=null&&imp!=null){
+        r.mlEdge=Math.round((pickProb-imp)*1000)/1000;
+        r.mlLean=r.mlEdge>=0.04?'VALUE':'\u2014';
+      }
+    }
+    if(r.totLine==null&&od.total&&od.total.point!=null){
+      r.totLine=od.total.point;patched++;
+      if(r.total!=null){
+        const d=r.total-od.total.point;
+        r.totLean=d>=0.6?'OVER':d<=-0.6?'UNDER':'\u2014';
+      }
+    }
+    if(od.total&&od.total.point!=null&&r.total!=null&&!byId['T'+('g'+r.id)]){
+      mk.gmT=mk.gmT||[];
+      mk.gmT.push({id:'g'+r.id,name:r.name,team:r.team,opp:r.opp,pit:'',verified:!!r.verified,
+        exp:r.total,line:od.total.point,lean:leanFor(r.total,od.total.point,CONFIG.gtEdge??0.6),
+        edge:Math.round((r.total-od.total.point)*100)/100});
+      made++;
+    }
+    if(od.spread&&od.spread.home!=null&&r.eH!=null&&r.eA!=null&&!byId['R'+('g'+r.id)]){
+      const rl=-od.spread.home,margin=Math.round((r.eH-r.eA)*100)/100;
+      mk.gmR=mk.gmR||[];
+      mk.gmR.push({id:'g'+r.id,name:r.name,team:r.team,opp:r.opp,pit:'',verified:!!r.verified,
+        exp:margin,line:rl,hSpread:od.spread.home,pOver:od.spread.hPrice??null,pUnder:od.spread.aPrice??null,
+        lean:leanFor(margin,rl,CONFIG.grEdge??0.75),edge:Math.round((margin-rl)*100)/100});
+      made++;
+    }
+  });
+  if(patched||made)await fbPush(date,{mk:mk,ts:Date.now()});
+  return{patched,made};
+}
 async function fetchLeagueProps(date){
   ODDSP={date,events:null};
   if(!FBH.ready)return;
@@ -1108,12 +1198,27 @@ async function fetchLeagueProps(date){
     if(doc.exists)ODDSP.events=doc.data().events||null;
   }catch(e){}
 }
+/* A DraftKings number may only be attached to a pick if it was bought BEFORE
+   that game started. The scheduled pull only ever buys inside the pre-game
+   window, so this can't fail in practice — but it is checked rather than
+   assumed, because a line captured after first pitch would be hindsight and
+   would inflate the vs-DK record. Docs written before stamps existed are
+   trusted: nothing but the pre-game window ever wrote them. */
+function dkPreGame(rec){
+  try{
+    const st=rec&&rec.commence_time?new Date(rec.commence_time).getTime():null;
+    const at=rec&&rec.fetchedAt!=null?+rec.fetchedAt:null;
+    if(st==null||at==null||!isFinite(st)||!isFinite(at))return true;
+    return at<st;
+  }catch(e){return true;}
+}
 function propFor(name,key){
   if(typeof window!=='undefined' && window.__DK_OK===false) return null; // DK hidden by the Board
   if(!ODDSP.events)return null;
   const norm=x=>(x||'').toLowerCase().replace(/[^a-z]/g,'');
   const t=norm(name);
   for(const id in ODDSP.events){
+    if(!dkPreGame(ODDSP.events[id]))continue;
     for(const m of (ODDSP.events[id].markets||[])){
       if(m.key!==key)continue;
       const os=(m.outcomes||[]).filter(o=>norm(o.description)===t);
@@ -1123,6 +1228,49 @@ function propFor(name,key){
     }
   }
   return null;
+}
+/* LOCK RULE, and the one thing it must NOT freeze.
+   A verified row keeps the model exactly as it was when the lineup posted —
+   that is the walk-forward promise. But DraftKings lines are bought 10-60
+   minutes before first pitch, long AFTER a lineup confirms, so for most of
+   the day the locked row has no line at all. Freezing that too meant the
+   line never arrived: every O/U market showed "NO LINE" and graded nothing.
+   So the market side is allowed to land on a locked row — projection frozen,
+   edge and lean re-derived from that FROZEN projection against the new line,
+   and a line already stored is never overwritten. */
+const DK_EDGE_TH={kP:'kEdge',bbP:'bbEdge',kB:'kEdge',bbB:'bbEdge',tb:'tbEdge',phA:'phEdge',gmT:'gtEdge',gmR:'grEdge'};
+const DK_EDGE_DEF={kEdge:0.7,bbEdge:0.35,tbEdge:0.45,gtEdge:0.6,phEdge:0.9,grEdge:0.75};
+const dkTh=m=>{const k=DK_EDGE_TH[m];return k?(CONFIG[k]??DK_EDGE_DEF[k]??0.5):0.5;};
+function dkMerge(m,merged,fresh){
+  if(!fresh)return merged;
+  if(m==='gm'){
+    if(merged.mlPrice==null&&fresh.mlPrice!=null){
+      merged.mlPrice=fresh.mlPrice;
+      const pickProb=merged.hwp==null?null:(merged.pick===merged.team?merged.hwp:1-merged.hwp);
+      const imp=amerProb(fresh.mlPrice);
+      if(pickProb!=null&&imp!=null){
+        merged.mlEdge=Math.round((pickProb-imp)*1000)/1000;
+        merged.mlLean=merged.mlEdge>=0.04?'VALUE':'\u2014';
+      }
+    }
+    if(merged.totLine==null&&fresh.totLine!=null){
+      merged.totLine=fresh.totLine;
+      if(merged.total!=null){
+        const d=merged.total-fresh.totLine;
+        merged.totLean=d>=0.6?'OVER':d<=-0.6?'UNDER':'\u2014';
+      }
+    }
+    return merged;
+  }
+  if(merged.line==null&&fresh.line!=null&&merged.exp!=null){
+    merged.line=fresh.line;
+    if(fresh.pOver!==undefined)merged.pOver=fresh.pOver??null;
+    if(fresh.pUnder!==undefined)merged.pUnder=fresh.pUnder??null;
+    if(fresh.hSpread!==undefined)merged.hSpread=fresh.hSpread??null;
+    merged.edge=Math.round((merged.exp-merged.line)*100)/100;
+    merged.lean=leanFor(merged.exp,merged.line,dkTh(m));
+  }
+  return merged;
 }
 function leanFor(exp,line,th){
   if(line==null)return null;
@@ -1695,7 +1843,7 @@ async function loadDay(){
         const d=g.total-totLine;
         totLean=d>=0.6?'OVER':d<=-0.6?'UNDER':'—';
       }
-      MK.gm.push({id:gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,
+      MK.gm.push({id:gj.gamePk,name:gj.aAb+' @ '+gj.hAb,team:gj.hAb,opp:gj.aAb,hName:gj.hName,aName:gj.aName,
         pick:pickHome?gj.hAb:gj.aAb,hwp:Math.round(g.hWP*1000)/1000,
         conf:Math.round(modelPickProb*1000)/1000,
         eA:Math.round(g.eA*10)/10,eH:Math.round(g.eH*10)/10,total:g.total,
@@ -1785,7 +1933,7 @@ async function loadDay(){
           merged.gradeFlag=true;
           merged.freshProb=Math.round(r.prob*1000)/1000;
         }
-        return merged;
+        return dkMerge(m,merged,r);
       });
       Object.values(pm).forEach(r=>{if(!seenM.has(r.id))MK[m].push({...r,locked:true,reasons:r.reasons||null});});
     });
@@ -1797,6 +1945,7 @@ async function loadDay(){
     const compact=ROWS.map(r=>({id:r.id,name:r.name,team:r.team,opp:r.opp,slot:r.slot,pit:r.pit,pHand:r.pHand,verified:!!r.verified,prob:r.prob!=null?Math.round(r.prob*1000)/1000:null,autoVerified:!!r.autoVerified,gradeFlag:!!r.gradeFlag,unscored:!!r.unscored}));
     const mkCompact={};
     mkCompact.gm=MK.gm.map(r=>({id:r.id,name:r.name,team:r.team,opp:r.opp,pick:r.pick,
+      hName:r.hName??null,aName:r.aName??null,
       hwp:r.hwp,conf:r.conf,eA:r.eA,eH:r.eH,total:r.total,
       mlEdge:r.mlEdge,mlLean:r.mlLean,mlPrice:r.mlPrice??null,totLine:r.totLine,totLean:r.totLean,verified:!!r.verified}));
     Object.keys(MK).filter(m=>m!=='gm').forEach(m=>{
@@ -3115,15 +3264,26 @@ async function runLabPrem(){
         try{const doc=await withTO(FBH.db.collection('app_settings').doc('dk_auto').get(),8000);if(doc.exists)c=doc.data();}catch(e){}
         const on=c.premiumOn!==false; // default ON until the Board says otherwise
         // No day/hour schedule: fetchDKPropsAndPush only pulls games entering the
-        // 10\u201345-minute pre-pitch window, once each \u2014 the half-hourly cron
+        // pre-pitch window (MLB: 10\u201360 min), once each \u2014 the half-hourly cron
         // self-paces with zero waste and freezes lines closest to gametime.
         if(!on){window.__cronStatus='dk: skipped — auto pull is OFF in Board settings';}
         else{
           const r=await fetchDKPropsAndPush(todayStr(),m=>{window.__cronStatus='dk: '+String(m||'working…');});
           let gl={count:0};
           try{ gl=await fetchDKGameOddsAndPush(todayStr(),r.windowGames||[],m=>{window.__cronStatus='dk: '+String(m||'working…');}); }catch(e){}
-          if(r.ok)window.__cronStatus='dk: done — '+r.count+' game(s) of props + '+(gl.count||0)+' game line(s) pulled ('+(r.calls??'?')+' API calls left)';
-          else window.__cronStatus='dk: nothing pulled — '+(r.reason||'unknown')+(gl.count?' (but '+gl.count+' game line(s) pulled)':'');
+          /* Marry the new lines to today's saved picks NOW. Left to the hourly
+             picks run, a line bought at :35 for a 4:11 first pitch could reach
+             the board after the game had already started \u2014 too late to bet,
+             and nothing to grade against. */
+          let at={patched:0,made:0};
+          try{
+            await cfgPull();
+            await fetchLeagueGameOdds(todayStr());
+            at=await attachDkLinesToStoredDay(todayStr());
+          }catch(e){}
+          const atNote=(at.patched||at.made)?' \u00b7 wrote '+at.patched+' line(s)'+(at.made?' + '+at.made+' new game market row(s)':'')+' onto today\u2019s board':'';
+          if(r.ok)window.__cronStatus='dk: done — '+r.count+' game(s) of props + '+(gl.count||0)+' game line(s) pulled ('+(r.calls??'?')+' API calls left)'+atNote;
+          else window.__cronStatus='dk: nothing pulled — '+(r.reason||'unknown')+(gl.count?' (but '+gl.count+' game line(s) pulled)':'')+atNote;
         }
       }catch(e){window.__cronStatus='dk: ERROR — '+(e&&e.message||e);}
       window.__cronDone=true;

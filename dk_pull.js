@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /* Jaren's Bets — scheduled DK pulls (GitHub Actions)
-   Loads Premium (MLB props) and Gridline (NFL odds) with ?cron=dk. Each page
-   reads the Board's settings doc (app_settings/dk_auto) and pulls ONLY if its
-   toggle is on and the current Eastern hour is in its configured list — so
-   this workflow can run hourly while API quota is spent exactly on Jaren's
-   schedule. A skipped hour reports "skipped", not failure. */
+   Loads each app with ?cron=dk. Every page reads the Board's settings doc
+   (app_settings/dk_auto) and pulls ONLY if its toggle is on and one of its
+   games has entered the pre-game window: Diamond IQ buys 10-60 minutes before
+   first pitch, the other sports 10-45 before their start. Each game is bought
+   once. A tick with no game in any window reports "skipped", not failure, and
+   spends no API quota. */
 
 const { chromium } = require('playwright');
 

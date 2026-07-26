@@ -1063,7 +1063,8 @@ async function runCronDkPull(){
         c = { on: f.hockeyOn ? f.hockeyOn.booleanValue !== false : true }; }
     } catch (e) {}
     const on = c.on !== false;
-    // No day/hour schedule: only games within 2h of puck drop are pulled, once each.
+    // No day/hour schedule: only games inside the window (10–45 min before
+    // puck drop) are pulled, once each.
     if (!on){ window.__cronStatus = 'dk: skipped — NHL auto pull is OFF'; window.__cronDone = true; return; }
     const date = todayPT();
     // Build fullName -> abbr from ESPN so DK's full team names map to our abbreviations

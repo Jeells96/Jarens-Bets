@@ -1481,7 +1481,8 @@ async function runCronDkPull(){
     let games = [];
     try { const sb = await fetch(ESPN.scoreboard(toESPN(date)), { cache: 'no-store' }); if (sb.ok) games = parseScoreboard(await sb.json()); } catch (e) {}
     if (!games.length){ window.__cronStatus = 'dk: no NBA games ' + date; window.__cronDone = true; return; }
-    // Pull only games within 2h of tip that we don't already have — once per game.
+    // Pull only games inside the window (10–45 min before tip) that we don't
+    // already have — once per game.
     let existing = {};
     try { const cur = await fbRead(FB_DK, date); if (cur && cur.games) existing = cur.games; } catch (e) {}
     const now = Date.now();

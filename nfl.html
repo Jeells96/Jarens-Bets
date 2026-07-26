@@ -2060,7 +2060,8 @@ async function pullDKOdds(reason, opts) {
       const events = await evRes.json();
       logEvent('info', 'DK', events.length + ' events for player-prop scan');
       // Dedup: carry over player props we already have, and only fetch games
-      // within 2h of kickoff that we don't have yet — once per game.
+      // inside the pull window (10–45 min before kickoff) that we don't have
+      // yet — once per game.
       let priorByEvent = {};
       try { const pd = await fsGetDoc('gridline/dkOdds'); if (pd && pd.byEvent) priorByEvent = pd.byEvent; } catch (e) {}
       const PROP_WIN = 2 * 3600 * 1000;
@@ -6115,8 +6116,9 @@ if (new URLSearchParams(location.search).get('cron') === 'dk') {
         }
       } catch (e) {}
       const on = c.nflOn !== false;
-      // Unified pull window: each game's lines are frozen ONCE, 10–45 minutes
-      // before its kickoff — closest to gametime with time left to bet. The
+      // Pull window: each game's lines are frozen ONCE, 10–45 minutes before
+      // its kickoff — closest to gametime with time left to bet. (Diamond IQ
+      // buys an hour out; every other sport buys at 45.) The
       // free events list (0 API cost) decides whether this half-hour has work.
       let go = false, within = 0;
       if (on) {
