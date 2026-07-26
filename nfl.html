@@ -5600,6 +5600,38 @@ function gbRowHtml(row, grey) {
     (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.68rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why +
       '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
 }
+/* TAP THE WEEK TO JUMP. Dates mean nothing here — you think in weeks — so
+   this is Week 1-18, not a calendar. A transparent <select> lies over the
+   title, which opens the iPhone's own wheel. Same gesture as the date jump in
+   the other apps. */
+function weekJumpHtml(label) {
+  let opts = '';
+  const cur = GB.resolved && GB.resolved.week;
+  for (let w = 1; w <= 18; w++) {
+    opts += '<option value="' + w + '"' + (w === state.week ? ' selected' : '') + '>Week ' + w +
+      (w === cur ? ' \u00b7 this week' : '') + '</option>';
+  }
+  return '<span style="position:relative;display:inline-block;cursor:pointer">' + label +
+    '<span style="opacity:.45;font-size:.6em;margin-left:5px;vertical-align:middle">\u25be</span>' +
+    '<select class="weekjump" aria-label="Jump to a week"' +
+      ' style="position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
+      '-webkit-appearance:none;appearance:none;font:inherit;cursor:pointer">' + opts + '</select></span>';
+}
+function wireWeekJump(main) {
+  main.querySelectorAll('.weekjump').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      const w = parseInt(sel.value, 10);
+      if (!w || w === state.week) return;
+      state.week = w;
+      const ws = document.getElementById('week');
+      if (ws) ws.value = w;
+      GB.open = {}; GB.why = null; GB.err = null;
+      delete GB.tried[gbKey()];
+      logEvent('info', 'ui', 'bets week jump \u2192 W' + w);
+      gbEnsure();
+    });
+  });
+}
 // n === 0 means "put me back on the week that's actually on" — same as the
 // today button on every other app's Bets page.
 function gbShiftWeek(n) {
@@ -5631,11 +5663,12 @@ function wireMyb(main) {
 }
 function gbWireNav(main) {
   main.querySelectorAll('.gbnav').forEach(b => b.addEventListener('click', () => gbShiftWeek(parseInt(b.getAttribute('data-n'), 10))));
+  wireWeekJump(main);
 }
 function renderGameBets(main) {
   let html = '<div class="bcard" style="padding:15px 16px 12px;border-color:rgba(255,93,93,.35)">' +
     '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:#ff5d5d;text-transform:uppercase">Game week · NFL</div>' +
-    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + state.season + ' · Week ' + state.week + '</div>' +
+    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + weekJumpHtml(state.season + ' · Week ' + state.week) + '</div>' +
     '<div style="font-size:.72rem;color:rgba(255,255,255,.5)">Gridline · every pick graded walk-forward</div>' +
     '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px;font-size:.68rem;color:rgba(255,255,255,.5)">' +
       '<span><b style="color:#ff5d5d">##</b> = confidence grade</span>' +

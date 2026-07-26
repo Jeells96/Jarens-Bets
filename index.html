@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26b';
+var BOARD_BUILD = '2026-07-26c';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -3638,6 +3638,36 @@ function slShiftDay(n){
   SL_CACHE = null;
   refreshSuperLocks(true);
 }
+/* TAP THE DATE TO JUMP — a transparent native date input over the date you're
+   already looking at, so it opens the iPhone's own wheel. Not showPicker() as
+   the primary path (Safari 16+, and it throws without a gesture in some
+   engines); showPicker is only a desktop nicety below.
+
+   max is TODAY on purpose: Super Locks grades the past, and there is nothing
+   to show for a day that hasn't happened — slShiftDay already refuses to go
+   forward, so the picker must not offer it either. */
+function slJumpHtml(value,label){
+  return '<span style="position:relative;display:inline-block;cursor:pointer">' + label +
+    '<span style="opacity:.45;font-size:.6em;margin-left:5px;vertical-align:middle">\u25be</span>' +
+    '<input type="date" class="sljump" value="' + esc(value) + '" min="' + slAddDays(slTodayPT(), -370) + '"' +
+      ' max="' + slTodayPT() + '" aria-label="Jump to a date"' +
+      ' style="position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
+      '-webkit-appearance:none;appearance:none;font:inherit;cursor:pointer">' +
+    '</span>';
+}
+function wireSlJump(el){
+  el.querySelectorAll('.sljump').forEach(function(i){
+    i.addEventListener('change', function(){
+      if (!i.value) return;
+      if (i.value > slTodayPT()) return;            // nothing is graded ahead
+      // the picker's value IS our day id — parsing it would land a day early in PT
+      SL_DATE = (i.value === slTodayPT()) ? null : i.value;
+      SL_CACHE = null;
+      refreshSuperLocks(true);
+    });
+    i.addEventListener('click', function(){ try { if (i.showPicker) i.showPicker(); } catch (e) {} });
+  });
+}
 function slPrettyDate(d){
   try { return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }); }
   catch (e){ return d; }
@@ -3890,6 +3920,7 @@ async function refreshSuperLocks(force){
   if (SL_CACHE){
     el.innerHTML = '<div style="padding:0 0 10px;font-size:12.5px;color:var(--dim2)">↻ Updating to the latest grades…</div>' + SL_CACHE;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    wireSlJump(el);
     el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   }
   else el.innerHTML = '<div style="padding:20px 0;font-size:13px;color:var(--dim2)">Reading every app’s graded record… takes a few seconds.</div>';
@@ -3935,7 +3966,7 @@ async function refreshSuperLocks(force){
       '<div style="background:linear-gradient(180deg,var(--panel),var(--face));border:1px solid ' + (past ? 'var(--hair)' : 'rgba(245,182,66,.45)') + ';border-radius:16px;padding:16px 17px 13px;margin:2px 0 14px">' +
       '<div style="font:800 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.22em;text-transform:uppercase;color:' + (past ? 'var(--dim)' : 'var(--bulb)') + '">' +
         (past ? 'Results · how the super locks did' : '⚡ Super Locks · live') + '</div>' +
-      '<div style="font-weight:900;font-size:24px;letter-spacing:-.01em;margin:5px 0 2px">' + esc(slPrettyDate(dShown)) + '</div>' +
+      '<div style="font-weight:900;font-size:24px;letter-spacing:-.01em;margin:5px 0 2px">' + slJumpHtml(dShown, esc(slPrettyDate(dShown))) + '</div>' +
       '<div style="font-size:13px;line-height:1.45;color:var(--dim2)">' + (past
         ? (graded ? '<b style="color:' + (hits * 2 >= graded ? '#7fd99a' : '#ff7a7a') + '">' + hits + '/' + graded + ' hit</b> · ' + Math.round(100 * hits / Math.max(1, graded)) + '% of that day’s super locks'
                   : 'Nothing graded on this date.')
@@ -4029,12 +4060,14 @@ async function refreshSuperLocks(force){
     SL_CACHE = html;
     el.innerHTML = html;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    wireSlJump(el);
     el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   } catch (e){
     el.innerHTML = '<button class="slback" style="display:block;width:100%;background:var(--panel);border:1px solid var(--hair);color:var(--bone);border-radius:10px;padding:10px 0;font:700 13px/1 inherit;cursor:pointer;margin:0 0 10px">\u2039 Back to the Board</button>' +
       '<div class="statusline" style="padding:20px 0;color:#ff7a7a">Couldn’t load Super Locks — ' + esc(e && e.message || 'network error') + '. Tap the button above to go back, or the gold button to retry.</div>' +
       (SL_DATE ? '<button class="slnav" data-n="0" style="width:100%;background:var(--panel);border:1px solid var(--hair);color:var(--bulb);border-radius:10px;padding:9px 0;font:700 12.5px/1 inherit;cursor:pointer">back to today</button>' : '');
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    wireSlJump(el);
     el.querySelectorAll('.slback').forEach(function(b){ b.addEventListener('click', function(){ showView('board'); }); });
   } finally { refreshSuperLocks._busy = false; }
 }

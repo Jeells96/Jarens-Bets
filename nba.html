@@ -2587,6 +2587,28 @@ function nbRowHtml(row, grey){
     '<div style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'var(--muted)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</div></div>' +
     (NB.why === row.tok ? '<div class="small" style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;color:var(--muted);line-height:1.5">' + row.why + '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
 }
+/* TAP THE DATE TO JUMP — a transparent native date input sits over the date
+   you're already looking at, so tapping it opens the iPhone's own wheel. Not
+   showPicker() as the primary path: that needs Safari 16+ and throws without a
+   gesture in some engines. The picker emits YYYY-MM-DD, which is already our
+   day id, so it is used as-is — running it back through new Date() would land
+   on the day before in Pacific time. */
+function jumpHtml(value, cls, min, max, label){
+  return '<span style="position:relative;display:inline-block;cursor:pointer">' + label +
+    '<span style="opacity:.45;font-size:.6em;margin-left:5px;vertical-align:middle">\u25be</span>' +
+    '<input type="date" class="' + cls + '" value="' + value + '"' +
+      (min ? ' min="' + min + '"' : '') + (max ? ' max="' + max + '"' : '') +
+      ' aria-label="Jump to a date"' +
+      ' style="position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
+      '-webkit-appearance:none;appearance:none;font:inherit;cursor:pointer">' +
+    '</span>';
+}
+function wireJump(el, cls, onPick){
+  el.querySelectorAll('.' + cls).forEach(function(i){
+    i.addEventListener('change', function(){ if (i.value) onPick(i.value); });
+    i.addEventListener('click', function(){ try { if (i.showPicker) i.showPicker(); } catch (e) {} });
+  });
+}
 function nbShiftDay(n){
   state.slateDate = n === 0 ? todayPT() : addDays(state.slateDate, n);
   NB.open = {}; NB.why = null;
@@ -2614,7 +2636,7 @@ function renderBets(){
   const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:var(--text,#fff);border-radius:9px;padding:7px 0;font-size:.72rem;font-weight:700;cursor:pointer';
   let html = '<div class="card" style="border-color:rgba(255,93,93,.35)">' +
     '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:#ff5d5d;text-transform:uppercase">' + kick + '</div>' +
-    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + pretty + '</div>' +
+    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + jumpHtml(ds, 'nbjump', addDays(todayPT(), -370), addDays(todayPT(), 1), pretty) + '</div>' +
     '<div class="small muted">The Key · every pick graded walk-forward</div>' +
     '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px" class="small muted">' +
       '<span><b style="color:#ff5d5d">##</b> = confidence grade</span>' +
@@ -2634,6 +2656,7 @@ function renderBets(){
     el.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); renderBets(); }); });
 
     Array.prototype.forEach.call(el.querySelectorAll('.nbnav'), function(b){ b.addEventListener('click', function(){ nbShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });
+    wireJump(el, 'nbjump', function(v){ state.slateDate = v; NB.open = {}; NB.why = null; closeGame(); renderBets(); });
     Array.prototype.forEach.call(el.querySelectorAll('.nbhead'), function(h){ h.addEventListener('click', function(){ const k = h.getAttribute('data-k'); NB.open[k] = !NB.open[k]; renderBets(); }); });
     Array.prototype.forEach.call(el.querySelectorAll('.nbname'), function(nm){ nm.addEventListener('click', function(e){ e.stopPropagation(); const tok = nm.getAttribute('data-tok'); NB.why = NB.why === tok ? null : tok; renderBets(); }); });
   };

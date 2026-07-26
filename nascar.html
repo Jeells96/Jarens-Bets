@@ -697,6 +697,36 @@ function trackLabel(t){ return { super: 'Superspeedway', inter: 'Intermediate', 
 /* Race advancer: state.betsDate = null (this week's race) or a stored past
    race date. Past races re-project walk-forward (only races BEFORE that date)
    and show the real finish as a green check / red cross on every pick. */
+/* TAP THE RACE NAME TO JUMP. Days mean nothing here — you think in races — so
+   this is a list of the races we have, not a calendar. A transparent <select>
+   lies over the race name, which opens the iPhone's own wheel. Same gesture as
+   the date jump in the other apps. */
+function raceJumpHtml(label){
+  const dates = allRecDates();
+  let opts = '<option value=""' + (state.betsDate ? '' : ' selected') + '>This week\u2019s race</option>';
+  for (let i = dates.length - 1; i >= 0; i--){
+    const d = dates[i];
+    const recs = loadRecs(d) || [];
+    const nm = (recs[0] && recs[0].race) || '';
+    const pretty = (function(){ try { return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e){ return d; } })();
+    const name = officialRaceName(nm, d) || nm || 'Race';
+    opts += '<option value="' + d + '"' + (state.betsDate === d ? ' selected' : '') + '>' + esc(name + ' \u00b7 ' + pretty) + '</option>';
+  }
+  return '<span style="position:relative;display:inline-block;cursor:pointer">' + label +
+    '<span style="opacity:.45;font-size:.6em;margin-left:5px;vertical-align:middle">\u25be</span>' +
+    '<select class="racejump" aria-label="Jump to a race"' +
+      ' style="position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
+      '-webkit-appearance:none;appearance:none;font:inherit;cursor:pointer">' + opts + '</select></span>';
+}
+function wireRaceJump(el){
+  el.querySelectorAll('.racejump').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      state.betsDate = sel.value || null;   // '' = back to the upcoming race
+      state.betsOpen = {}; state.whyOpen = null;
+      renderBets();
+    });
+  });
+}
 function betsShiftRace(n){
   const dates = allRecDates();
   const cur = state.betsDate;
@@ -781,6 +811,7 @@ function renderBets(){
     el.innerHTML = '<div class="card muted small">Not enough history before that race to re-project it.</div>' +
       '<div class="card"><button class="btn ghost betsnav" data-n="0" style="width:100%">Back to this week\u2019s race</button></div>';
     el.querySelectorAll('.betsnav').forEach(function(b){ b.addEventListener('click', function(){ betsShiftRace(parseInt(b.getAttribute('data-n'), 10)); }); });
+    wireRaceJump(el);
     return;
   }
   if (!up){
@@ -815,7 +846,7 @@ function renderBets(){
   const navBtn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid var(--hair2);color:var(--tx);border-radius:9px;padding:7px 0;font-size:11.5px;font-weight:700;cursor:pointer';
   let html = '<div class="card" style="padding:15px 16px 12px;border-color:rgba(255,77,79,.35)">' +
     '<div style="font-size:10.5px;font-weight:800;letter-spacing:.2em;color:var(--speed);text-transform:uppercase">' + (past ? 'Past race' : 'Race week') + ' · ' + trackLabel(up.trackType) + '</div>' +
-    '<div style="font-weight:900;font-size:23px;letter-spacing:-.01em;margin:3px 0 1px">' + esc(hdrName) + '</div>' +
+    '<div style="font-weight:900;font-size:23px;letter-spacing:-.01em;margin:3px 0 1px">' + raceJumpHtml(esc(hdrName)) + '</div>' +
     '<div class="small dim">' + esc(raceDate) + (hdrSub ? ' · ' + hdrSub : '') + '</div>' +
     '<div class="small dim" style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid var(--hair2);padding-top:9px">' +
       '<span><b style="color:var(--lock)">##</b> = confidence grade</span>' +
@@ -885,6 +916,7 @@ function renderBets(){
   if (mh) mh.addEventListener('click', function(){ state.mybOpen = !state.mybOpen; renderBets(); });
   el.querySelectorAll('.mybdel').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); mybDel(b.getAttribute('data-key')); renderBets(); }); });
   el.querySelectorAll('.betsnav').forEach(function(b){ b.addEventListener('click', function(){ betsShiftRace(parseInt(b.getAttribute('data-n'), 10)); }); });
+  wireRaceJump(el);
   el.querySelectorAll('.betshead').forEach(function(h){
     h.addEventListener('click', function(){
       const k = h.getAttribute('data-cat');

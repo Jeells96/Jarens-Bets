@@ -2758,7 +2758,7 @@ function renderBetsView(){
   const pretty=(ds=>{try{const d=new Date(ds+'T12:00:00Z');return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'UTC'});}catch(e){return ds||'';}})(dShown);
   let html=`<div style="background:var(--card,#141a24);border:1px solid rgba(255,93,93,.35);border-radius:13px;padding:15px 16px 12px;margin:0 12px 11px">
     <div style="font-size:.6rem;font-weight:800;letter-spacing:.2em;color:var(--rd,#ff5d5d);text-transform:uppercase">${kick}</div>
-    <div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">${pretty}</div>
+    <div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">${jumpHtml(dShown,'pbjump',addDays(todayStr(),-370),addDays(todayStr(),1),pretty)}</div>
     <div style="font-size:.68rem;color:var(--mt)">Diamond IQ Premium · every pick graded walk-forward</div>
     <div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid var(--bdr);padding-top:9px;font-size:.66rem;color:var(--mt)">
       <span><b style="color:var(--rd,#ff5d5d)">##</b> = confidence grade</span>
@@ -2829,8 +2829,42 @@ function renderBetsView(){
   el.querySelectorAll('.pbhead').forEach(h=>h.addEventListener('click',()=>{const m=h.getAttribute('data-mk');PB.open[m]=!PB.open[m];renderBetsView();}));
   el.querySelectorAll('.pbname').forEach(nm=>nm.addEventListener('click',e=>{e.stopPropagation();const tok=nm.getAttribute('data-tok');PB.why=PB.why===tok?null:tok;renderBetsView();}));
 }
+/* TAP THE DATE TO JUMP. The date you're already looking at doubles as the
+   button: a fully transparent native date input lies on top of it, so tapping
+   it opens the iPhone's own wheel. No calendar of our own to draw, keep in
+   sync or maintain.
+
+   Deliberately NOT showPicker() as the primary path — that needs Safari 16+
+   and throws without a user gesture in some engines. The invisible input works
+   everywhere; showPicker is only a nicety for desktop, where clicking the text
+   of a date field doesn't open anything. */
+function jumpHtml(value,cls,min,max,label){
+  return '<span style="position:relative;display:inline-block;cursor:pointer">' + label +
+    '<span style="opacity:.45;font-size:.6em;margin-left:5px;vertical-align:middle">\u25be</span>' +
+    '<input type="date" class="' + cls + '" value="' + value + '"' +
+      (min?' min="' + min + '"':'') + (max?' max="' + max + '"':'') +
+      ' aria-label="Jump to a date"' +
+      ' style="position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;' +
+      '-webkit-appearance:none;appearance:none;font:inherit;cursor:pointer">' +
+    '</span>';
+}
+function wireJump(el,cls,onPick){
+  el.querySelectorAll('.' + cls).forEach(function(i){
+    i.addEventListener('change',function(){ if(i.value)onPick(i.value); });
+    // desktop only: clicking the text of a date field opens nothing on its own
+    i.addEventListener('click',function(){ try{ if(i.showPicker)i.showPicker(); }catch(e){} });
+  });
+}
 function wirePbNav(el){
   el.querySelectorAll('.pbnav').forEach(b=>b.addEventListener('click',()=>pbShiftDay(parseInt(b.getAttribute('data-n'),10))));
+  /* The picker emits YYYY-MM-DD, which is exactly our day id — used as-is, with
+     no new Date() round trip, because parsing it would land on the day before
+     in Pacific time. */
+  wireJump(el,'pbjump',function(v){
+    PB.date=(v===todayStr())?null:v;
+    PB.open={};PB.why=null;
+    renderBetsView();
+  });
 }
 /* ── THRESHOLD-SYNCED RECORDS ──
    Regrades every stored day at the CURRENT lock/edge thresholds, so the
