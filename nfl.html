@@ -6579,9 +6579,32 @@ setTimeout(() => { loadRemoteDKOdds(); loadRemoteDKStatus(); pullSharedLockCfg()
   var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   function saved(){ try { return JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e){ return null; } }
   function parseMembers(f){ if (f && f.members && f.members.stringValue){ try { return JSON.parse(f.members.stringValue) || []; } catch (e){ return []; } } return []; }
+  /* Was this device authorised when the owner gave them a code? The trusted
+     list lives in the member record, which only the owner writes — a device
+     cannot talk itself into an account. Read-only here, and never creates an
+     id, so a browser that has never opened the Board simply isn't trusted. */
+  function gDevTrusted(m){
+    try {
+      var id = localStorage.getItem('board_device_v1');
+      return !!(id && m && Array.isArray(m.dev) && m.dev.indexOf(id) >= 0);
+    } catch (e){ return false; }
+  }
   function grantOf(s, list){
     if (!s) return { ok: false };
-    if (s.free) return { ok: true, apps: ['mlbfree'], dk: false, dkMode: 'off' };
+    if (s.free){
+      /* Free sign-in on a device the owner has since authorised: it just
+         starts working, with whatever apps they were given. Any other device
+         still needs the code. */
+      for (var t = 0; t < list.length; t++){ var tm = list[t];
+        if (!tm || tm.active === false || !tm.code) continue;
+        if (tm.name == null || norm(tm.name) !== norm(s.name)) continue;
+        if (tm.paidUntil && String(tm.paidUntil) < new Date().toLocaleDateString('en-CA')) continue;
+        if (!gDevTrusted(tm)) continue;
+        return { ok: true, apps: Array.isArray(tm.apps) ? tm.apps : null,
+          dk: tm.dk !== false, dkMode: tm.dkMode || (tm.dk === false ? 'off' : 'unlimited') };
+      }
+      return { ok: true, apps: ['mlbfree'], dk: false, dkMode: 'off' };
+    }
     if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true, dkMode: 'unlimited' };
     for (var i = 0; i < list.length; i++){ var m = list[i];
       if (norm(m.code) !== norm(s.code)) continue;              // must match THEIR personal code

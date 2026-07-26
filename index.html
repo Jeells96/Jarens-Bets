@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26f';
+var BOARD_BUILD = '2026-07-26g';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -1618,13 +1618,45 @@ function clearNewSigninBadge(){
 }
 var CURRENT_MEMBER = null; // the resolved identity, for the "My plan" panel
 function savedMember(){ try { return JSON.parse(localStorage.getItem(GATE_LS) || 'null'); } catch (e){ return null; } }
+/* Has this device already been authorised for this person? The trusted list is
+   written by the owner (it lives in the member record), never by the device —
+   a phone cannot talk itself into someone else's account. */
+function trustedDevice(m){
+  try {
+    var id = localStorage.getItem('board_device_v1');
+    return !!(id && m && Array.isArray(m.dev) && m.dev.indexOf(id) >= 0);
+  } catch (e){ return false; }
+}
+function trustedUpgrade(name, list){
+  var nrm = function(v){ return String(v == null ? '' : v).trim().toLowerCase(); };
+  if (!name) return null;
+  for (var i = 0; i < (list || []).length; i++){
+    var m = list[i];
+    if (!m || m.active === false || !m.code) continue;
+    if (nrm(m.name) !== nrm(name)) continue;
+    if (m.paidUntil && String(m.paidUntil) < new Date().toLocaleDateString('en-CA')) continue;
+    if (!trustedDevice(m)) continue;
+    return { member: m, apps: Array.isArray(m.apps) ? m.apps : null };
+  }
+  return null;
+}
 async function runGate(){
   var saved = savedMember();
   var cfg = await adminGetDoc('board_access');
   var list = parseMembers(cfg);
   if (!list.length) list = [{ name: null, code: 'greenlight', apps: null, active: true }]; // until first save
-  // Free-tier device: remembered as free, gets ONLY the Diamond IQ Free app.
-  if (saved && saved.free){ CURRENT_MEMBER = { free: true, name: saved.name }; GRANTS = new Set(['mlbfree']); markLockedCards(); return; }
+  /* Free-tier device. If this exact device was authorised when you gave them
+     a code, it just starts working — no code to type, because you already
+     said yes to this device. Anywhere else, they enter the code once. */
+  if (saved && saved.free){
+    var up = trustedUpgrade(saved.name, list);
+    if (up){
+      CURRENT_MEMBER = up.member; GRANTS = up.apps ? new Set(up.apps) : null;
+      try { localStorage.setItem(GATE_LS, JSON.stringify({ name: up.member.name, code: up.member.code })); } catch (e) {}
+      markLockedCards(); return;
+    }
+    CURRENT_MEMBER = { free: true, name: saved.name }; GRANTS = new Set(['mlbfree']); markLockedCards(); return;
+  }
   if (saved && saved.code){
     var g0 = memberMatch(saved.name, saved.code, list);
     if (g0.ok){ CURRENT_MEMBER = g0.member; GRANTS = g0.apps ? new Set(g0.apps) : null; markLockedCards(); return; }
@@ -2778,7 +2810,7 @@ async function openSettingsPanel(){
       var e = dmap[id] || {};
       var n = String(e.n || '').trim().toLowerCase();
       if (!n) return;
-      (devByName[n] = devByName[n] || []).push({ label: e.l || 'Device', app: e.a || '', t: +(e.t || 0) });
+      (devByName[n] = devByName[n] || []).push({ id: id, label: e.l || 'Device', app: e.a || '', t: +(e.t || 0) });
     });
     Object.keys(devByName).forEach(function(k){ devByName[k].sort(function(a, b){ return b.t - a.t; }); });
   } catch (e) {}
@@ -2892,7 +2924,8 @@ async function openSettingsPanel(){
     var tier = m.tier || 'custom';
     var sport = m.sport || 'mlb';
     var sel = function(v, want){ return v === want ? ' selected' : ''; };
-    return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px" data-memrow="' + i + '">' +
+    return '<div style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px" data-memrow="' + i + '"' +
+      ' data-dev="' + esc(JSON.stringify(Array.isArray(m.dev) ? m.dev : [])) + '">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">' +
         '<input type="text" class="m-name" value="' + esc(m.name || '') + '" placeholder="first & last name" autocapitalize="words" style="margin:0;flex:1;min-width:60px">' +
         '<input type="text" class="m-code" value="' + esc(m.code || '') + '" placeholder="their code" autocapitalize="none" style="margin:0;flex:1;min-width:60px">' +
@@ -3279,12 +3312,20 @@ async function openSettingsPanel(){
   box.querySelectorAll('.m-promote').forEach(function(b){
     b.addEventListener('click', function(){
       var nm = b.getAttribute('data-name') || '';
+      /* Trust the device that asked. Once you set their code, the phone they
+         requested from starts working on its own — they only type the code if
+         they sign in somewhere else. The ids come from the devices doc, which
+         is what the device count on this row is already showing you. */
+      var trusted = (devByName[String(nm).trim().toLowerCase()] || [])
+        .map(function(d){ return d.id; }).filter(Boolean);
       var div = document.createElement('div');
-      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'off' }, Date.now());
+      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'off', dev: trusted }, Date.now());
       var row = div.firstChild;
       box.querySelector('#memlist').appendChild(row);
       wireDel(); wireDevices();
-      b.textContent = 'added below \u2014 set their code';
+      b.textContent = trusted.length
+        ? 'added below \u2014 set their code (' + trusted.length + ' device' + (trusted.length > 1 ? 's' : '') + ' won\u2019t need it)'
+        : 'added below \u2014 set their code (no device seen yet, so they\u2019ll type it once)';
       b.disabled = true;
       b.style.opacity = '.6';
       row.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3326,10 +3367,12 @@ async function openSettingsPanel(){
       row.querySelectorAll('.m-app').forEach(function(cb){ if (cb.checked) apps.push(cb.getAttribute('data-app')); });
       var dkMode = row.querySelector('.m-dkmode').value;
       var paidEl = row.querySelector('.m-paid');
+      var dev = []; try { dev = JSON.parse(row.getAttribute('data-dev') || '[]') || []; } catch (e) {}
       out.push({ name: name, code: code,
         apps: apps.length === APP_KEYS.length ? null : apps,
         dk: dkMode !== 'off', dkMode: dkMode,
         paidUntil: paidEl && paidEl.value ? paidEl.value : null,
+        dev: dev,   // devices already authorised — they skip the code prompt
         tier: row.querySelector('.m-tier').value, sport: row.querySelector('.m-sport').value });
     });
     return out;
