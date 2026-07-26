@@ -1885,7 +1885,12 @@ var LAB_APPS = [
   { ns: 'nascar', file: 'nascar.html', name: 'Pete’s Picks (NASCAR)', kind: 'weights', proj: 'NFLP', reportPath: 'nascar/labReport', cfgPath: 'nascar/lab_cfg', shadowPath: 'nascar/labShadow', histPath: 'nascar/labHistory',
     cats: { winner: 'Winner', top5: 'Top 5', top10: 'Top 10', top15: 'Top 15', h2h: 'Matchup' } },
   { ns: 'mlb', file: 'premium.html', name: 'Diamond IQ Premium (MLB)', kind: 'calib', proj: 'ADMIN', reportPath: 'fable_settings/labReport', cfgPath: 'fable_settings/lab_cfg', shadowPath: 'fable_settings/labShadow', histPath: 'fable_settings/labHistory',
-    cats: { hits: 'Batter hits', hr: 'Home runs', kB: 'Batter K', bbB: 'Batter BB', gm: 'Game winner' } },
+    cats: { hits: 'Batter hits', hr: 'Home runs', kB: 'Batter K', bbB: 'Batter BB', gm: 'Game winner',
+      kP: 'Pitcher K', bbP: 'Pitcher BB', tb: 'Total bases', phA: 'Pitcher hits', gmT: 'Game totals', gmR: 'Run line (ATS)' },
+    /* These are graded against a DraftKings line, so what the Lab learns for
+       them is a reliability curve per edge size — not a calibration map. They
+       render their own row and are never auto-applied. */
+    edgeCats: ['kP','bbP','tb','phA','gmT','gmR'] },
   { ns: 'nfl', file: 'nfl.html', name: 'Gridline (NFL)', kind: 'calib', proj: 'NFLP', reportPath: 'accuracy/labReport', cfgPath: 'accuracy/lab_cfg', shadowPath: 'accuracy/labShadow', histPath: 'accuracy/labHistory',
     cats: { winner: 'Winner', total: 'Game total', teamPts: 'Team points', teamYds: 'Team yards', playerYds: 'Player yards', anytimeTd: 'Anytime TD', firstTd: 'First TD', dkSpread: 'ATS (DK spread)', playerRecCnt: 'Receptions vs DK', playerPassTd: 'Pass TDs vs DK' } },
   { ns: 'nba', file: 'nba.html', name: 'The Key (NBA)', kind: 'weights', proj: 'NFLP', reportPath: 'nba/labReport', cfgPath: 'nba/lab_cfg', shadowPath: 'nba/labShadow', histPath: 'nba/labHistory',
@@ -1946,6 +1951,48 @@ function labTabHtml(){
     '</div>' +
     '<div id="lab-status" class="hint" style="min-height:16px;margin-bottom:6px"></div>' +
     '<div id="lab-body"><p class="sub" style="color:var(--dim2)">Loading what\u2019s stored\u2026</p></div>' +
+    '</div>';
+}
+/* The line bets (run line, pitcher K, total bases, …) don't get a calibration
+   map — their grade is an edge, not a probability, so re-scoring it would be
+   meaningless. What the Lab learns for them is a reliability curve: what each
+   SIZE of edge has really covered. It is shown and it recommends a threshold;
+   it never applies itself, because moving a threshold changes which picks enter
+   the published record and that is a decision with a person behind it. */
+function labIsEdge(app, cat){ return !!(app && app.edgeCats && app.edgeCats.indexOf(cat) !== -1); }
+function labEdgeRowHtml(app, cat, rep){
+  var e = rep && rep.edges && rep.edges[cat];
+  var name = esc((app.cats && app.cats[cat]) || cat);
+  var head = '<div class="row" style="margin-bottom:4px;gap:10px"><span class="lbl" style="font-size:13.5px;flex:1">' + name +
+    ' <span class="hint" style="font-weight:600">· line bet</span></span>';
+  if (!e) return '<div class="lab-edge" style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px">' + head +
+    '<span class="hint">nothing measured yet</span></div></div>';
+  if (e.short){
+    return '<div class="lab-edge" style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px">' + head +
+      '<span class="hint">not enough graded picks yet</span></div>' +
+      '<div class="hint" style="line-height:1.5">Needs <b>' + e.need + '</b> graded picks to say anything, has <b>' + e.have + '</b>' +
+      (e.flat ? ' — and every edge so far sits at almost the same size, so there is nothing to compare' : '') +
+      '. DraftKings lines only started reaching picks recently, so this fills in as the season runs.' +
+      (e.cur && e.cur.n ? ' At your current bet line it is <b>' + e.cur.pct + '%</b> (' + e.cur.hit + '/' + e.cur.n + ').' : '') +
+      '</div></div>';
+  }
+  var bars = e.bins.map(function(b){
+    var col = b.rate >= 55 ? '#7fd99a' : b.rate >= 50 ? '#ffb454' : '#ff7a7a';
+    return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">edge ' + b.lo + '–' + b.hi + '</span>' +
+      '<span><b style="color:' + col + '">' + b.rate + '%</b> <span class="hint">(' + b.n + ')</span></span></div>';
+  }).join('');
+  var recLine = e.rec != null
+    ? 'Smallest edge that has covered 55%+: <b>' + e.rec + '</b>' + (e.at != null ? ' · your bet line is <b>' + e.at + '</b>' : '') +
+      (e.at != null && e.rec > e.at ? ' — raising it to ' + e.rec + ' would drop the picks that have not been covering.' :
+       e.at != null && e.rec < e.at ? ' — you could go down to ' + e.rec + ' and still be above water.' : ' — that is where you already are.')
+    : 'No band has covered 55%+ yet' + (e.at != null ? ' · your bet line is <b>' + e.at + '</b>' : '') + '.';
+  var fwd = e.fwd ? '<div class="hint" style="margin-top:4px">Forward test on picks the bands never saw: your line ' +
+      '<b>' + e.fwd.base.pct + '%</b> (' + e.fwd.base.n + ') vs edge ≥ ' + e.fwd.at + ' <b>' + e.fwd.tuned.pct + '%</b> (' + e.fwd.tuned.n + ').</div>' : '';
+  return '<div class="lab-edge" style="border:1px solid var(--hair2);border-radius:9px;padding:9px;margin-bottom:8px">' + head +
+    '<span class="hint">measured · ' + e.n + ' graded</span></div>' +
+    '<div class="hint" style="margin:0 0 3px">What each size of edge has really covered:</div>' + bars +
+    '<div class="hint" style="margin-top:5px;line-height:1.5">' + recLine + '</div>' + fwd +
+    '<div class="hint" style="margin-top:4px;color:var(--dim2)">Recommendation only — the Lab never moves a bet line on its own. Change it in the Thresholds tab.</div>' +
     '</div>';
 }
 function labCatRowHtml(app, cat, rep, cfg){
@@ -2019,13 +2066,14 @@ function labAppCardHtml(app){
        first scan ever happens. */
     return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px" data-labapp="' + app.ns + '">' + head +
       '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">No scan stored yet, so there are no numbers to compare — but you can still set <b>auto</b> per bet type below. Sunday\u2019s run will then decide those by itself, and the numbers appear here afterwards.</p>' +
-      Object.keys(app.cats).map(function(c){ return labCatRowHtml(app, c, null, cfg); }).join('') +
+      Object.keys(app.cats).map(function(c){ return labIsEdge(app, c) ? labEdgeRowHtml(app, c, null) : labCatRowHtml(app, c, null, cfg); }).join('') +
       '<div style="display:flex;gap:8px;margin-top:4px">' +
         '<button class="go lab-save" data-ns="' + app.ns + '" style="flex:1;margin:0">Save choices</button>' +
         '<button class="close lab-reset" data-ns="' + app.ns + '" style="flex:1;border:1px solid var(--hair);border-radius:9px;padding:8px">Back to default</button>' +
       '</div><div class="hint lab-msg" style="min-height:14px;margin-top:4px"></div></div>';
   }
-  var body = labShadowStrip(app) + labHistHtml(app) + Object.keys(app.cats).map(function(c){ return labCatRowHtml(app, c, rep, cfg); }).join('');
+  var body = labShadowStrip(app) + labHistHtml(app) +
+    Object.keys(app.cats).map(function(c){ return labIsEdge(app, c) ? labEdgeRowHtml(app, c, rep) : labCatRowHtml(app, c, rep, cfg); }).join('');
   return '<div style="border:1px solid var(--hair);border-radius:11px;padding:11px;margin-bottom:12px" data-labapp="' + app.ns + '">' + head +
     '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">' + (rep.kind === 'calib'
       ? 'Numbers = every placed rating, judged at your current bet line. Calibration re-scores each rating to what its grade level has really hit — flip a switch to apply it to that bet type only.'

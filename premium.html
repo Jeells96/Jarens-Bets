@@ -311,6 +311,55 @@ window.CONFIG=CONFIG; // shared with the standalone stats engine
    open); default is always one tap away. */
 let LAB_CFG=null;
 const LAB_CATS=['hits','hr','kB','bbB','gm'];
+/* The line-based bets are a different animal. Their grade is an EDGE — how far
+   our number sits from the DraftKings line — not a 0-100 probability, so the
+   calibration above cannot touch them: calApply hands back a hit PERCENTAGE,
+   and comparing 58 against a 0.75-run edge threshold would clear every row on
+   the board. These learn on their own track, are stored under their own key,
+   and are never fed to calGrade. What they produce is a reliability curve —
+   what each size of edge has really covered — which is shown to you and used
+   to RECOMMEND a threshold. It never changes what qualifies by itself. */
+const LAB_EDGE_CATS=['kP','bbP','tb','phA','gmT','gmR'];
+const LAB_EDGE_MIN=12;   // graded picks needed in a band before it can say anything
+/* Same shrink-toward-the-base-rate maths as pavCalib, but the bands come from
+   the sample's own quantiles. Edge scales differ per bet type (pitcher K runs
+   to 3+, total bases barely past 1) and they move whenever a threshold moves,
+   so a fixed width would put every pick in one band and learn nothing. */
+function edgeCalib(pairs,minN){
+  const N=pairs.length;
+  if(N<minN*2)return null;
+  const sorted=pairs.slice().sort((a,b)=>a[0]-b[0]);
+  let H=0;pairs.forEach(x=>{if(x[1])H++;});
+  const p0=H/N,K=10;
+  /* Fill bands in order, never splitting a run of identical edges across two of
+     them — edges cluster hard just above the bet line, so a straight quantile
+     cut would put the same number in two bands and make them incomparable.
+     Aim for four bands, take fewer when the sample is small or repetitive. */
+  const target=Math.max(minN,Math.ceil(N/4));
+  const parts=[];let cur=[];
+  for(let i=0;i<sorted.length;i++){
+    cur.push(sorted[i]);
+    const lastOfRun=i+1>=sorted.length||sorted[i+1][0]!==sorted[i][0];
+    if(cur.length>=target&&lastOfRun&&sorted.length-(i+1)>=minN){parts.push(cur);cur=[];}
+  }
+  if(cur.length){ if(parts.length&&cur.length<minN)parts[parts.length-1]=parts[parts.length-1].concat(cur); else parts.push(cur); }
+  if(parts.length<2)return null;                       // one band = nothing to compare
+  const bins=parts.map(part=>{
+    let h=0;part.forEach(x=>{if(x[1])h++;});
+    return {lo:Math.round(part[0][0]*100)/100,hi:Math.round(part[part.length-1][0]*100)/100,
+      rate:Math.round(1000*(h+K*p0)/(part.length+K))/10,n:part.length};
+  });
+  if(bins.some(b=>b.n<minN))return null;
+  return {bins:bins,n:N};
+}
+/* What an edge of this size has actually covered. Display only. */
+function edgeReliability(cat,edge){
+  const m=LAB_CFG&&LAB_CFG.edges&&LAB_CFG.edges[cat];
+  if(!m||!m.bins||edge==null)return null;
+  const e=Math.abs(edge);
+  for(const b of m.bins){if(e>=b.lo&&e<=b.hi)return b;}
+  return e>m.bins[m.bins.length-1].hi?m.bins[m.bins.length-1]:null;
+}
 function calApply(map,g){if(!map||!map.bins)return g;for(const b of map.bins){if(g>=b.lo&&g<b.hi)return b.rate;}return g;}
 function calGrade(m,g){const c=LAB_CFG&&LAB_CFG.cats&&LAB_CFG.cats[m];return c?calApply(c,g):g;}
 function pavCalib(pairs,width,minN){
@@ -2669,7 +2718,13 @@ function pbWhyHtml(m,row){
   if(r.math)bits.push(`<div class="math"><b>Math:</b> ${r.math}</div>`);
   if(!chips&&!r.math)bits.push(`<div>Confirmed matchup · full breakdown lives on the Today tab card (league snapshots carry the numbers, not the notes).</div>`);
   const meta=PB_META[m];
-  if(meta.kind==='edge')bits.push(`<div style="margin-top:4px">Grade = how far our expectation sits from the line (${row.grade} past it). The bet line is edge ≥ ${pbLockOf(m)} — smaller edges aren’t worth playing.</div>`);
+  if(meta.kind==='edge'){
+    bits.push(`<div style="margin-top:4px">Grade = how far our expectation sits from the line (${row.grade} past it). The bet line is edge ≥ ${pbLockOf(m)} — smaller edges aren’t worth playing.</div>`);
+    /* What an edge this size has REALLY covered, measured by the Model Lab
+       from this bet type's own graded history. Shown, never used to qualify. */
+    const rel=edgeReliability(m,row.grade);
+    if(rel)bits.push(`<div style="margin-top:3px;color:var(--mt2)">Edges of ${rel.lo}\u2013${rel.hi} have covered <b style="color:${rel.rate>=55?'var(--gn,#39d98a)':'var(--mt)'}">${rel.rate}%</b> across ${rel.n} graded bets \u2014 measured, not projected.</div>`);
+  }
   else bits.push(`<div style="margin-top:4px">Grade = the model’s odds (${row.grade}) that ${meta.what}. The bet line is ${pbLockOf(m)}+.</div>`);
   return `<div style="padding:8px 10px;background:var(--card2,#182231);border:1px solid var(--bdr);border-radius:9px;margin:3px 0 7px;font-size:.68rem;color:var(--mt);line-height:1.5">${bits.join('')}</div>`;
 }
@@ -3085,6 +3140,7 @@ async function runLabPrem(){
     say('reading every stored day');
     const snap=await withTO(FBH.db.collection('fable_hits').get(),60000);
     const pairs={};LAB_CATS.forEach(c=>{pairs[c]=[];});
+    const epairs={};LAB_EDGE_CATS.forEach(c=>{epairs[c]=[];});
     const today=todayStr();
     snap.forEach(doc=>{
       const d=doc.id;
@@ -3114,6 +3170,20 @@ async function runLabPrem(){
         if(!r.verified||r.conf==null)return;
         const g=res['g'+r.id];if(!g||g.hs==null||g.as==null||g.hs===g.as)return;
         pairs.gm.push([r.conf*100,(g.hs>g.as)===(r.pick===r.team),d]);
+      });
+      /* The line bets: graded through the app's OWN lineGrade, so the Lab can
+         never reach a different verdict than the Bets page. Pushes are dropped
+         — a push is neither a cover nor a miss. */
+      LAB_EDGE_CATS.forEach(m=>{
+        (mk[m]||[]).forEach(r=>{
+          if(!r.verified||r.gradeFlag||r.line==null||r.edge==null)return;
+          if(!r.lean||r.lean==='\u2014')return;
+          const o=res[r.id]||res[String(r.id)];
+          const act=MK_ACTUAL[m]?MK_ACTUAL[m](o):null;
+          const g=lineGrade(r,act);
+          if(g!=='W'&&g!=='L')return;
+          epairs[m].push([Math.abs(r.edge),g==='W',d]);
+        });
       });
     });
     const TH={hits:CONFIG.lock*100,hr:CONFIG.hrLock*100,kB:CONFIG.kbLock*100,bbB:CONFIG.bbbLock*100,gm:(CONFIG.gmLock||0)*100};
@@ -3150,8 +3220,50 @@ async function runLabPrem(){
       if(fwd){best[cat]={pct:fwd.tuned.pct,hit:fwd.tuned.hit,n:fwd.tuned.n,weights:map,note:note,fwd:fwd,noGain:noGain||undefined,insampleAll:{pct:c.pct,hit:c.hit,n:c.n}};}
       else{best[cat]={pct:c.pct,hit:c.hit,n:c.n,weights:map,note:note,insample:true};}
     }
+    /* ── THE LINE BETS ──
+       Learn what each SIZE of edge has really covered, and from that name the
+       smallest edge worth publishing. Nothing here is applied automatically:
+       moving a threshold changes which picks enter the published record, and
+       that is a decision with a person behind it. */
+    const ETH={kP:CONFIG.kEdge,bbP:CONFIG.bbEdge,tb:CONFIG.tbEdge,phA:CONFIG.phEdge,gmT:CONFIG.gtEdge,gmR:CONFIG.grEdge};
+    const edges={};
+    for(const cat of LAB_EDGE_CATS){
+      const P=epairs[cat].slice().sort((a,b)=>a[2]<b[2]?-1:a[2]>b[2]?1:0);
+      const cur=rate(P.filter(x=>x[0]>=(ETH[cat]??0)));
+      const need=LAB_EDGE_MIN*2;
+      say(cat+': '+P.length+' graded line bets');
+      if(P.length<need){
+        edges[cat]={short:true,have:P.length,need:need,at:ETH[cat]??null,cur:cur||null};
+        continue;
+      }
+      const map=edgeCalib(P,LAB_EDGE_MIN);
+      if(!map){ edges[cat]={short:true,have:P.length,need:need,at:ETH[cat]??null,cur:cur||null,flat:true}; continue; }
+      /* FORWARD TEST, same shape as the calibration one: learn on the older
+         70%, judge on picks the bands never saw. */
+      let fwd=null;
+      const cut=Math.floor(P.length*0.7);
+      if(P.length-cut>=30&&cut>=60){
+        const trained=edgeCalib(P.slice(0,cut),LAB_EDGE_MIN);
+        if(trained){
+          const hold=P.slice(cut);
+          const pick=trained.bins.filter(b=>b.rate>=55).map(b=>b.lo).sort((a,b)=>a-b)[0];
+          if(pick!=null){
+            const fb=rate(hold.filter(x=>x[0]>=(ETH[cat]??0)));
+            const ft=rate(hold.filter(x=>x[0]>=pick));
+            if(fb&&ft)fwd={base:fb,tuned:ft,at:pick};
+          }
+        }
+      }
+      // the smallest band that has covered better than the coin flip it costs
+      const good=map.bins.filter(b=>b.rate>=55);
+      const rec=good.length?good[0].lo:null;
+      edges[cat]={bins:map.bins,n:map.n,at:ETH[cat]??null,cur:cur||null,rec:rec,fwd:fwd,
+        note:'Measured from '+P.length+' graded line bets. '+
+          map.bins.map(b=>b.lo+'\u2013'+b.hi+' covered '+b.rate+'% ('+b.n+')').join(' \u00b7 ')+
+          (rec!=null?'. Smallest edge that has covered 55%+: '+rec+'.':'. No band has covered 55%+ yet.')};
+    }
     const report={t:new Date().toISOString(),app:'mlb',kind:'calib',ratings:totalRatings,tried:'calibration',
-      fwdOK:anyFwd,thresholds:TH,defaults:{},base:base,best:best};
+      fwdOK:anyFwd,thresholds:TH,defaults:{},base:base,best:best,edges:edges,edgeTh:ETH};
     /* AUTO-DEPLOY: bet types the Board marked auto are applied/reverted by this
        run itself — apply only what passed the forward test, revert what didn't. */
     try{
@@ -3170,7 +3282,9 @@ async function runLabPrem(){
           else actions.push(cat+': stays default');
         }
         const unchanged=JSON.stringify(cats)===JSON.stringify((LAB_CFG&&LAB_CFG.cats)||{});
-        const newCfg={cats:cats,auto:auto,savedAt:unchanged&&LAB_CFG&&LAB_CFG.savedAt?LAB_CFG.savedAt:new Date().toISOString(),autoBy:'lab'};
+        const eMaps={};
+        for(const c in edges){if(edges[c]&&edges[c].bins)eMaps[c]={bins:edges[c].bins,n:edges[c].n};}
+        const newCfg={cats:cats,edges:eMaps,auto:auto,savedAt:unchanged&&LAB_CFG&&LAB_CFG.savedAt?LAB_CFG.savedAt:new Date().toISOString(),autoBy:'lab'};
         await withTO(FBH.db.collection('fable_settings').doc('lab_cfg').set({data:JSON.stringify(newCfg),t:new Date().toISOString()}),10000);
         LAB_CFG=newCfg;
         report.autoActions=actions;
@@ -3183,6 +3297,22 @@ async function runLabPrem(){
         say('auto-deploy: '+actions.join(' · '));
       }
     }catch(e){say('auto-deploy warn: '+(e&&e.message||e));}
+    /* Keep the edge curves whether or not anything is on auto — they are what
+       a pick shows next to its edge and what the Board recommends from. Written
+       on top of the current config so the calibration maps and auto flags that
+       live in the same doc are never lost. */
+    try{
+      const eMaps={};
+      for(const c in edges){if(edges[c]&&edges[c].bins)eMaps[c]={bins:edges[c].bins,n:edges[c].n};}
+      await pullLabCfgPrem();
+      const cur=LAB_CFG||{};
+      if(JSON.stringify(cur.edges||{})!==JSON.stringify(eMaps)){
+        const next=Object.assign({},cur,{edges:eMaps});
+        await withTO(FBH.db.collection('fable_settings').doc('lab_cfg').set({data:JSON.stringify(next),t:new Date().toISOString()}),10000);
+        LAB_CFG=next;
+        say('edge curves saved for '+Object.keys(eMaps).length+' line bet type(s)');
+      }
+    }catch(e){say('edge curve save warn: '+(e&&e.message||e));}
     await withTO(FBH.db.collection('fable_settings').doc('labReport').set({data:JSON.stringify(report),t:new Date().toISOString()}),10000);
     say('done — report published ('+totalRatings+' ratings learned from)');
     window.__labDone=true;
