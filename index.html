@@ -1159,44 +1159,58 @@ async function glFetch(app, date, label, evId){
   }
   return { markets: got.filter(function(m){ return m.outcomes.length; }), src: src };
 }
-async function openGameLines(app, date, label, evId, pulledAt){
-  var ovl = document.createElement('div');
-  ovl.className = 'ovl'; ovl.id = 'glovl';
-  ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
-  ovl.style.webkitOverflowScrolling = 'touch'; ovl.style.overscrollBehavior = 'contain';
-  ovl.innerHTML = '<div class="box" style="max-width:560px;margin:24px auto"><h3>Every line DraftKings gave us</h3>' +
-    '<p class="sub">' + esc(label) + '</p><p class="sub">Reading the stored pull…</p></div>';
-  document.body.appendChild(ovl);
-  lockPage('glines');
-  var close = function(){ ovl.remove(); unlockPage('glines'); };
-  ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
-  var res = await glFetch(app, date, label, evId);
-  var body;
-  if (!res.markets.length){
-    body = '<p class="sub" style="color:var(--dim2)">Nothing stored for this game. Either its pull hasn’t run yet, or DraftKings had no lines posted when it did — the app never invents one.</p>';
+/* Pair an over/under market back into ONE line per player, and a two-sided game
+   market into one line, so a game's whole ticket reads as a short list instead
+   of two rows for every number. */
+function glRows(m){
+  var ou = m.outcomes.some(function(o){ return /^(over|under)$/i.test(o.name || ''); });
+  var out = [];
+  if (ou){
+    var by = {}, order = [];
+    m.outcomes.forEach(function(o){
+      var k = (o.desc || '') + '|' + (o.point == null ? '' : o.point);
+      if (!by[k]){ by[k] = { who: o.desc || '', point: o.point, o: null, u: null }; order.push(k); }
+      if (/^over$/i.test(o.name)) by[k].o = o.price; else if (/^under$/i.test(o.name)) by[k].u = o.price;
+      else by[k].o = o.price;
+    });
+    order.forEach(function(k){
+      var r = by[k];
+      var right = (r.point != null ? r.point + '  ' : '') +
+        (r.o != null ? 'O ' + dkSgnV(r.o) : '') + (r.o != null && r.u != null ? ' / ' : '') + (r.u != null ? 'U ' + dkSgnV(r.u) : '');
+      out.push({ left: r.who || 'Total', right: right || '—' });
+    });
   } else {
-    body = res.markets.map(function(m){
-      var known = DK_MK_LBL[m.key];
-      return '<div class="sect" style="margin:10px 0 0">' +
-        '<div class="row"><span class="lbl">' + esc(known || m.key) + '</span>' +
-          '<span class="hint" style="font-family:ui-monospace,Menlo,monospace">' + esc(m.key) + '</span></div>' +
-        (known ? '' : '<div class="hint" style="color:#ffb454;margin:2px 0 0">No Board category for this market — shown exactly as DraftKings sent it.</div>') +
-        m.outcomes.map(function(o){
-          var right = (o.point != null ? String(o.point) : '') + (o.price != null ? (o.point != null ? ' ' : '') + '(' + dkSgnV(o.price) + ')' : '');
-          return '<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;border-top:1px solid var(--hair2)">' +
-            '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone)">' + esc((o.desc ? o.desc + ' · ' : '') + (o.name || '')) + '</span>' +
-            '<span class="hint" style="flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--dim)">' + esc(right || '—') + '</span>' +
-          '</div>';
-        }).join('') + '</div>';
-    }).join('');
-    if (res.src === 'partial') body = '<div class="hint" style="color:#ffb454;margin:6px 0 0">This game was pulled before the Board started keeping the full ticket, so only the numbers the app graded were saved. Everything pulled from here on is kept in full.</div>' + body;
+    out.push({ left: '', right: m.outcomes.map(function(o){
+      return (o.name || '') + (o.point != null ? ' ' + (o.point > 0 ? '+' : '') + o.point : '') + (o.price != null ? ' (' + dkSgnV(o.price) + ')' : '');
+    }).join('  /  ') });
   }
-  var n = res.markets.reduce(function(a, m){ return a + m.outcomes.length; }, 0);
-  ovl.querySelector('.box').innerHTML = '<h3>Every line DraftKings gave us</h3>' +
-    '<p class="sub">' + esc(label) + (pulledAt ? ' · pulled ' + esc(new Date(pulledAt).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' })) : '') + '</p>' +
-    (n ? '<p class="sub" style="color:var(--dim2)">' + n + ' line' + (n === 1 ? '' : 's') + ' across ' + res.markets.length + ' market' + (res.markets.length === 1 ? '' : 's') + ' — every side of every market that came back, bet or not. No quota spent reading this.</p>' : '') +
-    body + '<button class="close" id="gl-close" style="margin-top:14px">Close</button>';
-  ovl.querySelector('#gl-close').addEventListener('click', close);
+  return out;
+}
+var GL_GAME = { h2h: 1, spreads: 1, totals: 1 };
+function glBodyHtml(res){
+  if (!res.markets.length){
+    return '<div class="hint" style="color:var(--dim2);padding:4px 0 8px">Nothing stored for this game yet. Either its pull hasn’t run, or DraftKings had no lines posted when it did — the app never invents one.</div>';
+  }
+  var game = res.markets.filter(function(m){ return GL_GAME[m.key]; });
+  var props = res.markets.filter(function(m){ return !GL_GAME[m.key]; });
+  var block = function(title, list){
+    if (!list.length) return '';
+    return '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:9px 0 3px">' + title + '</div>' +
+      list.map(function(m){
+        var known = DK_MK_LBL[m.key];
+        return '<div style="margin:0 0 6px">' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">' +
+            '<span style="font-size:12px;font-weight:800;color:var(--bone)">' + esc(known || m.key) + '</span>' +
+            (known ? '' : '<span class="hint" style="color:#ffb454">no Board category · as DraftKings sent it</span>') + '</div>' +
+          glRows(m).map(function(r){
+            return '<div style="display:flex;gap:8px;align-items:baseline;padding:1px 0 1px 8px">' +
+              (r.left ? '<span style="flex:1;min-width:0;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(r.left) + '</span>' : '') +
+              '<span style="' + (r.left ? 'flex:0 0 auto;' : 'flex:1;') + 'font:600 12px/1.5 ui-monospace,Menlo,monospace;color:var(--dim);font-variant-numeric:tabular-nums">' + esc(r.right) + '</span>' +
+            '</div>';
+          }).join('') + '</div>';
+      }).join('');
+  };
+  return block('Game odds', game) + block('Player props', props);
 }
 async function adminGetDoc(doc){
   var j = await fsGetRaw(ADMIN, 'app_settings/' + doc);
@@ -2295,10 +2309,12 @@ async function openSettingsPanel(){
     return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric' });
   };
   var ptTime = function(ms){ return new Date(ms).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }); };
-  var DK_OPEN = {};
+  /* The history is now just the receipt: which app spent a call, when, and on
+     what. Every line it bought lives on that game's own row above, so the same
+     game is never written out in two places. */
   var dkLogHtml = function(){
     if (!dkLog.length){
-      return '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">No pulls recorded yet. Every DraftKings call an app spends from here on lands in this list \u2014 the games, every market, and the line it came back with.</p>';
+      return '<p class="sub" style="margin:6px 0 0;color:var(--dim2)">No calls recorded yet. Every DraftKings call an app spends from here on lands in this list.</p>';
     }
     var out = '', lastDay = null;
     dkLog.slice(0, 60).forEach(function(e3){
@@ -2307,29 +2323,11 @@ async function openSettingsPanel(){
         lastDay = dl;
         out += '<div style="font:800 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:12px 0 5px">' + esc(dl) + '</div>';
       }
-      var open = !!DK_OPEN[e3.id];
-      var nLines = e3.det.reduce(function(a, x){ return a + ((x.l || []).length); }, 0);
-      out += '<div style="border-top:1px solid var(--hair2)">' +
-        '<div class="dktog" data-dk="' + e3.id + '" style="display:flex;gap:8px;align-items:baseline;padding:8px 0;cursor:' + (nLines ? 'pointer' : 'default') + '">' +
-          '<span style="flex:0 0 auto;font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(ptTime(e3.t)) + '</span>' +
-          '<span style="flex:1;min-width:0;font-size:13px"><b style="color:' + (DK_APP_COL[e3.app] || 'var(--bone)') + '">' + esc(DK_APP_NAME[e3.app] || e3.app) + '</b> \u00b7 ' + esc(e3.what) +
-            (nLines ? ' <span style="color:var(--dim2)">' + (open ? '\u25b4' : '\u25be') + '</span>' : '') + '</span>' +
-          (e3.calls ? '<span class="hint" style="flex:0 0 auto">' + esc(e3.calls) + ' left</span>' : '') +
-        '</div>' +
-        (nLines
-          ? '<div class="dkdet" data-dkdet="' + e3.id + '" style="display:' + (open ? '' : 'none') + ';padding:0 0 9px 4px">' +
-              e3.det.map(function(gm){
-                var lbl = String(gm.g || '').replace(/\s*\u00b7\s*props\s*$/i, '');
-                return '<div style="margin:0 0 8px">' +
-                  '<div class="glrow" data-gl-app="' + esc(e3.app) + '" data-gl-date="' + esc(ptDate(e3.t)) + '" data-gl-game="' + esc(lbl) +
-                    '" data-gl-id="" data-gl-at="' + e3.t + '" style="font-size:12.5px;font-weight:800;color:var(--bone);margin-bottom:2px;cursor:pointer">' +
-                    esc(gm.g) + ' <span style="color:var(--dim2)">\u203a</span></div>' +
-                  (gm.l || []).map(function(ln){
-                    return '<div class="hint" style="color:var(--dim);padding:1px 0 1px 10px;font-variant-numeric:tabular-nums">' + esc(ln) + '</div>';
-                  }).join('') + '</div>';
-              }).join('') +
-            '</div>'
-          : (e3.games ? '<div class="hint" style="color:var(--dim2);padding:0 0 8px">' + esc(e3.games) + '</div>' : '')) +
+      out += '<div style="display:flex;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--hair2)">' +
+        '<span style="flex:0 0 auto;font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(ptTime(e3.t)) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:13px"><b style="color:' + (DK_APP_COL[e3.app] || 'var(--bone)') + '">' +
+          esc(DK_APP_NAME[e3.app] || e3.app) + '</b> \u00b7 ' + esc(e3.what) + '</span>' +
+        (e3.calls ? '<span class="hint" style="flex:0 0 auto">' + esc(e3.calls) + ' left</span>' : '') +
       '</div>';
     });
     return out + (dkLog.length > 60 ? '<div class="hint" style="color:var(--dim2);margin-top:6px">\u2026and ' + (dkLog.length - 60) + ' older (the newest 200 are kept)</div>' : '');
@@ -2401,12 +2399,24 @@ async function openSettingsPanel(){
     else if (rel){ right = tickLbl + ' \u00b7 ' + rel; col = 'var(--dim)'; }
     else if (matchable){ right = tickLbl + ' \u00b7 no lines bought'; col = '#ffb454'; }
     else { right = tickLbl + ' \u00b7 earlier'; col = 'var(--dim2)'; }
-    var tap = g.noPull || !app ? '' : ' class="glrow" data-gl-app="' + esc(app) + '" data-gl-date="' + esc(ptDate(g.t)) +
-      '" data-gl-game="' + esc(g.g) + '" data-gl-id="' + esc(g.id || '') + '" data-gl-at="' + (got || '') + '"';
-    return '<div' + tap + ' style="display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid var(--hair2)' + (tap ? ';cursor:pointer' : '') + '">' +
-      '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
-      '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.g) + (tap ? ' <span style="color:var(--dim2)">\u203a</span>' : '') + '</span>' +
-      '<span class="hint" style="flex:0 0 auto;color:' + col + '">' + esc(right) + '</span>' +
+    if (g.noPull || !app){
+      return '<div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--hair2)">' +
+        '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone)">' + esc(g.g) + '</span>' +
+        '<span class="hint" style="flex:0 0 auto;color:' + col + '">' + esc(right) + '</span></div>';
+    }
+    // one row per game, opening in place — its odds AND its props, nowhere else
+    var gid = 'gl' + app + (g.id || '') + Math.abs(g.t).toString(36);
+    return '<div style="border-top:1px solid var(--hair2)">' +
+      '<div class="glrow" data-gl-id2="' + gid + '" data-gl-app="' + esc(app) + '" data-gl-date="' + esc(ptDate(g.t)) +
+        '" data-gl-game="' + esc(g.g) + '" data-gl-id="' + esc(g.id || '') + '" data-gl-at="' + (got || '') + '"' +
+        ' style="display:flex;gap:8px;align-items:baseline;padding:5px 0;cursor:pointer">' +
+        '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+          esc(g.g) + ' <span class="glcar" style="color:var(--dim2)">\u25be</span></span>' +
+        '<span class="hint" style="flex:0 0 auto;color:' + col + '">' + esc(right) + '</span>' +
+      '</div>' +
+      '<div class="gldet" id="' + gid + '" style="display:none;padding:0 0 8px 4px"></div>' +
     '</div>';
   };
   /* What is still coming reads first; anything whose tick has already come and
@@ -2485,7 +2495,7 @@ async function openSettingsPanel(){
       '<span class="hint">' + (races.length ? races.length + ' race' + (races.length === 1 ? '' : 's') + ' in the next 7 days' : 'no race in the next 7 days') + '</span></div>' +
       '<div class="hint" style="color:var(--dim2);margin:0 0 3px">Never pulls DraftKings \u2014 no motorsport odds exist to buy.</div>' +
       (races.length ? schedRows(races, 'the green flag', 'week', null, false) : '');
-    el.innerHTML = html + '<div class="hint" style="color:var(--dim2);margin-top:10px">Pull times are the scheduled half-hour tick (:05 / :35) inside each game\u2019s window. <b style="color:#7fd99a">\u2713 pulled</b> means that exact game is in the pull log, with the time it was bought. <b style="color:#ffb454">No lines bought</b> means its tick came and went with nothing logged \u2014 usually DraftKings had no line posted, or the app was off at the time. The Key and Icing log team abbreviations rather than full names, so their past rows state the schedule only \u2014 use the pull history below for those.</div>';
+    el.innerHTML = html + '<div class="hint" style="color:var(--dim2);margin-top:10px">Pull times are the scheduled half-hour tick (:05 / :35) inside each game\u2019s window. <b style="color:#7fd99a">\u2713 pulled</b> means that exact game is in the pull log, with the time it was bought. <b style="color:#ffb454">No lines bought</b> means its tick came and went with nothing logged \u2014 usually DraftKings had no line posted, or the app was off at the time. The Key and Icing log team abbreviations rather than full names, so their rows state the schedule only \u2014 tap them to see the lines themselves.</div>';
   };
   var vhRaw = (await adminGetDoc('view_hours')) || {};
   var vhCfg = {}; try { vhCfg = JSON.parse(vhRaw.w || '{}') || {}; } catch (e) {}
@@ -2791,16 +2801,17 @@ async function openSettingsPanel(){
     '<button class="close" id="ad-preview" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:8px">Preview the ad</button></div>' +
     '</div>' +
     '<div id="stab-dk" style="display:none">' +
-    '<div class="sect"><div class="row"><span class="lbl">The pull schedule</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
+    '<div class="sect"><div class="row" id="dkhow-t" style="cursor:pointer"><span class="lbl">How pulls work</span><span class="hint">tap to read \u00b7 quota-safe <span id="dkhow-c">\u25be</span></span></div>' +
+    '<div id="dkhow" style="display:none">' +
     '<p class="sub" style="margin:6px 0 8px">A checker runs <b>every 30 minutes</b> using the odds API\u2019s <b>free</b> events list (costs nothing). Each game\u2019s DraftKings lines are pulled <b>exactly once, 10\u201345 minutes before its start</b> \u2014 as close to gametime as possible for the freshest lines, while still leaving time to place the bet. A game already pulled is never re-pulled; a half-hour with no game entering its window spends zero API quota.</p>' +
     '<p class="sub" style="margin:0 0 8px;color:var(--dim2)"><b>What each app pulls when its games hit the window:</b><br>' +
       '\u2022 <b>Diamond IQ Premium</b> \u2014 <b>player props</b> (total bases, batter walks, batter strikeouts, pitcher strikeouts, pitcher hits allowed, pitcher walks), one call per game, <b>plus MLB game lines</b> (moneyline, total + run-line spread) in one bulk call per wave \u2014 those feed Game Predictions, Game Totals and the Run Line.<br>' +
       '\u2022 <b>Gridline</b> \u2014 game lines (moneyline / spread / total) in one bulk call for the wave, plus any player-prop markets you\u2019ve enabled \u2014 including <b>receptions</b> and <b>pass TDs</b>, which are graded straight against DraftKings\u2019 line (one call per game).<br>' +
       '\u2022 <b>The Key</b> \u2014 moneyline, spread and total in one bulk call per wave.<br>' +
       '\u2022 <b>Icing</b> \u2014 moneyline, total and puck-line spread in one bulk call per wave.</p>' +
-    '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
-    '<div class="sect"><div class="row"><span class="lbl">What gets pulled and when</span><span class="hint">Pacific \u00b7 live</span></div>' +
-    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Every game on the slate with the exact half-hour tick that will buy its DraftKings lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Tap any game to see every line DraftKings sent for it. Reading this schedule costs zero API quota. DraftKings drops a game from its list the moment it ends, so this is what is left of the slate \u2014 the pull history below is the full record of the day.</p>' +
+    '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div></div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Games and their lines</span><span class="hint">Pacific \u00b7 live</span></div>' +
+    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)"><b>Tap a game</b> to open everything DraftKings sent for it \u2014 its game odds and its player props, together in one place. Each row also shows the half-hour tick that buys its lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Reading this costs zero API quota. DraftKings drops a game the moment it ends, so this is what is left of the slate.</p>' +
     '<div id="dksched"><div class="hint">Reading the slate\u2026</div></div>' +
     '<button class="close" id="dksched-rf" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:10px">Refresh the schedule</button></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
@@ -2819,8 +2830,8 @@ async function openSettingsPanel(){
     '<div class="row" style="margin-top:10px"><span class="lbl">Icing \u00b7 odds</span><label class="tog"><input type="checkbox" id="s-hon"' + (dk.hockeyOn !== false ? ' checked' : '') + '><span></span></label></div>' +
     quotaLine(dkStat.hockeyCalls, dkStat.hockeyAt) +
     '<div class="hint" style="margin:2px 0 4px">Pulls each game\u2019s lines <b>10\u201345 min before puck drop</b>, once per game.</div></div>' +
-    '<div class="sect"><div class="row"><span class="lbl">Pull history</span><span class="hint">newest first \u00b7 Pacific</span></div>' +
-    '<p class="sub" style="margin:6px 0 2px;color:var(--dim2)">Every DraftKings call actually spent. Tap a pull to open it \u2014 each game, every market it bought, and the exact line that came back.</p>' +
+    '<div class="sect"><div class="row"><span class="lbl">API calls spent</span><span class="hint">newest first \u00b7 Pacific</span></div>' +
+    '<p class="sub" style="margin:6px 0 2px;color:var(--dim2)">The receipt: every DraftKings call, when it went out, and what it bought. The lines themselves live on each game above \u2014 they are not repeated here.</p>' +
     dkLogHtml() +
     '</div>' +
     '</div>' +
@@ -2883,11 +2894,36 @@ async function openSettingsPanel(){
       if (want === 'dk') loadDkSched(false);
     });
   });
-  box.addEventListener('click', function(e){
+  box.addEventListener('click', async function(e){
     var r = e.target.closest ? e.target.closest('.glrow') : null;
     if (!r || !box.contains(r)) return;
-    openGameLines(r.getAttribute('data-gl-app'), r.getAttribute('data-gl-date'),
-      r.getAttribute('data-gl-game'), r.getAttribute('data-gl-id'), +r.getAttribute('data-gl-at') || 0);
+    var det = box.querySelector('#' + r.getAttribute('data-gl-id2'));
+    var car = r.querySelector('.glcar');
+    if (!det) return;
+    var open = det.style.display === 'none';
+    det.style.display = open ? '' : 'none';
+    if (car) car.textContent = open ? '\u25b4' : '\u25be';
+    if (!open || det.getAttribute('data-loaded')) return;
+    det.setAttribute('data-loaded', '1');
+    det.innerHTML = '<div class="hint">Reading the stored pull\u2026</div>';
+    try {
+      var res = await glFetch(r.getAttribute('data-gl-app'), r.getAttribute('data-gl-date'),
+        r.getAttribute('data-gl-game'), r.getAttribute('data-gl-id'));
+      var n = res.markets.reduce(function(a, m){ return a + m.outcomes.length; }, 0);
+      det.innerHTML = glBodyHtml(res) +
+        (n ? '<div class="hint" style="color:var(--dim2);margin-top:6px">' + n + ' line' + (n === 1 ? '' : 's') +
+             ' across ' + res.markets.length + ' market' + (res.markets.length === 1 ? '' : 's') + ' \u2014 everything DraftKings sent for this game.</div>' : '');
+    } catch (err){
+      det.removeAttribute('data-loaded');
+      det.innerHTML = '<div class="hint" style="color:#ff7a7a">Couldn\u2019t read the stored pull \u2014 tap again.</div>';
+    }
+  });
+  var howT = box.querySelector('#dkhow-t');
+  if (howT) howT.addEventListener('click', function(){
+    var d = box.querySelector('#dkhow'), c = box.querySelector('#dkhow-c');
+    var on = d.style.display === 'none';
+    d.style.display = on ? '' : 'none';
+    if (c) c.textContent = on ? '\u25b4' : '\u25be';
   });
   var schedRf = box.querySelector('#dksched-rf');
   if (schedRf) schedRf.addEventListener('click', function(){ loadDkSched(true); });
@@ -2947,17 +2983,6 @@ async function openSettingsPanel(){
     });
   }
   wireFree();
-  box.querySelectorAll('.dktog').forEach(function(t){
-    t.addEventListener('click', function(){
-      var id = t.getAttribute('data-dk');
-      var d2 = box.querySelector('[data-dkdet="' + id + '"]');
-      if (!d2) return;
-      DK_OPEN[id] = d2.style.display === 'none';
-      d2.style.display = DK_OPEN[id] ? '' : 'none';
-      var car = t.querySelector('span[style*="var(--dim2)"]');
-      if (car) car.textContent = DK_OPEN[id] ? '\u25b4' : '\u25be';
-    });
-  });
   box.querySelectorAll('.vh-day').forEach(function(c){
     c.addEventListener('click', function(){
       var on = !c.classList.contains('on');
