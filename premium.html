@@ -1142,6 +1142,7 @@ async function attachDkLinesToStoredDay(date){
       r.line=dk.line;
       if(dk.over!==undefined)r.pOver=dk.over??null;
       if(dk.under!==undefined)r.pUnder=dk.under??null;
+      if(dk.at)r.dkAt=dk.at;        // when this exact line was bought, kept as the receipt
       r.edge=Math.round((r.exp-dk.line)*100)/100;
       r.lean=leanFor(r.exp,dk.line,TH[m]??0.5);
       patched++;
@@ -1150,8 +1151,12 @@ async function attachDkLinesToStoredDay(date){
   // game lines: the moneyline and total onto the game row, and the two game
   // markets that cannot exist at all until DraftKings posts a number
   const byId={};(mk.gmT||[]).forEach(r=>byId['T'+r.id]=r);(mk.gmR||[]).forEach(r=>byId['R'+r.id]=r);
+  // doubleheader: two stored rows share one DK entry, so neither can claim it
+  const gmCount={};
+  (mk.gm||[]).forEach(r=>{ if(r&&r.hName&&r.aName)gmCount[r.aName+'@'+r.hName]=(gmCount[r.aName+'@'+r.hName]||0)+1; });
   (mk.gm||[]).forEach(r=>{
     if(!r||!r.hName||!r.aName)return;   // older boards carry no team names: they heal on the next picks run
+    if((gmCount[r.aName+'@'+r.hName]||0)>1)return;
     const od=GAMEODDS.find(o=>o.home_team===r.hName&&o.away_team===r.aName);
     if(!od)return;
     if(r.mlPrice==null&&od.ml){
@@ -1187,8 +1192,16 @@ async function attachDkLinesToStoredDay(date){
       made++;
     }
   });
-  if(patched||made)await fbPush(date,{mk:mk,ts:Date.now()});
-  return{patched,made};
+  if(!patched&&!made)return{patched:0,made:0};
+  await fbPush(date,{mk:mk,ts:Date.now()});
+  /* Verify our own work: read it back and count what actually landed, so a
+     silent write failure can never be reported as lines delivered. */
+  let landed=0;
+  try{
+    const back=await fbPull(date);
+    Object.keys(PROP_MK).forEach(m=>{((back&&back.mk&&back.mk[m])||[]).forEach(r=>{if(r&&r.line!=null)landed++;});});
+  }catch(e){}
+  return{patched,made,landed};
 }
 async function fetchLeagueProps(date){
   ODDSP={date,events:null};
@@ -1217,17 +1230,30 @@ function propFor(name,key){
   if(!ODDSP.events)return null;
   const norm=x=>(x||'').toLowerCase().replace(/[^a-z]/g,'');
   const t=norm(name);
+  let hit=null,games=0;
   for(const id in ODDSP.events){
-    if(!dkPreGame(ODDSP.events[id]))continue;
-    for(const m of (ODDSP.events[id].markets||[])){
+    const ev=ODDSP.events[id];
+    if(!dkPreGame(ev))continue;
+    for(const m of (ev.markets||[])){
       if(m.key!==key)continue;
       const os=(m.outcomes||[]).filter(o=>norm(o.description)===t);
       if(!os.length)continue;
       const ov=os.find(o=>o.name==='Over'),un=os.find(o=>o.name==='Under');
-      if(ov||un)return{line:ov?.point??un?.point,over:ov?.price,under:un?.price};
+      if(ov||un){
+        games++;
+        if(!hit)hit={line:ov?.point??un?.point,over:ov?.price,under:un?.price,at:ev.fetchedAt??null,ev:id};
+      }
+      break;   // one line per market per game
     }
+    /* DOUBLEHEADER GUARD. Rows are matched by player name, and in a
+       doubleheader the same player appears in both games. Handing the row
+       whichever line we found first can attach the nightcap's line — bought
+       hours AFTER the opener finished — to the opener's pick. That is
+       hindsight, so when a name sits in two of today's games we refuse the
+       line for both rather than guess which is theirs. */
+    if(games>1)return null;
   }
-  return null;
+  return hit;
 }
 /* LOCK RULE, and the one thing it must NOT freeze.
    A verified row keeps the model exactly as it was when the lineup posted —
@@ -1874,6 +1900,24 @@ async function loadDay(){
          accuracy. Every remaining O/U market grades vs a REAL DraftKings
          line or vs the box score itself. */
     });
+    /* Doubleheader guard for the game markets: the odds pull dedupes by
+       matchup, so two games between the same two teams share ONE DraftKings
+       entry and neither row can prove the number is its own. Both give the DK
+       side up rather than one borrowing the other's line. */
+    (function(){
+      const cnt={},key=r=>(r.aName||'')+'@'+(r.hName||'');
+      MK.gm.forEach(r=>{cnt[key(r)]=(cnt[key(r)]||0)+1;});
+      const dh=new Set();
+      MK.gm.forEach(r=>{
+        if((cnt[key(r)]||0)<2)return;
+        dh.add('g'+r.id);
+        r.mlPrice=null;r.mlEdge=null;r.mlLean=null;r.totLine=null;r.totLean=null;
+      });
+      if(dh.size){
+        MK.gmT=MK.gmT.filter(r=>!dh.has(r.id));
+        MK.gmR=MK.gmR.filter(r=>!dh.has(r.id));
+      }
+    })();
     MK.gm.sort((a,b)=>(b.conf||0)-(a.conf||0));
     ['hr'].forEach(m=>MK[m].sort((a,b)=>b.prob-a.prob));
     ['kP','kB','bbP','bbB','tb','phA','gmT','gmR'].forEach(m=>MK[m].sort((a,b)=>(Math.abs(b.edge??0))-(Math.abs(a.edge??0))||b.exp-a.exp));
@@ -1933,7 +1977,10 @@ async function loadDay(){
           merged.gradeFlag=true;
           merged.freshProb=Math.round(r.prob*1000)/1000;
         }
-        return dkMerge(m,merged,r);
+        /* Only today (or a future slate) may take a line. A finished day's
+           picks were published without one; adding it later would quietly add
+           results to a record that was already settled. */
+        return date>=todayStr()?dkMerge(m,merged,r):merged;
       });
       Object.values(pm).forEach(r=>{if(!seenM.has(r.id))MK[m].push({...r,locked:true,reasons:r.reasons||null});});
     });

@@ -2932,9 +2932,15 @@ async function pushSharedOdds(date){
   }
   try{
     const entry=ODDS.data[date];
+    /* Every game here was filtered to pre-game when it was added (games already
+       under way are skipped above), so stamp each one with when it was saved.
+       Premium reads this same doc and refuses any line it cannot prove was
+       bought before that game started — an unstamped game costs it that proof. */
+    const stampedAt=Date.now();
+    const games=(entry.games||[]).map(g=>g&&g.dkAt?g:Object.assign({},g,{dkAt:entry.fetchedAt||stampedAt}));
     const payload={
       date,
-      games:entry.games,
+      games,
       fetchedAt:entry.fetchedAt,
       callsRemaining:ODDS.callsRemaining,
       updatedAt:Date.now()
@@ -2946,7 +2952,8 @@ async function pushSharedOdds(date){
       console.warn('[DIQ] pushSharedOdds: doc too big',sizeKB);
       return;
     }
-    await FB.db.collection('app_settings').doc(`odds_${date}`).set(sanitizeForFirebase(payload));
+    // merge, so this never erases fields another app wrote to the same doc
+    await FB.db.collection('app_settings').doc(`odds_${date}`).set(sanitizeForFirebase(payload),{merge:true});
     console.log(`[DIQ] Pushed shared odds for ${date} (${sizeKB}KB)`);
   }catch(e){
     ODDS.lastError=`Firebase push failed: ${e.message}. Check Firestore rules allow app_settings/* writes.`;
