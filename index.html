@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26e';
+var BOARD_BUILD = '2026-07-26f';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -835,8 +835,14 @@ async function fillFreeTop3(){
   } catch (e){ setMsg('<span class="k">Record briefly unavailable.</span> Try again shortly.'); }
 }
 
-/* ---------- My plan panel: current tier + what the others include ---------- */
-var TIER_DEFS = [
+/* ---------- TIERS: one place to set what each plan costs and includes -------
+   These used to be hardcoded here AND written out again in the upgrade ad, the
+   members dropdown and the members help text — four copies, only one of them
+   editable, so changing a price left three screens quoting the old one. Now
+   this is the fallback and app_settings/tiers is the truth; everything that
+   quotes a plan reads it. What a tier actually GRANTS is still the checkboxes
+   and applyTierPreset() — this is what members are told. */
+var DEFAULT_TIERS = [
   { id: '1', price: '$10', per: '/mo', name: 'Tier 1', tagline: 'One sport, your pick',
     perks: ['The sport of your choice — MLB, NFL, NBA or NHL', 'Every pick graded walk-forward', 'No DraftKings odds — that starts at Tier 2'] },
   { id: '2', price: '$20', per: '/mo', name: 'Tier 2', tagline: 'Every sport + Super Locks',
@@ -844,6 +850,53 @@ var TIER_DEFS = [
   { id: '3', price: '$40', per: '/mo', name: 'Tier 3', tagline: 'Everything, unlimited',
     perks: ['Everything in Tier 2', 'Unlimited DraftKings odds — all month', 'First access to new features'] }
 ];
+var TIERS_CACHE = null;
+function normalizeTiers(raw){
+  var list = null;
+  if (raw && typeof raw.list === 'string'){ try { list = JSON.parse(raw.list); } catch (e){ list = null; } }
+  if (!Array.isArray(list)) list = null;
+  return DEFAULT_TIERS.map(function(d){
+    var v = (list || []).filter(function(t){ return t && String(t.id) === d.id; })[0] || {};
+    var str = function(k){ return (typeof v[k] === 'string' && v[k].trim()) ? v[k].trim() : d[k]; };
+    var perks = Array.isArray(v.perks) ? v.perks.map(function(x){ return String(x).trim(); }).filter(Boolean) : null;
+    return { id: d.id, name: str('name'), price: str('price'), per: str('per'),
+      tagline: str('tagline'), perks: (perks && perks.length) ? perks : d.perks };
+  });
+}
+async function loadTiers(){
+  if (TIERS_CACHE) return TIERS_CACHE;
+  var raw = null;
+  try { raw = await adminGetDoc('tiers'); } catch (e) {}
+  /* First run: no tiers doc yet. If the ad already carries three price lines,
+     seed the tiers from them so pricing he has already customised survives
+     instead of silently reverting to the built-in defaults. */
+  if (!raw){
+    try {
+      var ad = await loadAd();
+      var lines = (ad.perks || []).filter(function(x){ return /\$/.test(x); });
+      if (lines.length === 3){
+        TIERS_CACHE = DEFAULT_TIERS.map(function(d, i){
+          var m = String(lines[i]).match(/\$\s?[\d,.]+/);
+          return { id: d.id, name: d.name, price: m ? m[0].replace(/\s/g, '') : d.price,
+            per: d.per, tagline: d.tagline, perks: [lines[i]] };
+        });
+        return TIERS_CACHE;
+      }
+    } catch (e) {}
+  }
+  TIERS_CACHE = normalizeTiers(raw || {});
+  return TIERS_CACHE;
+}
+function tierById(list, id){
+  return (list || DEFAULT_TIERS).filter(function(t){ return t.id === String(id); })[0] || DEFAULT_TIERS[0];
+}
+// one plan, written the same way wherever it is quoted
+function tierLineHtml(t){
+  return '<li style="display:flex;gap:8px;align-items:flex-start;margin:7px 0;font-size:13.5px;line-height:1.4">' +
+    '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">\u2713</span><span>' +
+    '<b>' + esc(t.name) + '</b> \u00b7 <b style="color:var(--bone)">' + esc(t.price) + esc(t.per) + '</b> \u2014 ' +
+    esc(t.perks.join(' \u00b7 ')) + '</span></li>';
+}
 var SPORT_NAME = { mlb: 'Diamond IQ (MLB)', nfl: 'Gridline (NFL)', nba: 'The Key (NBA)', hockey: 'Icing (NHL)' };
 function dkModeLabel(m){ return m === 'unlimited' ? 'unlimited DK odds' : m === 'limited' ? 'DK odds the 1st–15th' : 'no DK odds'; }
 function currentPlanInfo(){
@@ -856,6 +909,7 @@ function currentPlanInfo(){
 async function openPlanPanel(){
   var info = currentPlanInfo();
   var ad; try { ad = await loadAd(); } catch (e){ ad = normalizeAd({}); }
+  var tiers; try { tiers = await loadTiers(); } catch (e){ tiers = DEFAULT_TIERS; }
   var ovl = document.createElement('div'); ovl.className = 'ovl';
   document.body.appendChild(ovl); lockPage('plan');
   var close = function(){ ovl.remove(); unlockPage('plan'); };
@@ -871,7 +925,7 @@ async function openPlanPanel(){
       '<div style="font-weight:800">You’re on the Free tier</div>' +
       '<div class="sub" style="margin:2px 0 0">Pick a paid plan below to unlock the real models.</div></div>';
   } else if (info.kind === 'tier'){
-    var td = TIER_DEFS.filter(function(t){ return t.id === info.tier; })[0];
+    var td = tierById(tiers, info.tier);
     banner = '<div style="border:1px solid #7fd99a;border-radius:10px;padding:10px 12px;margin-bottom:14px">' +
       '<div style="font-weight:800;color:#7fd99a">Your plan · ' + esc(td.name) + ' <span style="color:var(--dim2);font-weight:700">' + esc(td.tagline) + '</span></div>' +
       '<div class="sub" style="margin:2px 0 0">' +
@@ -883,16 +937,13 @@ async function openPlanPanel(){
       '<div class="sub" style="margin:2px 0 0">Your access was set by hand (' + esc(dkModeLabel(info.dkMode || 'unlimited')) + '). See the standard plans below.</div></div>';
   }
 
-  /* The plans shown here come from the SAME editable ad as the locked-app
-     pop-up. They used to be a second, hardcoded copy of the pricing — which is
-     how an edit in Settings could leave this panel selling the old numbers. */
+  /* Headline and pitch are the ad; the plans themselves are the tier settings.
+     One price, one place — this panel and the locked-app pop-up quote the same
+     numbers, and neither can be left behind by an edit to the other. */
   var cards = '<div style="border:1px solid var(--hair);border-radius:12px;padding:12px 14px;margin-bottom:10px">' +
     '<div style="font-weight:800;font-size:15px;margin-bottom:2px">' + esc(ad.title) + '</div>' +
     '<p class="sub" style="margin:4px 0 8px">' + esc(ad.pitch) + '</p>' +
-    '<ul style="list-style:none;padding:0;margin:0">' + ad.perks.map(function(pk){
-      return '<li style="display:flex;gap:7px;align-items:flex-start;margin:6px 0;font-size:13.5px;line-height:1.4">' +
-        '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">✓</span><span>' + esc(pk) + '</span></li>';
-    }).join('') + '</ul></div>';
+    '<ul style="list-style:none;padding:0;margin:0">' + tiers.map(tierLineHtml).join('') + '</ul></div>';
 
   var showUpgrade = info.kind !== 'admin' && !(info.kind === 'tier' && info.tier === '3');
   var footer = showUpgrade
@@ -1363,12 +1414,9 @@ function gateSuperPill(){
 var DEFAULT_AD = {
   title: 'Unlock the full Board',
   pitch: 'You\u2019re on the free tier. Pick a plan and get the real models \u2014 sharper projections, deeper stats, and the bets the free version can\u2019t show.',
-  perks: [
-    '$10 / month \u2014 the sport of your choice, every pick graded (no DraftKings odds)',
-    '$20 / month \u2014 every sport + \u26a1 Super Locks + DraftKings odds the 1st\u201315th',
-    '$40 / month \u2014 everything, plus unlimited DraftKings odds all month',
-    'Every pick graded walk-forward \u2014 check the record before you tap in'
-  ],
+  /* No prices here any more. The plans come from the tier settings, so
+     rewriting this pitch can never change what anything costs, and changing a
+     price can never be undone by an edit to the sales copy. */
   cta: 'Click here to ask about upgrading',
   contact: 'Text me and I\u2019ll switch your access on right away.',
   phone: '503-278-6961'
@@ -1378,13 +1426,13 @@ function normalizeAd(raw){
   var a = {};
   a.title = (raw && typeof raw.title === 'string' && raw.title.trim()) ? raw.title : DEFAULT_AD.title;
   a.pitch = (raw && typeof raw.pitch === 'string' && raw.pitch.trim()) ? raw.pitch : DEFAULT_AD.pitch;
-  // the old wording is treated as unset so the new default takes over
-  a.cta = (raw && typeof raw.cta === 'string' && raw.cta.trim() && raw.cta.trim() !== 'Text me to upgrade') ? raw.cta : DEFAULT_AD.cta;
+  a.cta = (raw && typeof raw.cta === 'string' && raw.cta.trim()) ? raw.cta : DEFAULT_AD.cta;
   a.contact = (raw && typeof raw.contact === 'string') ? raw.contact : DEFAULT_AD.contact;
   a.phone = (raw && typeof raw.phone === 'string') ? raw.phone : DEFAULT_AD.phone;
+  // kept only so an older saved ad can still seed the tiers on first run
   var perks = null;
   if (raw && typeof raw.perks === 'string'){ perks = raw.perks.split('\n').map(function(x){ return x.trim(); }).filter(Boolean); }
-  a.perks = (perks && perks.length) ? perks : DEFAULT_AD.perks;
+  a.perks = perks || [];
   return a;
 }
 function smsHref(phone){
@@ -1415,11 +1463,9 @@ function showDeniedNote(key){
   lockPage('note');
   var close = function(){ ovl.remove(); unlockPage('note'); };
   ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
-  loadAd().then(function(ad){
-    var perks = ad.perks.map(function(p){
-      return '<li style="display:flex;gap:8px;align-items:flex-start;margin:7px 0;font-size:13.5px;line-height:1.4">' +
-        '<span style="color:#7fd99a;flex:0 0 auto;font-weight:800">\u2713</span><span>' + esc(p) + '</span></li>';
-    }).join('');
+  Promise.all([loadAd(), loadTiers()]).then(function(both){
+    var ad = both[0], tiers = both[1];
+    var perks = tiers.map(tierLineHtml).join('');
     ovl.querySelector('.box').innerHTML =
       '<div style="font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2);margin-bottom:6px">' + esc(appName) + ' \u00b7 members only</div>' +
       '<h3 style="font-size:20px">' + esc(ad.title) + '</h3>' +
@@ -2390,6 +2436,7 @@ async function openSettingsPanel(){
   var premCfgRaw = premRaw ? fsFields(premRaw.fields || {}) : null;
   var freeLocks = (await adminGetDoc('locks')) || {};
   var adCfg = normalizeAd((await adminGetDoc('upgrade_ad')) || {});
+  var tierCfg; try { tierCfg = await loadTiers(); } catch (e){ tierCfg = DEFAULT_TIERS; }
   var nbaRaw = await fsGetRaw(NFLP, 'nba/lockcfg');
   var nbaCfg = null;
   if (nbaRaw && nbaRaw.fields && nbaRaw.fields.data && nbaRaw.fields.data.stringValue){
@@ -2858,9 +2905,9 @@ async function openSettingsPanel(){
         '<button class="close m-del" style="width:auto;margin:0;padding:4px 6px;color:#ff7a7a">\u2715</button></div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px">' +
         '<select class="m-tier" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px">' +
-          '<option value="1"' + sel(tier, '1') + '>Tier 1 \u00b7 $10 (one sport, no DK)</option>' +
-          '<option value="2"' + sel(tier, '2') + '>Tier 2 \u00b7 $20 (all + Super Locks)</option>' +
-          '<option value="3"' + sel(tier, '3') + '>Tier 3 \u00b7 $40 (all + unlimited DK)</option>' +
+          tierCfg.map(function(t){
+            return '<option value="' + t.id + '"' + sel(tier, t.id) + '>' + esc(t.name + ' \u00b7 ' + t.price + ' (' + t.tagline + ')') + '</option>';
+          }).join('') +
           '<option value="custom"' + sel(tier, 'custom') + '>Custom</option></select>' +
         '<select class="m-sport" style="margin:0;padding:5px;background:var(--board);border:1px solid var(--hair);border-radius:7px;color:var(--bone);font-size:12.5px;' + (tier === '1' ? '' : 'display:none') + '">' +
           SPORT_KEYS.map(function(a){ return '<option value="' + a[0] + '"' + sel(sport, a[0]) + '>' + esc(a[1]) + '</option>'; }).join('') + '</select>' +
@@ -2940,7 +2987,7 @@ async function openSettingsPanel(){
     '</div>' +
     '<div id="stab-members">' +
     '<div class="sect"><div class="row"><span class="lbl">Members</span><span class="hint">switch off = locked out on next open</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — <b>$10</b> = one sport, <b>no DK odds</b>; <b>$20</b> = all sports + ⚡ Super Locks + DK odds the 1st–15th; <b>$40</b> = all + unlimited DK. DraftKings odds start at Tier 2 — members set up before this change keep their old DK setting until you re-apply their tier. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
+    '<p class="sub" style="margin:6px 0 10px">Each member signs in with their name + <b>their own code</b> (they must match both). Pick a <b>tier</b> to fill their access automatically — ' + tierCfg.map(function(t){ return '<b>' + esc(t.price) + '</b> = ' + esc(t.tagline); }).join('; ') + '. Those come from Plans &amp; pricing above, so they always match what you charge. DraftKings odds start at Tier 2 — members set up before this change keep their old DK setting until you re-apply their tier. Then fine-tune the checkboxes if you like (that becomes “Custom”). <b>DK</b>: Unlimited, the 1st–15th of each month, or Off. Uncheck all (or delete) to remove someone.</p>' +
     (function(){
       var t = new Date().toLocaleDateString('en-CA');
       var soon = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA');
@@ -2973,14 +3020,28 @@ async function openSettingsPanel(){
     '<button class="close" id="m-add" style="border:1px dashed var(--hair);border-radius:9px;padding:8px">+ add member</button>' +
     '<div id="freesection">' + freeSectionHtml() + '</div>' +
     '</div>' +
-    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">shown in My Plan &amp; Upgrades AND on locked apps</span></div>' +
-    '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up. Edit every line — leave a field blank to fall back to the default.</p>' +
+    '<div class="sect"><div class="row"><span class="lbl">Plans &amp; pricing</span><span class="hint">one place · every screen follows it</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">Set each plan on its own — changing one never touches the others. These numbers are what members and locked apps are shown, and what the tier dropdown below says. <b>What a tier actually unlocks is still the checkboxes on each member</b>; this is what they’re told it includes.</p>' +
+    tierCfg.map(function(t){
+      return '<div style="border:1px solid var(--hair2);border-radius:10px;padding:9px 11px;margin-bottom:9px" data-tierrow="' + t.id + '">' +
+        '<div class="row" style="margin-bottom:5px"><span class="lbl" style="font-size:13px">Tier ' + esc(t.id) + '</span></div>' +
+        '<div style="display:flex;gap:7px">' +
+          '<input type="text" class="t-name" value="' + esc(t.name) + '" placeholder="Name" style="flex:2;margin:0 0 7px">' +
+          '<input type="text" class="t-price" value="' + esc(t.price) + '" placeholder="$20" style="flex:1;margin:0 0 7px">' +
+          '<input type="text" class="t-per" value="' + esc(t.per) + '" placeholder="/mo" style="flex:1;margin:0 0 7px">' +
+        '</div>' +
+        '<input type="text" class="t-tagline" value="' + esc(t.tagline) + '" placeholder="One-line summary" style="margin:0 0 7px">' +
+        '<label class="hint">What it includes — one per line</label>' +
+        '<textarea class="t-perks" rows="3" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:9px;font:inherit;font-size:13.5px;margin:2px 0 0">' + esc(t.perks.join('\n')) + '</textarea>' +
+      '</div>';
+    }).join('') +
+    '</div>' +
+    '<div class="sect"><div class="row"><span class="lbl">Upgrade ad</span><span class="hint">the wording around the plans</span></div>' +
+    '<p class="sub" style="margin:6px 0 10px">When someone without access taps a locked app, this pops up: your headline and pitch, then the plans above. It carries <b>no prices of its own</b> — rewriting this can never change what anything costs. Leave a field blank to fall back to the default.</p>' +
     '<label class="hint">Headline</label>' +
     '<input type="text" id="ad-title" value="' + esc(adCfg.title) + '" style="margin:2px 0 10px">' +
     '<label class="hint">Pitch (one or two sentences)</label>' +
     '<textarea id="ad-pitch" rows="3" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.pitch) + '</textarea>' +
-    '<label class="hint">What’s included — one perk per line</label>' +
-    '<textarea id="ad-perks" rows="5" style="width:100%;box-sizing:border-box;background:var(--board);border:1px solid var(--hair);border-radius:9px;color:var(--bone);padding:10px;font:inherit;font-size:14px;margin:2px 0 10px">' + esc(adCfg.perks.join('\n')) + '</textarea>' +
     '<label class="hint">How to reach you (optional line above the button)</label>' +
     '<input type="text" id="ad-contact" value="' + esc(adCfg.contact) + '" style="margin:2px 0 10px">' +
     '<label class="hint">Your phone (the button texts this number)</label>' +
@@ -3133,12 +3194,27 @@ async function openSettingsPanel(){
   var schedRf = box.querySelector('#dksched-rf');
   if (schedRf) schedRf.addEventListener('click', function(){ loadDkSched(true); });
   box.querySelector('#ad-preview').addEventListener('click', function(){
+    /* A preview is a preview. This used to overwrite AD_CACHE, so previewing
+       and then closing settings WITHOUT saving left the unsaved draft showing
+       to everyone for the rest of the session. Swap it in, show it, put the
+       real one back the moment the preview closes. */
+    var live = AD_CACHE;
     AD_CACHE = normalizeAd({
       title: box.querySelector('#ad-title').value, pitch: box.querySelector('#ad-pitch').value,
-      perks: box.querySelector('#ad-perks').value, contact: box.querySelector('#ad-contact').value,
+      contact: box.querySelector('#ad-contact').value,
       cta: box.querySelector('#ad-cta').value, phone: box.querySelector('#ad-phone').value
     });
     showDeniedNote('mlb'); // preview against the Premium app name
+    var restore = function(){ AD_CACHE = live; };
+    setTimeout(function(){
+      var ov = document.querySelectorAll('.ovl');
+      var top = ov[ov.length - 1];
+      if (!top) return restore();
+      top.addEventListener('click', restore);
+      var c = top.querySelector('#ad-close'), k = top.querySelector('#ad-cta');
+      if (c) c.addEventListener('click', restore);
+      if (k) k.addEventListener('click', restore);
+    }, 60);
   });
   var closeSettings = function(){ ovl.remove(); unlockPage('settings'); };
   box.querySelector('#s-close').addEventListener('click', closeSettings);
@@ -3593,13 +3669,23 @@ async function openSettingsPanel(){
       var adSave = {
         title: (box.querySelector('#ad-title').value || '').trim(),
         pitch: (box.querySelector('#ad-pitch').value || '').trim(),
-        perks: (box.querySelector('#ad-perks').value || '').split('\n').map(function(x){ return x.trim(); }).filter(Boolean).join('\n'),
         contact: (box.querySelector('#ad-contact').value || '').trim(),
         cta: (box.querySelector('#ad-cta').value || '').trim(),
         phone: (box.querySelector('#ad-phone').value || '').trim()
       };
       await adminSetDoc('app_settings', 'upgrade_ad', adSave);
       AD_CACHE = normalizeAd(adSave); // reflect the new copy immediately
+      // plans, each saved on its own — one price, one place
+      var tierOut = Array.prototype.map.call(box.querySelectorAll('[data-tierrow]'), function(row){
+        return { id: row.getAttribute('data-tierrow'),
+          name: (row.querySelector('.t-name').value || '').trim(),
+          price: (row.querySelector('.t-price').value || '').trim(),
+          per: (row.querySelector('.t-per').value || '').trim(),
+          tagline: (row.querySelector('.t-tagline').value || '').trim(),
+          perks: (row.querySelector('.t-perks').value || '').split('\n').map(function(x){ return x.trim(); }).filter(Boolean) };
+      });
+      await adminSetDoc('app_settings', 'tiers', { list: JSON.stringify(tierOut) });
+      TIERS_CACHE = normalizeTiers({ list: JSON.stringify(tierOut) });
       await adminSetDoc('fable_settings', 'config', premOut);
       await adminSetDoc('app_settings', 'locks', freeOut);
       var nbaSp = split2(nbaOut, ['pts','stat','cnt']);
