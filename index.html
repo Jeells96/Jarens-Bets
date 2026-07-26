@@ -1124,12 +1124,21 @@ async function glFetch(app, date, label, evId){
   var start = null, recvProps = null, recvLines = null;   // game start + when each pull landed
   var isGame = function(a, h){ return glNorm((a || '') + ' @ ' + (h || '')) === want; };
   if (app === 'mlb'){
-    // player props: one masked read when we know the event id, else the day's doc
-    var pj = evId ? await fsGetMasked(ADMIN, 'app_settings/props_' + date, 'events.' + evId)
-                  : await fsGetRaw(ADMIN, 'app_settings/props_' + date);
+    /* Player props: one masked read when we know the event id. The id MUST be
+       backtick-quoted in the field path — odds-API ids are hex and usually
+       start with a digit, which is an invalid bare path segment; unquoted,
+       Firestore rejects the read and every game "has no props". If the masked
+       read comes back empty for any reason, fall back to the whole day's doc
+       and match by id, then by team names — never silently show nothing. */
+    var pj = evId ? await fsGetMasked(ADMIN, 'app_settings/props_' + date, 'events.`' + evId + '`') : null;
     var pev = pj && pj.fields ? (fsFields(pj.fields).events || {}) : {};
     var rec = evId ? pev[evId] : null;
-    if (!rec) for (var id in pev){ if (isGame(pev[id].away_team, pev[id].home_team)){ rec = pev[id]; break; } }
+    if (!rec){
+      pj = await fsGetRaw(ADMIN, 'app_settings/props_' + date);
+      pev = pj && pj.fields ? (fsFields(pj.fields).events || {}) : {};
+      rec = (evId && pev[evId]) || null;
+      if (!rec) for (var id in pev){ if (isGame(pev[id].away_team, pev[id].home_team)){ rec = pev[id]; break; } }
+    }
     if (rec && rec.markets) { got = got.concat(glMarkets(rec.markets)); src = 'player props'; }
     if (rec){
       if (rec.commence_time){ try { start = new Date(rec.commence_time).getTime(); } catch (e) {} }
