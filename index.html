@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26d';
+var BOARD_BUILD = '2026-07-26e';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -4006,67 +4006,58 @@ async function refreshSuperLocks(force){
         '<button class="slnav" data-n="1" style="' + navBtn + (past ? '' : ';opacity:.35') + '">next day ›</button>' +
       '</div></div>';
 
-    /* ── ONE CARD PER GAME ──
-       A game and everything bet on it — its game odds AND its player props —
-       read together, because that is how you bet it. Nothing is split across
-       sections by type or by app. */
+    /* ── ONE CARD PER BET TYPE ──
+       Grouped by category, so every pick of the same kind reads together and
+       you can see a whole bet type at a glance. The game is named on each row.
+       Keyed by app+category, because two sports can both call something
+       "winner" and they are not the same bet. */
     var all = [];
     lanes.forEach(function(a){ a.locks.forEach(function(l){ all.push({ l: l, app: a }); }); });
     var numOf = function(x){ var m = String(x.l.metric || '').match(/-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : -1; };
     if (!all.length){
       html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:14px;padding:18px;text-align:center">' +
         '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Nothing clears the bar ' + (past ? 'for this day' : 'right now') + '</div>' +
-        '<div style="font-size:13px;color:var(--dim2)">That’s the system working — no filler.</div></div>';
+        '<div style="font-size:13px;color:var(--dim2)">That\u2019s the system working \u2014 no filler.</div></div>';
     }
-    var games = [], byGm = {};
+    var cats = [], byCat = {};
     all.forEach(function(x){
-      var k = x.app.key + '|' + (x.l.gm || 'other');
-      if (!byGm[k]){ byGm[k] = { gm: x.l.gm || '', app: x.app, rows: [] }; games.push(byGm[k]); }
-      byGm[k].rows.push(x);
+      var k = x.app.key + '|' + String(x.l.cat || 'other');
+      if (!byCat[k]){
+        byCat[k] = { cat: String(x.l.cat || ''), app: x.app, pct: x.l.catPct, n: x.l.catN, rows: [] };
+        cats.push(byCat[k]);
+      }
+      byCat[k].rows.push(x);
     });
-    // best game first, and inside it: game odds, then props, best score first
-    games.forEach(function(g){
-      g.best = g.rows.reduce(function(m, x){ return Math.max(m, numOf(x)); }, -1);
-      g.rows.sort(function(x, y){
-        var kx = (x.l.kind === 'prop') ? 1 : 0, ky = (y.l.kind === 'prop') ? 1 : 0;
-        return (kx - ky) || (y.l.catPct - x.l.catPct) || (numOf(y) - numOf(x));
-      });
+    // proven bet types first, then the strongest pick inside each
+    cats.forEach(function(c){
+      c.rows.sort(function(x, y){ return numOf(y) - numOf(x); });
+      c.best = c.rows.reduce(function(m, x){ return Math.max(m, numOf(x)); }, -1);
     });
-    games.sort(function(a2, b2){ return b2.best - a2.best; });
+    cats.sort(function(a2, b2){ return (b2.pct - a2.pct) || (b2.best - a2.best); });
 
-    games.forEach(function(g){
-      var col = LANE_COL[g.app.key] || 'var(--dim)';
+    cats.forEach(function(c){
+      var col = LANE_COL[c.app.key] || 'var(--dim)';
       var gh = 0, gg = 0;
-      g.rows.forEach(function(x){ if (x.l.hit === true || x.l.hit === false){ gg++; if (x.l.hit) gh++; } });
-      var nProp = g.rows.filter(function(x){ return x.l.kind === 'prop'; }).length;
-      var nGame = g.rows.length - nProp;
+      c.rows.forEach(function(x){ if (x.l.hit === true || x.l.hit === false){ gg++; if (x.l.hit) gh++; } });
       html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-left:3px solid ' + col + ';border-radius:14px;padding:12px 15px 10px;margin-bottom:11px">' +
         '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">' +
-          '<span style="font-weight:800;font-size:16px;letter-spacing:-.01em">' + esc(g.gm || g.app.name) + '</span>' +
+          '<span style="font-weight:800;font-size:16px;letter-spacing:-.01em;text-transform:capitalize">' + esc(c.cat.toLowerCase()) + '</span>' +
           '<span style="font-size:12.5px;color:var(--dim2);white-space:nowrap">' + (gg
             ? '<b style="color:' + (gh * 2 >= gg ? '#7fd99a' : '#ff7a7a') + '">' + gh + '/' + gg + ' hit</b>'
-            : g.rows.length + ' pick' + (g.rows.length > 1 ? 's' : '')) + '</span></div>' +
+            : c.rows.length + ' pick' + (c.rows.length > 1 ? 's' : '')) + '</span></div>' +
         '<div style="font-size:11.5px;color:var(--dim2);margin:2px 0 6px">' +
           '<span style="display:inline-block;width:7px;height:7px;border-radius:999px;background:' + col + ';margin-right:5px"></span>' +
-          esc(g.app.name) + (nGame ? ' · ' + nGame + ' game odd' + (nGame > 1 ? 's' : '') : '') +
-          (nProp ? ' · ' + nProp + ' player prop' + (nProp > 1 ? 's' : '') : '') + '</div>';
-      var lastKind = null;
-      g.rows.forEach(function(x){
+          esc(c.app.name) + ' \u00b7 <span style="color:#7fd99a">' + c.pct + '% all-time' + (c.n ? ' (' + c.n + ')' : '') + '</span></div>';
+      c.rows.forEach(function(x){
         var l = x.l;
-        if (l.kind !== lastKind){
-          lastKind = l.kind;
-          html += '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:8px 0 1px">' +
-            (l.kind === 'prop' ? 'Player props' : 'Game odds') + '</div>';
-        }
-        var mark = l.hit === true ? '<span style="color:#7fd99a;font-weight:800;flex:0 0 14px;text-align:center">✓</span>'
-                 : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;flex:0 0 14px;text-align:center">✗</span>'
-                 : '<span style="color:var(--dim2);flex:0 0 14px;text-align:center">' + (past ? '—' : '·') + '</span>';
+        var mark = l.hit === true ? '<span style="color:#7fd99a;font-weight:800;flex:0 0 14px;text-align:center">\u2713</span>'
+                 : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;flex:0 0 14px;text-align:center">\u2717</span>'
+                 : '<span style="color:var(--dim2);flex:0 0 14px;text-align:center">' + (past ? '\u2014' : '\u00b7') + '</span>';
         html += '<div style="display:flex;gap:9px;align-items:baseline;padding:6px 0;border-top:1px solid var(--hair2)">' + mark +
           '<span style="flex:1;min-width:0">' +
             '<span style="font-size:14px;line-height:1.3">' + esc(l.desc) + '</span>' +
-            (l.unconf ? '<span style="color:#ffb454;font-size:11px;font-weight:700"> ○ lineup not confirmed</span>' : '') +
-            '<div style="margin-top:2px;font-size:11px;color:var(--dim2);line-height:1.3">' + esc(String(l.cat).toLowerCase()) +
-              ' · <span style="color:#7fd99a">' + l.catPct + '% all-time' + (l.catN ? ' (' + l.catN + ')' : '') + '</span></div>' +
+            (l.unconf ? '<span style="color:#ffb454;font-size:11px;font-weight:700"> \u25cb lineup not confirmed</span>' : '') +
+            (l.gm ? '<div style="margin-top:2px;font-size:11px;color:var(--dim2);line-height:1.3">' + esc(l.gm) + '</div>' : '') +
           '</span>' +
           '<span style="flex:0 0 auto;font:800 15px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span>' +
         '</div>';
@@ -4083,7 +4074,7 @@ async function refreshSuperLocks(force){
         }).join('') + '</div>';
     }
     html += '<div style="margin-top:12px;font-size:12.5px;line-height:1.65;color:var(--dim2)">' +
-      'One card per game, with its game odds and its player props together. The <b>score</b> on each row is that pick’s own confidence grade — the same number the app shows, not a hit probability. The green figure under it is that bet type’s all-time graded hit rate, which is why it earned a place here. ' +
+      'One card per bet type, with every pick of that kind together and the game named on each row. The <b>score</b> on each row is that pick’s own confidence grade — the same number the app shows, not a hit probability. The green figure under it is that bet type’s all-time graded hit rate, which is why it earned a place here. ' +
       (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') + '</div>';
     SL_CACHE = html;
     el.innerHTML = html;

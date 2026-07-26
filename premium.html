@@ -1984,7 +1984,7 @@ async function loadDay(){
     const remote=await fbPull(date);
     (remote?.rows||[]).forEach(r=>{
       if(r.verified&&r.id!=null&&!prior[r.id]){
-        prior[r.id]={...r,reasons:r.reasons||[{t:'Locked from an earlier verified run',k:'info'}],
+        prior[r.id]={...r,reasons:r.reasons||[{t:'Locked from an earlier verified run'+(AUTO_REFRESH?' \u2014 full breakdown loading\u2026':''),k:'info'}],
           pAB:r.pAB??0,ab:r.ab??4,splitMult:r.splitMult??1,pitMult:r.pitMult??1,ptMult:r.ptMult??1,parkF:r.parkF??1};
       }
     });
@@ -1998,7 +1998,22 @@ async function loadDay(){
       // confirmed lineup drops the fresh grade BELOW the lock threshold. Flag
       // re-evaluates every Load, so a recovered grade clears it.
       merged.gradeFlag=false;
-      const baseReasons=(p.reasons||[]).filter(x=>!(x&&x.t&&x.t.indexOf('⚠ Lineup shift')===0));
+      /* THE SCORE IS LOCKED — THE EXPLANATION IS NOT.
+         A row pulled from the league snapshot arrives with no reasons and no
+         math, so its "why" showed a bare "Locked from an earlier verified run"
+         placeholder. The background reload recomputes the real breakdown a few
+         seconds later, and it used to be thrown away here along with the fresh
+         score. Now the fresh reasons and math are pasted in as soon as they
+         exist, and the placeholder disappears.
+         Only when this run ALSO has the lineup verified: then the breakdown
+         describes the very same inputs the locked score was built from, so it
+         cannot end up explaining one number while another is displayed. */
+      let baseReasons=(p.reasons||[]).filter(x=>!(x&&x.t&&x.t.indexOf('⚠ Lineup shift')===0));
+      const placeholderOnly=!baseReasons.length||baseReasons.every(x=>x&&typeof x.t==='string'&&x.t.indexOf('Locked from an earlier verified run')===0);
+      if(r.verified&&placeholderOnly&&(r.reasons||[]).length){
+        baseReasons=r.reasons;
+        if(r.math!=null)merged.math=r.math;
+      }
       merged.reasons=baseReasons.length?baseReasons:p.reasons;
       if(p.autoVerified&&r.prob!=null&&p.prob!=null&&p.prob>=CONFIG.lock&&r.prob<CONFIG.lock){
         merged.gradeFlag=true;
