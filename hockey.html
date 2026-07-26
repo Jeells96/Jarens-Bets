@@ -1364,14 +1364,15 @@ async function runCronGrade(){
           const proj = projectGame(gg, tctx);
           if (!proj) continue;
           const gm = gg.away.ab + '@' + gg.home.ab;
-          if (proj.winMetric >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + ' — winner ' + proj.winAb, metric: proj.winMetric });
+          // gm on every lock, props included — the Board groups by game
+          if (proj.winMetric >= lockTh('winner')) tlocks.push({ cat: 'winner', gm: gm, desc: 'winner ' + proj.winAb, metric: proj.winMetric });
           if (proj.winMetric >= lockTh('lines')){
-            tlocks.push({ cat: 'total', desc: gm + ' — total ' + proj.total + ' ±' + hitTol('goals'), metric: proj.winMetric });
-            tlocks.push({ cat: 'p1', desc: gm + ' — 1st period ' + proj.p1 + ' ±' + hitTol('p1'), metric: proj.winMetric });
+            tlocks.push({ cat: 'total', gm: gm, desc: 'total ' + proj.total + ' ±' + hitTol('goals'), metric: proj.winMetric });
+            tlocks.push({ cat: 'p1', gm: gm, desc: '1st period ' + proj.p1 + ' ±' + hitTol('p1'), metric: proj.winMetric });
           }
           for (const pr of (proj.props || [])){
-            if (pr.goalConf >= lockTh('props')) tlocks.push({ cat: 'goal', desc: pr.name + ' (' + pr.ab + ') — anytime goal', metric: pr.goalConf });
-            if (pr.pointConf >= lockTh('props')) tlocks.push({ cat: 'point', desc: pr.name + ' (' + pr.ab + ') — 1+ point', metric: pr.pointConf });
+            if (pr.goalConf >= lockTh('props')) tlocks.push({ cat: 'goal', gm: gm, desc: pr.name + ' (' + pr.ab + ') — anytime goal', metric: pr.goalConf });
+            if (pr.pointConf >= lockTh('props')) tlocks.push({ cat: 'point', gm: gm, desc: pr.name + ' (' + pr.ab + ') — 1+ point', metric: pr.pointConf });
           }
         }
       }

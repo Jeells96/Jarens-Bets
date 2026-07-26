@@ -1747,14 +1747,16 @@ async function runCronGrade(){
         const proj = projectGame(g, inj, tdate);
         if (!proj) continue;
         const gm = g.away.abbr + '@' + g.home.abbr;
-        if (proj.winMetric >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + ' \u2014 winner ' + proj.winAb, metric: proj.winMetric });
-        if (proj.confTotal >= lockTh('lines')) tlocks.push({ cat: 'total', desc: gm + ' \u2014 total ' + proj.total + ' \u00b1' + hitTol('pts'), metric: proj.confTotal });
+        // gm rides along on EVERY lock (props included) so the Board can show a
+        // game and everything bet on it in one place
+        if (proj.winMetric >= lockTh('winner')) tlocks.push({ cat: 'winner', gm: gm, desc: 'winner ' + proj.winAb, metric: proj.winMetric });
+        if (proj.confTotal >= lockTh('lines')) tlocks.push({ cat: 'total', gm: gm, desc: 'total ' + proj.total + ' \u00b1' + hitTol('pts'), metric: proj.confTotal });
         if (proj.confTeam >= lockTh('lines')){
-          tlocks.push({ cat: 'teamPts', desc: g.away.abbr + ' points ' + proj.awayPts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
-          tlocks.push({ cat: 'teamPts', desc: g.home.abbr + ' points ' + proj.homePts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
+          tlocks.push({ cat: 'teamPts', gm: gm, desc: g.away.abbr + ' points ' + proj.awayPts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
+          tlocks.push({ cat: 'teamPts', gm: gm, desc: g.home.abbr + ' points ' + proj.homePts + ' \u00b1' + hitTol('pts'), metric: proj.confTeam });
         }
         for (const p of (proj.props || [])){
-          if (p.conf >= lockTh('props')) tlocks.push({ cat: p.cat, desc: p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + statTol(p.stat), metric: p.conf });
+          if (p.conf >= lockTh('props')) tlocks.push({ cat: p.cat, gm: gm, desc: p.name + ' ' + p.stat + ' ' + p.proj + ' \u00b1' + statTol(p.stat), metric: p.conf });
         }
         await sleep(60);
       }

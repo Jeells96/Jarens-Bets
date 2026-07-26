@@ -3527,6 +3527,17 @@ var SL_PROP_CATS = {
   top5:1, top10:1, top15:1, h2h:1                                                   // Pete's Picks (driver props)
 };
 var slKind = function(cat){ return SL_PROP_CATS[cat] ? 'prop' : 'game'; };
+/* Locks published before every app stamped its game still carry the matchup in
+   front of the text ("LAL@BOS — winner BOS"); pull it back out rather than
+   dropping those picks into an unnamed bucket. */
+var slGmFrom = function(desc){
+  var m = String(desc || '').match(/^([A-Z]{2,4}\s*@\s*[A-Z]{2,4}[^\u2014-]*?)\s*[\u2014-]\s+/);
+  return m ? m[1].trim() : '';
+};
+var slDescNoGm = function(desc){
+  var g = slGmFrom(desc);
+  return g ? String(desc).slice(String(desc).indexOf(g) + g.length).replace(/^\s*[\u2014-]\s*/, '').trim() : String(desc || '');
+};
 async function slPremiumLane(cfgs){
   var days = await slEnsure('prem', 'fable_hits', ADMIN, null);
   var qual = slQualified(premiumRates(days, cfgs.prem));
@@ -3554,13 +3565,27 @@ async function slPremiumLane(cfgs){
     var played = function(o){ return !!o && ((o.ab || 0) >= 1 || (o.h || 0) >= 1); };
     /* Unconfirmed matchups show like they do on the Premium Bets page — with
        the amber notice — but they are NEVER graded until confirmed. */
-    var push = function(m, desc, metric, hit, unconf){ locks.push({ cat: L[m] || m, key: m, kind: slKind(m), catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: metric, hit: unconf ? null : hit, unconf: !!unconf }); };
+    /* gm = the matchup this pick belongs to, so the Board can put a game and
+       everything bet on it in one place. Premium rows carry the player's team
+       and his opponent; the game rows carry both sides. */
+    var pairKey = function(a2, b2){ return [String(a2 || '').trim(), String(b2 || '').trim()].sort().join('|'); };
+    var orient = {};
+    ((day && day.mk && day.mk.gm) || []).forEach(function(r){
+      if (r.team && r.opp) orient[pairKey(r.team, r.opp)] = r.opp + ' @ ' + r.team;   // away @ home
+    });
+    var gmOf = function(r){
+      var t = String(r.team || '').trim(), o = String(r.opp || '').trim();
+      if (!t && !o) return '';
+      if (!o) return t;
+      return orient[pairKey(t, o)] || [t, o].sort().join(' @ ');   // stable either way round
+    };
+    var push = function(m, desc, score, hit, unconf, gm){ locks.push({ cat: L[m] || m, key: m, kind: slKind(m), gm: gm || '', catPct: qual[m].pct, catN: qual[m].n, desc: desc, metric: score, hit: unconf ? null : hit, unconf: !!unconf }); };
     if (qual.hits) (day.rows || []).forEach(function(r){
       if (r.gradeFlag || r.prob == null) return;
       var g = pGrade('hits', r.prob);
       if (g < pLock(cfgs.prem.lock)) return;
       var o = res ? res[r.id] : null;
-      push('hits', r.name + ' (' + (r.team || '') + ') — 1+ hit', g + '%', played(o) ? ((o.h || 0) >= 1) : null, !r.verified);
+      push('hits', r.name + ' — 1+ hit', g, played(o) ? ((o.h || 0) >= 1) : null, !r.verified, gmOf(r));
     });
     var mk = day.mk || {};
     if (qual.gm) (mk.gm || []).forEach(function(r){
@@ -3569,14 +3594,14 @@ async function slPremiumLane(cfgs){
       if (gg < pLock(cfgs.prem.gmLock)) return;
       var g = res ? res['g' + r.id] : null;
       var gh = (g && g.hs != null && g.as != null && g.hs !== g.as) ? ((g.hs > g.as) === (r.pick === r.team)) : null;
-      push('gm', (r.opp || '') + ' @ ' + (r.team || '') + ' — ' + r.pick + ' wins', gg + '%', gh, !r.verified);
+      push('gm', r.pick + ' wins', gg, gh, !r.verified, gmOf(r));
     });
     if (qual.hr) (mk.hr || []).forEach(function(r){
       if (r.gradeFlag || r.prob == null) return;
       var gh2 = pGrade('hr', r.prob);
       if (gh2 < pLock(cfgs.prem.hrLock)) return;
       var oh = res ? res[r.id] : null;
-      push('hr', r.name + ' (' + (r.team || '') + ') — home run', gh2 + '%', played(oh) ? ((oh.hr || 0) >= 1) : null, !r.verified);
+      push('hr', r.name + ' — home run', gh2, played(oh) ? ((oh.hr || 0) >= 1) : null, !r.verified, gmOf(r));
     });
     [['kB', 'so', 'kbLock', '1+ strikeout'], ['bbB', 'bb', 'bbbLock', '1+ walk']].forEach(function(c){
       if (!qual[c[0]]) return;
@@ -3586,7 +3611,7 @@ async function slPremiumLane(cfgs){
         var gb = pGrade(c[0], p);
         if (gb < pLock(cfgs.prem[c[2]])) return;
         var ob = res ? res[r.id] : null;
-        push(c[0], r.name + ' (' + (r.team || '') + ') \u2014 ' + c[3], gb + '%', played(ob) ? ((ob[c[1]] || 0) >= 1) : null, !r.verified);
+        push(c[0], r.name + ' \u2014 ' + c[3], gb, played(ob) ? ((ob[c[1]] || 0) >= 1) : null, !r.verified, gmOf(r));
       });
     });
     var edgeKey = { kP: 'kEdge', bbP: 'bbEdge', tb: 'tbEdge', gmT: 'gtEdge', phA: 'phEdge', gmR: 'grEdge' };
@@ -3604,12 +3629,12 @@ async function slPremiumLane(cfgs){
           : m === 'gmR' ? (oe.hs != null && oe.as != null ? oe.hs - oe.as : null)
           : oe[{ kP: 'pk', bbP: 'pbb', tb: 'tb', phA: 'ph' }[m]]) : null;
         var eh = act == null || act === r.line ? null : (act > r.line ? lean === 'OVER' : lean === 'UNDER');
-        var desc = r.name + ' (' + (r.team || '') + ') — ' + lean + ' ' + r.line;
+        var desc = r.name + ' — ' + lean + ' ' + r.line;
         if (m === 'gmR' && r.hSpread != null){
           var sgn = function(v){ return (v > 0 ? '+' : '') + v; };
           desc = (lean === 'OVER' ? (r.team || '') + ' ' + sgn(r.hSpread) : (r.opp || '') + ' ' + sgn(-r.hSpread)) + ' covers the run line (' + r.name + ')';
         }
-        push(m, desc, edge + ' edge', eh, !r.verified);
+        push(m, desc, edge + ' edge', eh, !r.verified, gmOf(r));
       });
     });
   }
@@ -3638,8 +3663,8 @@ async function slUnitsLane(cfgs, opts){
       var q = qual[u.cat];
       if (!q) return;
       if (!opts.qualifies(u)) return;
-      plocks.push({ cat: (opts.labels[u.cat] || u.cat).toUpperCase(), key: u.cat, kind: slKind(u.cat), catPct: q.pct, catN: q.n,
-        desc: u.desc || '', metric: u.metric != null ? u.metric + '%' : '', hit: opts.hitOf(u) });
+      plocks.push({ cat: (opts.labels[u.cat] || u.cat).toUpperCase(), key: u.cat, kind: slKind(u.cat), gm: u.gm || slGmFrom(u.desc), catPct: q.pct, catN: q.n,
+        desc: slDescNoGm(u.desc || ''), metric: u.metric != null ? u.metric : '', hit: opts.hitOf(u) });
     });
     return { name: opts.name, key: opts.key, locks: plocks,
       note: !punits.length ? 'No graded slate stored for this date.' : (!plocks.length ? 'No locks in an 80%+ category that day.' : '') };
@@ -3667,7 +3692,8 @@ async function slUnitsLane(cfgs, opts){
     td.locks.forEach(function(l){
       var q = qual[l.cat];
       if (!q) return;
-      locks.push({ cat: (opts.labels[l.cat] || l.cat).toUpperCase(), key: l.cat, kind: slKind(l.cat), catPct: q.pct, catN: q.n, desc: l.desc, metric: l.metric != null ? l.metric + '%' : '' });
+      locks.push({ cat: (opts.labels[l.cat] || l.cat).toUpperCase(), key: l.cat, kind: slKind(l.cat), gm: l.gm || slGmFrom(l.desc), catPct: q.pct, catN: q.n,
+        desc: slDescNoGm(l.desc || ''), metric: l.metric != null ? l.metric : '' });
     });
   }
   var note = !data.units.length ? opts.name + '’s graded history isn’t published yet.'
@@ -3744,56 +3770,70 @@ async function refreshSuperLocks(force){
         '<button class="slnav" data-n="1" style="' + navBtn + (past ? '' : ';opacity:.35') + '">next day ›</button>' +
       '</div></div>';
 
-    /* ── TWO LISTS ──
-       Player props in one, game odds in the other, every app together and
-       ranked by the model's own number. Each row says which app and bet type it
-       came from and what that bet type hits all-time, so nothing needs a card
-       of its own. */
+    /* ── ONE CARD PER GAME ──
+       A game and everything bet on it — its game odds AND its player props —
+       read together, because that is how you bet it. Nothing is split across
+       sections by type or by app. */
     var all = [];
     lanes.forEach(function(a){ a.locks.forEach(function(l){ all.push({ l: l, app: a }); }); });
     var numOf = function(x){ var m = String(x.l.metric || '').match(/-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : -1; };
-    var SECTS = [
-      { kind: 'prop', title: 'Player props', sub: 'one player, one line' },
-      { kind: 'game', title: 'Game odds',    sub: 'sides, totals and lines' }
-    ];
     if (!all.length){
       html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:14px;padding:18px;text-align:center">' +
         '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Nothing clears the bar ' + (past ? 'for this day' : 'right now') + '</div>' +
         '<div style="font-size:13px;color:var(--dim2)">That’s the system working — no filler.</div></div>';
     }
-    SECTS.forEach(function(sec){
-      var rows = all.filter(function(x){ return (x.l.kind || 'game') === sec.kind; });
-      if (!rows.length) return;
-      /* Best-hitting bet types first, then the model's own number inside each.
-         Sorting purely by the number would rank a "1.4 edge" against an "88%",
-         which compares nothing — this keeps like with like and reads grouped. */
-      rows.sort(function(x, y){
-        return (y.l.catPct - x.l.catPct) || String(x.l.cat).localeCompare(String(y.l.cat)) || (numOf(y) - numOf(x));
+    var games = [], byGm = {};
+    all.forEach(function(x){
+      var k = x.app.key + '|' + (x.l.gm || 'other');
+      if (!byGm[k]){ byGm[k] = { gm: x.l.gm || '', app: x.app, rows: [] }; games.push(byGm[k]); }
+      byGm[k].rows.push(x);
+    });
+    // best game first, and inside it: game odds, then props, best score first
+    games.forEach(function(g){
+      g.best = g.rows.reduce(function(m, x){ return Math.max(m, numOf(x)); }, -1);
+      g.rows.sort(function(x, y){
+        var kx = (x.l.kind === 'prop') ? 1 : 0, ky = (y.l.kind === 'prop') ? 1 : 0;
+        return (kx - ky) || (y.l.catPct - x.l.catPct) || (numOf(y) - numOf(x));
       });
-      var rh = 0, rg = 0;
-      rows.forEach(function(x){ if (x.l.hit === true || x.l.hit === false){ rg++; if (x.l.hit) rh++; } });
-      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-radius:16px;padding:13px 15px 6px;margin-bottom:12px">' +
-        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding-bottom:4px">' +
-          '<span style="font-weight:800;font-size:16px">' + sec.title +
-            ' <span style="font-weight:600;font-size:12.5px;color:var(--dim2)">' + sec.sub + '</span></span>' +
-          '<span style="font-size:12.5px;color:var(--dim2);white-space:nowrap">' + (rg
-            ? '<b style="color:' + (rh * 2 >= rg ? '#7fd99a' : '#ff7a7a') + '">' + rh + '/' + rg + ' hit</b>'
-            : rows.length + ' pick' + (rows.length > 1 ? 's' : '')) + '</span></div>';
-      rows.forEach(function(x){
-        var l = x.l, col = LANE_COL[x.app.key] || 'var(--dim)';
+    });
+    games.sort(function(a2, b2){ return b2.best - a2.best; });
+
+    games.forEach(function(g){
+      var col = LANE_COL[g.app.key] || 'var(--dim)';
+      var gh = 0, gg = 0;
+      g.rows.forEach(function(x){ if (x.l.hit === true || x.l.hit === false){ gg++; if (x.l.hit) gh++; } });
+      var nProp = g.rows.filter(function(x){ return x.l.kind === 'prop'; }).length;
+      var nGame = g.rows.length - nProp;
+      html += '<div style="background:var(--panel);border:1px solid var(--hair2);border-left:3px solid ' + col + ';border-radius:14px;padding:12px 15px 10px;margin-bottom:11px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">' +
+          '<span style="font-weight:800;font-size:16px;letter-spacing:-.01em">' + esc(g.gm || g.app.name) + '</span>' +
+          '<span style="font-size:12.5px;color:var(--dim2);white-space:nowrap">' + (gg
+            ? '<b style="color:' + (gh * 2 >= gg ? '#7fd99a' : '#ff7a7a') + '">' + gh + '/' + gg + ' hit</b>'
+            : g.rows.length + ' pick' + (g.rows.length > 1 ? 's' : '')) + '</span></div>' +
+        '<div style="font-size:11.5px;color:var(--dim2);margin:2px 0 6px">' +
+          '<span style="display:inline-block;width:7px;height:7px;border-radius:999px;background:' + col + ';margin-right:5px"></span>' +
+          esc(g.app.name) + (nGame ? ' · ' + nGame + ' game odd' + (nGame > 1 ? 's' : '') : '') +
+          (nProp ? ' · ' + nProp + ' player prop' + (nProp > 1 ? 's' : '') : '') + '</div>';
+      var lastKind = null;
+      g.rows.forEach(function(x){
+        var l = x.l;
+        if (l.kind !== lastKind){
+          lastKind = l.kind;
+          html += '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:8px 0 1px">' +
+            (l.kind === 'prop' ? 'Player props' : 'Game odds') + '</div>';
+        }
         var mark = l.hit === true ? '<span style="color:#7fd99a;font-weight:800;flex:0 0 14px;text-align:center">✓</span>'
                  : l.hit === false ? '<span style="color:#ff7a7a;font-weight:800;flex:0 0 14px;text-align:center">✗</span>'
                  : '<span style="color:var(--dim2);flex:0 0 14px;text-align:center">' + (past ? '—' : '·') + '</span>';
-        html += '<div style="display:flex;gap:9px;align-items:baseline;padding:9px 0;border-top:1px solid var(--hair2)">' + mark +
+        html += '<div style="display:flex;gap:9px;align-items:baseline;padding:6px 0;border-top:1px solid var(--hair2)">' + mark +
           '<span style="flex:1;min-width:0">' +
-            '<span style="font-size:14.5px;line-height:1.3">' + esc(l.desc) + '</span>' +
+            '<span style="font-size:14px;line-height:1.3">' + esc(l.desc) + '</span>' +
             (l.unconf ? '<span style="color:#ffb454;font-size:11px;font-weight:700"> ○ lineup not confirmed</span>' : '') +
-            '<div style="margin-top:3px;font-size:11.5px;color:var(--dim2);line-height:1.35">' +
-              '<span style="display:inline-block;width:7px;height:7px;border-radius:999px;background:' + col + ';margin-right:5px"></span>' +
-              esc(x.app.name) + ' · ' + esc(l.cat.toLowerCase()) +
+            '<div style="margin-top:2px;font-size:11px;color:var(--dim2);line-height:1.3">' + esc(String(l.cat).toLowerCase()) +
               ' · <span style="color:#7fd99a">' + l.catPct + '% all-time' + (l.catN ? ' (' + l.catN + ')' : '') + '</span></div>' +
           '</span>' +
-          '<span style="flex:0 0 auto;font:800 14px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span></div>';
+          '<span style="flex:0 0 auto;font:800 15px/1 ui-monospace,Menlo,monospace;color:' + col + '">' + esc(String(l.metric || '')) + '</span>' +
+        '</div>';
       });
       html += '</div>';
     });
@@ -3807,9 +3847,8 @@ async function refreshSuperLocks(force){
         }).join('') + '</div>';
     }
     html += '<div style="margin-top:12px;font-size:12.5px;line-height:1.65;color:var(--dim2)">' +
-      'Every pick is ranked by its own model number (the coloured figure on the right). The green figure under it is that bet type’s all-time graded hit rate — why it earned a place here. ' +
-      (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') +
-      ' Every pick the app shows in a qualifying bet type is here — nothing is trimmed.</div>';
+      'One card per game, with its game odds and its player props together. The <b>score</b> on each row is that pick’s own confidence grade — the same number the app shows, not a hit probability. The green figure under it is that bet type’s all-time graded hit rate, which is why it earned a place here. ' +
+      (past ? 'Marks show how each one finished.' : 'Daily sports show today’s slate; NFL and NASCAR show the whole week.') + '</div>';
     SL_CACHE = html;
     el.innerHTML = html;
     el.querySelectorAll('.slnav').forEach(function(b){ b.addEventListener('click', function(){ slShiftDay(parseInt(b.getAttribute('data-n'), 10)); }); });

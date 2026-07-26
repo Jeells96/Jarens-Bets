@@ -1013,14 +1013,16 @@ async function runCronGrade(){
       const tlocks = [];
       if (up){
         const P = up.proj, fav = P.favId && P.byId[P.favId];
-        if (fav && fav.pWin * 100 >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: fav.name + ' wins the race', metric: Math.round(fav.pWin * 100) });
+        // the race is this sport's "game" — every pick carries it
+        const raceName = raceTitle() || 'This week\u2019s race';
+        if (fav && fav.pWin * 100 >= lockTh('winner')) tlocks.push({ cat: 'winner', gm: raceName, desc: fav.name + ' wins the race', metric: Math.round(fav.pWin * 100) });
         for (const id in P.byId){
           const d = P.byId[id];
-          if (d.pTop5 * 100 >= lockTh('top5')) tlocks.push({ cat: 'top5', desc: d.name + ' finishes 5th or better', metric: Math.round(d.pTop5 * 100) });
-          if (d.pTop10 * 100 >= lockTh('top10')) tlocks.push({ cat: 'top10', desc: d.name + ' finishes 10th or better', metric: Math.round(d.pTop10 * 100) });
-          if (d.pTop15 * 100 >= lockTh('top15')) tlocks.push({ cat: 'top15', desc: d.name + ' finishes 15th or better', metric: Math.round(d.pTop15 * 100) });
+          if (d.pTop5 * 100 >= lockTh('top5')) tlocks.push({ cat: 'top5', gm: raceName, desc: d.name + ' finishes 5th or better', metric: Math.round(d.pTop5 * 100) });
+          if (d.pTop10 * 100 >= lockTh('top10')) tlocks.push({ cat: 'top10', gm: raceName, desc: d.name + ' finishes 10th or better', metric: Math.round(d.pTop10 * 100) });
+          if (d.pTop15 * 100 >= lockTh('top15')) tlocks.push({ cat: 'top15', gm: raceName, desc: d.name + ' finishes 15th or better', metric: Math.round(d.pTop15 * 100) });
         }
-        for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) tlocks.push({ cat: 'h2h', desc: m.aName + ' finishes ahead of ' + m.bName, metric: Math.round(m.p * 100) }); }
+        for (const m of P.h2h){ if (m.p * 100 >= lockTh('h2h')) tlocks.push({ cat: 'h2h', gm: raceName, desc: m.aName + ' finishes ahead of ' + m.bName, metric: Math.round(m.p * 100) }); }
       }
       await fbWrite(FB_NS, 'today', { date: todayPT(), locks: tlocks });
       clog('published ' + tlocks.length + ' lock(s) to nascar/today');

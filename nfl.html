@@ -6057,11 +6057,12 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
             const gm = g.away.abbr + '@' + g.home.abbr;
             const pickProb = Math.round(calGrade('winner', Math.max(proj.winProbHome, 1 - proj.winProbHome) * 100));
             const pickAb = proj.projWinner === 'home' ? g.home.abbr : g.away.abbr;
-            if (pickProb >= lockTh('winner')) tlocks.push({ cat: 'winner', desc: gm + dayTag + ' — winner ' + pickAb, metric: pickProb });
+            const gmTag = gm + dayTag;
+            if (pickProb >= lockTh('winner')) tlocks.push({ cat: 'winner', gm: gmTag, desc: 'winner ' + pickAb, metric: pickProb });
             if (calGrade('total', proj.conf) >= lockTh('lines')){
-              tlocks.push({ cat: 'total', desc: gm + dayTag + ' — total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
-              tlocks.push({ cat: 'awayPts', desc: g.away.abbr + ' points ' + proj.awayPts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
-              tlocks.push({ cat: 'homePts', desc: g.home.abbr + ' points ' + proj.homePts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+              tlocks.push({ cat: 'total', gm: gmTag, desc: 'total ' + proj.total.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+              tlocks.push({ cat: 'awayPts', gm: gmTag, desc: g.away.abbr + ' points ' + proj.awayPts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
+              tlocks.push({ cat: 'homePts', gm: gmTag, desc: g.home.abbr + ' points ' + proj.homePts.toFixed(1) + ' ±' + hitTol('pts'), metric: proj.conf });
             }
             // ATS — only when a REAL DraftKings spread is stored for this game
             const dkEvSL = findDKEventForGame(g);
@@ -6072,7 +6073,7 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
               const pHomeSL = normCdf(((proj.homePts - proj.awayPts) + dkHS) / MARGIN_SIGMA);
               const pickHomeSL = pHomeSL >= 0.5;
               const atsProb = Math.round(calGrade('dkSpread', Math.max(pHomeSL, 1 - pHomeSL) * 100));
-              if (atsProb >= lockTh('dk')) tlocks.push({ cat: 'dkSpread', desc: gm + dayTag + ' — ' + (pickHomeSL ? g.home.abbr : g.away.abbr) + ' ' + fmtSigned(pickHomeSL ? dkHS : -dkHS, 1) + ' covers (DK spread)', metric: atsProb });
+              if (atsProb >= lockTh('dk')) tlocks.push({ cat: 'dkSpread', gm: gmTag, desc: (pickHomeSL ? g.home.abbr : g.away.abbr) + ' ' + fmtSigned(pickHomeSL ? dkHS : -dkHS, 1) + ' covers (DK spread)', metric: atsProb });
             }
           }
         }
