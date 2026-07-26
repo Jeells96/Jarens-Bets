@@ -1066,6 +1066,126 @@ async function fsGetRaw(cfg, path){
     return await r.json();
   } catch (e){ return null; }
 }
+/* ── EVERY LINE DRAFTKINGS GAVE US ──
+   Tap a game anywhere in the DK Pulls tab and this reads back the pull that was
+   actually stored — every market, every side, every player, priced exactly as
+   DraftKings sent it, including markets no app bets. Nothing is re-bought: it
+   reads the same documents the pull wrote, so it costs no API quota. */
+var DK_MK_LBL = {
+  h2h: 'Moneyline', spreads: 'Spread / run line / puck line', totals: 'Total (over-under)',
+  batter_total_bases: 'Total bases', batter_walks: 'Batter walks', batter_strikeouts: 'Batter strikeouts',
+  pitcher_strikeouts: 'Pitcher strikeouts', pitcher_hits_allowed: 'Pitcher hits allowed', pitcher_walks: 'Pitcher walks',
+  player_pass_yds: 'Passing yards', player_rush_yds: 'Rushing yards', player_reception_yds: 'Receiving yards',
+  player_receptions: 'Receptions', player_pass_tds: 'Passing TDs', player_anytime_td: 'Anytime TD',
+  player_points: 'Points', player_rebounds: 'Rebounds', player_assists: 'Assists',
+  player_threes: 'Threes made', player_steals: 'Steals', player_blocks: 'Blocks'
+};
+function dkSgnV(v){ return v == null ? '' : ((v > 0 ? '+' : '') + v); }
+async function fsGetMasked(cfg, path, mask){
+  try {
+    var ctl = new AbortController();
+    setTimeout(function(){ ctl.abort(); }, 8000);
+    var r = await fetch(FS + cfg.p + '/databases/(default)/documents/' + path + '?key=' + cfg.k +
+      (mask ? '&mask.fieldPaths=' + encodeURIComponent(mask) : ''), { cache: 'no-store', signal: ctl.signal });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e){ return null; }
+}
+var glNorm = function(s){ return String(s || '').trim().toLowerCase(); };
+// every shape the apps store, flattened to [{key, outcomes:[{name,desc,point,price}]}]
+function glMarkets(raw){
+  var out = [];
+  if (!raw) return out;
+  var push = function(k, arr){
+    out.push({ key: k, outcomes: (arr || []).map(function(o){
+      return { name: o.name != null ? o.name : o.n, desc: o.description != null ? o.description : (o.d || ''),
+        point: o.point !== undefined ? o.point : (o.pt !== undefined ? o.pt : null),
+        price: o.price !== undefined ? o.price : (o.p !== undefined ? o.p : null) };
+    }) });
+  };
+  if (Array.isArray(raw)) raw.forEach(function(m){ push(m.key, m.outcomes); });           // props_/odds_ shape
+  else for (var k in raw) push(k, raw[k]);                                                 // {key: outcomes} shape
+  return out;
+}
+async function glFetch(app, date, label, evId){
+  var want = glNorm(label), got = [], src = '';
+  var isGame = function(a, h){ return glNorm((a || '') + ' @ ' + (h || '')) === want; };
+  if (app === 'mlb'){
+    // player props: one masked read when we know the event id, else the day's doc
+    var pj = evId ? await fsGetMasked(ADMIN, 'app_settings/props_' + date, 'events.' + evId)
+                  : await fsGetRaw(ADMIN, 'app_settings/props_' + date);
+    var pev = pj && pj.fields ? (fsFields(pj.fields).events || {}) : {};
+    var rec = evId ? pev[evId] : null;
+    if (!rec) for (var id in pev){ if (isGame(pev[id].away_team, pev[id].home_team)){ rec = pev[id]; break; } }
+    if (rec && rec.markets) { got = got.concat(glMarkets(rec.markets)); src = 'player props'; }
+    var od = await adminGetDoc('odds_' + date);
+    var g2 = ((od && od.games) || []).filter(function(e){ return isGame(e.away_team, e.home_team); })[0];
+    var bm = g2 && (g2.bookmakers || []).filter(function(b){ return b.key === 'draftkings'; })[0];
+    if (bm) { got = got.concat(glMarkets(bm.markets)); src = src ? src + ' + game lines' : 'game lines'; }
+  } else if (app === 'nfl'){
+    var nd = fsDoc(await fsGetRaw(NFLP, 'gridline/dkOdds')) || {};
+    var be = nd.byEvent || {}, r2 = evId ? be[evId] : null;
+    if (!r2) for (var id2 in be){ if (isGame(be[id2].away, be[id2].home)){ r2 = be[id2]; break; } }
+    if (r2 && r2.markets) { got = glMarkets(r2.markets); src = 'the stored pull'; }
+  } else if (app === 'nba' || app === 'hockey'){
+    var col = app === 'nba' ? 'nba_dk/' : 'nhl_dk/';
+    var sd = fsDoc(await fsGetRaw(NFLP, col + date)) || {};
+    var gm = sd.games || {}, hit = null;
+    for (var k2 in gm){ if (isGame(gm[k2].away, gm[k2].home)){ hit = gm[k2]; break; } }
+    if (hit && hit.raw) { got = glMarkets(hit.raw); src = 'the stored pull'; }
+    else if (hit){
+      // pulled before full capture shipped: show what was kept, and say so
+      var ls = [];
+      if (hit.mlAway != null || hit.mlHome != null) ls.push({ name: 'Moneyline', desc: '', point: null, price: null });
+      got = [{ key: 'h2h', outcomes: [
+          { name: hit.away || 'Away', desc: '', point: null, price: hit.mlAway },
+          { name: hit.home || 'Home', desc: '', point: null, price: hit.mlHome }] },
+        { key: 'spreads', outcomes: [{ name: hit.home || 'Home', desc: '', point: hit.spreadHome, price: hit.spHomeP != null ? hit.spHomeP : null }] },
+        { key: 'totals', outcomes: [{ name: 'Over', desc: '', point: hit.total, price: null }] }];
+      src = 'partial';
+    }
+  }
+  return { markets: got.filter(function(m){ return m.outcomes.length; }), src: src };
+}
+async function openGameLines(app, date, label, evId, pulledAt){
+  var ovl = document.createElement('div');
+  ovl.className = 'ovl'; ovl.id = 'glovl';
+  ovl.style.alignItems = 'flex-start'; ovl.style.overflowY = 'auto';
+  ovl.style.webkitOverflowScrolling = 'touch'; ovl.style.overscrollBehavior = 'contain';
+  ovl.innerHTML = '<div class="box" style="max-width:560px;margin:24px auto"><h3>Every line DraftKings gave us</h3>' +
+    '<p class="sub">' + esc(label) + '</p><p class="sub">Reading the stored pull…</p></div>';
+  document.body.appendChild(ovl);
+  lockPage('glines');
+  var close = function(){ ovl.remove(); unlockPage('glines'); };
+  ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
+  var res = await glFetch(app, date, label, evId);
+  var body;
+  if (!res.markets.length){
+    body = '<p class="sub" style="color:var(--dim2)">Nothing stored for this game. Either its pull hasn’t run yet, or DraftKings had no lines posted when it did — the app never invents one.</p>';
+  } else {
+    body = res.markets.map(function(m){
+      var known = DK_MK_LBL[m.key];
+      return '<div class="sect" style="margin:10px 0 0">' +
+        '<div class="row"><span class="lbl">' + esc(known || m.key) + '</span>' +
+          '<span class="hint" style="font-family:ui-monospace,Menlo,monospace">' + esc(m.key) + '</span></div>' +
+        (known ? '' : '<div class="hint" style="color:#ffb454;margin:2px 0 0">No Board category for this market — shown exactly as DraftKings sent it.</div>') +
+        m.outcomes.map(function(o){
+          var right = (o.point != null ? String(o.point) : '') + (o.price != null ? (o.point != null ? ' ' : '') + '(' + dkSgnV(o.price) + ')' : '');
+          return '<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;border-top:1px solid var(--hair2)">' +
+            '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone)">' + esc((o.desc ? o.desc + ' · ' : '') + (o.name || '')) + '</span>' +
+            '<span class="hint" style="flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--dim)">' + esc(right || '—') + '</span>' +
+          '</div>';
+        }).join('') + '</div>';
+    }).join('');
+    if (res.src === 'partial') body = '<div class="hint" style="color:#ffb454;margin:6px 0 0">This game was pulled before the Board started keeping the full ticket, so only the numbers the app graded were saved. Everything pulled from here on is kept in full.</div>' + body;
+  }
+  var n = res.markets.reduce(function(a, m){ return a + m.outcomes.length; }, 0);
+  ovl.querySelector('.box').innerHTML = '<h3>Every line DraftKings gave us</h3>' +
+    '<p class="sub">' + esc(label) + (pulledAt ? ' · pulled ' + esc(new Date(pulledAt).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' })) : '') + '</p>' +
+    (n ? '<p class="sub" style="color:var(--dim2)">' + n + ' line' + (n === 1 ? '' : 's') + ' across ' + res.markets.length + ' market' + (res.markets.length === 1 ? '' : 's') + ' — every side of every market that came back, bet or not. No quota spent reading this.</p>' : '') +
+    body + '<button class="close" id="gl-close" style="margin-top:14px">Close</button>';
+  ovl.querySelector('#gl-close').addEventListener('click', close);
+}
 async function adminGetDoc(doc){
   var j = await fsGetRaw(ADMIN, 'app_settings/' + doc);
   return j ? fsFields(j.fields || {}) : null;
@@ -2185,8 +2305,11 @@ async function openSettingsPanel(){
         (nLines
           ? '<div class="dkdet" data-dkdet="' + e3.id + '" style="display:' + (open ? '' : 'none') + ';padding:0 0 9px 4px">' +
               e3.det.map(function(gm){
+                var lbl = String(gm.g || '').replace(/\s*\u00b7\s*props\s*$/i, '');
                 return '<div style="margin:0 0 8px">' +
-                  '<div style="font-size:12.5px;font-weight:800;color:var(--bone);margin-bottom:2px">' + esc(gm.g) + '</div>' +
+                  '<div class="glrow" data-gl-app="' + esc(e3.app) + '" data-gl-date="' + esc(ptDate(e3.t)) + '" data-gl-game="' + esc(lbl) +
+                    '" data-gl-id="" data-gl-at="' + e3.t + '" style="font-size:12.5px;font-weight:800;color:var(--bone);margin-bottom:2px;cursor:pointer">' +
+                    esc(gm.g) + ' <span style="color:var(--dim2)">\u203a</span></div>' +
                   (gm.l || []).map(function(ln){
                     return '<div class="hint" style="color:var(--dim);padding:1px 0 1px 10px;font-variant-numeric:tabular-nums">' + esc(ln) + '</div>';
                   }).join('') + '</div>';
@@ -2253,7 +2376,7 @@ async function openSettingsPanel(){
     });
     return { games: n, last: last, when: when };
   };
-  var schedRow = function(g, span, st, matchable){
+  var schedRow = function(g, span, st, matchable, app){
     var tick = schedTick(g.t), rel = tick ? schedIn(tick) : '';
     var when = (span === 'week' ? schedDay(g.t) + ' ' : '') + ptTime(g.t);
     var tickLbl = tick ? 'pull ' + (span === 'week' ? schedDay(tick) + ' ' : '') + ptTime(tick) : 'pull \u2014';
@@ -2264,16 +2387,18 @@ async function openSettingsPanel(){
     else if (rel){ right = tickLbl + ' \u00b7 ' + rel; col = 'var(--dim)'; }
     else if (matchable){ right = tickLbl + ' \u00b7 no lines bought'; col = '#ffb454'; }
     else { right = tickLbl + ' \u00b7 earlier'; col = 'var(--dim2)'; }
-    return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid var(--hair2)">' +
+    var tap = g.noPull || !app ? '' : ' class="glrow" data-gl-app="' + esc(app) + '" data-gl-date="' + esc(ptDate(g.t)) +
+      '" data-gl-game="' + esc(g.g) + '" data-gl-id="' + esc(g.id || '') + '" data-gl-at="' + (got || '') + '"';
+    return '<div' + tap + ' style="display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px solid var(--hair2)' + (tap ? ';cursor:pointer' : '') + '">' +
       '<span style="flex:0 0 auto;font:700 11.5px/1.5 ui-monospace,Menlo,monospace;color:var(--dim)">' + esc(when) + '</span>' +
-      '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.g) + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:12.5px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.g) + (tap ? ' <span style="color:var(--dim2)">\u203a</span>' : '') + '</span>' +
       '<span class="hint" style="flex:0 0 auto;color:' + col + '">' + esc(right) + '</span>' +
     '</div>';
   };
   /* What is still coming reads first; anything whose tick has already come and
      gone follows under its own heading, so a slate of finished pulls can never
      look like a pile of misses. */
-  var schedRows = function(games, verb, span, st, matchable){
+  var schedRows = function(games, verb, span, st, matchable, app){
     var now = Date.now(), soon = [], past = [];
     games.forEach(function(g){
       var at = g.noPull ? g.t : (schedTick(g.t) || g.t);
@@ -2281,12 +2406,12 @@ async function openSettingsPanel(){
     });
     var out = '';
     if (soon.length){
-      out += soon.slice(0, 12).map(function(g){ return schedRow(g, span, st, matchable); }).join('');
+      out += soon.slice(0, 12).map(function(g){ return schedRow(g, span, st, matchable, app); }).join('');
       if (soon.length > 12) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (soon.length - 12) + ' more still to come, same rule: one pull each, 10\u201345 min before ' + verb + '</div>';
     }
     if (past.length){
       out += '<div style="font:800 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--dim2);margin:9px 0 1px">pull time already came</div>' +
-        past.slice(-8).map(function(g){ return schedRow(g, span, st, matchable); }).join('');
+        past.slice(-8).map(function(g){ return schedRow(g, span, st, matchable, app); }).join('');
       if (past.length > 8) out += '<div class="hint" style="color:var(--dim2);padding:4px 0 0">\u2026and ' + (past.length - 8) + ' earlier</div>';
     }
     return out;
@@ -2308,7 +2433,7 @@ async function openSettingsPanel(){
           var t = ev.commence_time ? new Date(ev.commence_time).getTime() : 0;
           if (!t) return;
           if (a.span === 'day' ? ptDate(t) !== today : (t < now - 4 * 3600000 || t > now + 7 * 86400000)) return;
-          out.push({ t: t, g: (ev.away_team || '?') + ' @ ' + (ev.home_team || '?') });
+          out.push({ t: t, id: ev.id || '', g: (ev.away_team || '?') + ' @ ' + (ev.home_team || '?') });
         });
         out.sort(function(x, y){ return x.t - y.t; });
         return { games: out };
@@ -2325,7 +2450,7 @@ async function openSettingsPanel(){
             ? st.games + ' game' + (st.games === 1 ? '' : 's') + ' pulled so far ' + (a.span === 'day' ? 'today' : 'this week') + ' \u00b7 last at ' + esc(ptTime(st.last))
             : 'nothing pulled ' + (a.span === 'day' ? 'yet today' : 'yet this week')) + '</div>';
       var body = res.err ? '<div class="hint" style="color:#ff7a7a">' + esc(res.err) + ' \u2014 try Refresh</div>'
-        : res.games.length ? schedRows(res.games, a.verb, a.span, st, !off && !!SCHED_MATCH[a.id])
+        : res.games.length ? schedRows(res.games, a.verb, a.span, st, !off && !!SCHED_MATCH[a.id], a.id)
         : '<div class="hint" style="color:var(--dim2)">Nothing scheduled \u2014 no quota will be spent.</div>';
       return head + note + body;
     }).join('');
@@ -2661,7 +2786,7 @@ async function openSettingsPanel(){
       '\u2022 <b>Icing</b> \u2014 moneyline, total and puck-line spread in one bulk call per wave.</p>' +
     '<p class="sub" style="margin:0 0 4px;color:var(--dim2)">Pete\u2019s Picks never pulls DraftKings (no motorsport odds exist). Diamond IQ Free spends no quota of its own \u2014 it only reads the MLB game lines Premium already pulled.</p></div>' +
     '<div class="sect"><div class="row"><span class="lbl">What gets pulled and when</span><span class="hint">Pacific \u00b7 live</span></div>' +
-    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Every game on the slate with the exact half-hour tick that will buy its DraftKings lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Reading this schedule costs zero API quota. DraftKings drops a game from its list the moment it ends, so this is what is left of the slate \u2014 the pull history below is the full record of the day.</p>' +
+    '<p class="sub" style="margin:6px 0 8px;color:var(--dim2)">Every game on the slate with the exact half-hour tick that will buy its DraftKings lines. Diamond IQ, The Key and Icing show <b>today</b>; Gridline and Pete\u2019s Picks show the <b>next 7 days</b>. Tap any game to see every line DraftKings sent for it. Reading this schedule costs zero API quota. DraftKings drops a game from its list the moment it ends, so this is what is left of the slate \u2014 the pull history below is the full record of the day.</p>' +
     '<div id="dksched"><div class="hint">Reading the slate\u2026</div></div>' +
     '<button class="close" id="dksched-rf" style="border:1px solid var(--hair);border-radius:9px;padding:8px;margin-top:10px">Refresh the schedule</button></div>' +
     '<div class="sect"><div class="row"><span class="lbl">DK auto-pulls</span><span class="hint">automatic \u00b7 quota-safe</span></div>' +
@@ -2743,6 +2868,12 @@ async function openSettingsPanel(){
       if (want === 'lab') wireLab(box);
       if (want === 'dk') loadDkSched(false);
     });
+  });
+  box.addEventListener('click', function(e){
+    var r = e.target.closest ? e.target.closest('.glrow') : null;
+    if (!r || !box.contains(r)) return;
+    openGameLines(r.getAttribute('data-gl-app'), r.getAttribute('data-gl-date'),
+      r.getAttribute('data-gl-game'), r.getAttribute('data-gl-id'), +r.getAttribute('data-gl-at') || 0);
   });
   var schedRf = box.querySelector('#dksched-rf');
   if (schedRf) schedRf.addEventListener('click', function(){ loadDkSched(true); });

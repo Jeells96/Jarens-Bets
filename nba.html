@@ -2079,7 +2079,16 @@ function mapOddsEvent(ev, slateGames){
     mlHome: mlH, mlAway: mlA,
     spreadHome: spO && spO.point != null ? spO.point : null,
     total: tO && tO.point != null ? tO.point : null,
-    favAb: favAb, favPrice: favPrice
+    favAb: favAb, favPrice: favPrice,
+    /* Everything DraftKings actually sent for this game - every market, every
+       side, whether or not The Key bets it. Same response, no extra quota. */
+    home: ev.home_team, away: ev.away_team,
+    raw: (bk.markets || []).reduce(function(o, m){
+      o[m.key] = (m.outcomes || []).map(function(x){
+        return { n: x.name, d: x.description || '', p: x.price == null ? null : x.price, pt: x.point == null ? null : x.point };
+      });
+      return o;
+    }, {})
   };
 }
 
