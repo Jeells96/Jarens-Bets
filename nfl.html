@@ -682,6 +682,9 @@
 
   /* Game Bets tab */
   .gamebets { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+  /* Bets page card — the same shell every other app uses on its Bets tab, so
+     Gridline reads identically to Diamond IQ, The Key and Icing. */
+  .bcard { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 13px; padding: 13px; margin: 0 12px 11px; }
   .gb-game { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
   .gb-head { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
   .gb-teams { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 700; font-size: 14px; }
@@ -5273,7 +5276,7 @@ function mybStripHtml(){
   const a = mybAll();
   if (!a.length) return '';
   const g = a.filter(b => b.g === 0 || b.g === 1), w = g.filter(b => b.g === 1).length;
-  let h = '<div class="card" style="margin-bottom:11px"><div class="mybhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
+  let h = '<div class="bcard"><div class="mybhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
     '<span style="font-size:.74rem;font-weight:800;letter-spacing:.08em">MY BETS <span style="opacity:.5;font-weight:600;font-size:.64rem">' + (GB.mybOpen ? '▴' : '▾') + '</span></span>' +
     '<span class="small" style="opacity:.7">' + a.length + ' tracked' + (g.length ? ' · your record <b>' + Math.round(100 * w / g.length) + '%</b> (' + w + '/' + g.length + ')' : '') + '</span></div>';
   if (GB.mybOpen){
@@ -5420,11 +5423,12 @@ function gbRows(key) {
 function gbRowHtml(row, grey) {
   const mkey = state.season + '-W' + state.week + '|' + row.tok;
   if (row.mark === true || row.mark === false) mybGrade(mkey, row.mark);
-  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.82rem">' +
+  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.74rem">' +
     mybBtn(mkey, String(row.html).replace(/<[^>]*>/g, '') + (row.sub ? ' (' + row.sub + ')' : ''), state.season + ' W' + state.week) +
-    '<span style="flex:1;min-width:0;' + (grey ? 'color:rgba(255,255,255,.35)' : '') + '">' + row.html + (row.sub ? ' <span style="color:rgba(255,255,255,.35);font-size:.7rem">' + escapeHtml(row.sub) + '</span>' : '') + gbMark(row.mark) + (row.early ? ' <span style="color:#ffb454;font-size:.66rem;font-weight:700;white-space:nowrap">○ early look</span>' : '') + '</span>' +
-    '<span style="font-variant-numeric:tabular-nums;font-weight:800;color:' + (grey ? 'rgba(255,255,255,.35)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</span></div>' +
-    (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.74rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why + '</div>' : '');
+    '<span style="flex:1;min-width:0;' + (grey ? 'color:rgba(255,255,255,.35)' : '') + '">' + row.html + (row.sub ? ' <span style="color:rgba(255,255,255,.35);font-size:.62rem">' + escapeHtml(row.sub) + '</span>' : '') + gbMark(row.mark) + (row.early ? ' <span style="color:#ffb454;font-size:.6rem;font-weight:700;white-space:nowrap">○ early look</span>' : '') + '</span>' +
+    '<span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:.74rem;color:' + (grey ? 'rgba(255,255,255,.35)' : '#ff5d5d') + '">' + Math.round(row.grade) + '</span></div>' +
+    (GB.why === row.tok ? '<div style="padding:8px 10px;background:rgba(255,255,255,.05);border-radius:9px;margin:3px 0 7px;font-size:.68rem;color:rgba(255,255,255,.65);line-height:1.5">' + row.why +
+      '<div style="margin-top:4px">Grade = the model’s confidence (' + Math.round(row.grade) + '). The bet line is the threshold set on the Board.</div></div>' : '');
 }
 function gbShiftWeek(n) {
   state.week = Math.max(1, Math.min(18, (state.week || 1) + n));
@@ -5435,7 +5439,7 @@ function gbShiftWeek(n) {
   loadWeek();
 }
 function gbNavHtml() {
-  const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:9px;padding:7px 0;font-size:.7rem;font-weight:700;cursor:pointer';
+  const btn = 'flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:9px;padding:7px 0;font-size:.66rem;font-weight:700;cursor:pointer';
   return '<div style="display:flex;gap:8px;margin-top:10px">' +
     '<button class="gbnav" data-n="-1" style="' + btn + '">‹ prev week</button>' +
     '<button class="gbnav" data-n="1" style="' + btn + '">next week ›</button>' +
@@ -5445,18 +5449,18 @@ function gbWireNav(main) {
   main.querySelectorAll('.gbnav').forEach(b => b.addEventListener('click', () => gbShiftWeek(parseInt(b.getAttribute('data-n'), 10))));
 }
 function renderGameBets(main) {
-  let html = '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(212,255,58,.35);border-radius:13px;padding:15px 16px 12px;margin-bottom:11px">' +
-    '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:var(--accent);text-transform:uppercase">Game week · NFL</div>' +
-    '<div style="font-weight:900;font-size:1.4rem;letter-spacing:-.01em;margin:3px 0 1px">' + state.season + ' · Week ' + state.week + '</div>' +
-    '<div style="font-size:.74rem;color:rgba(255,255,255,.5)">Gridline · every pick graded walk-forward</div>' +
-    '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px;font-size:.7rem;color:rgba(255,255,255,.5)">' +
+  let html = '<div class="bcard" style="padding:15px 16px 12px;border-color:rgba(255,93,93,.35)">' +
+    '<div style="font-size:.62rem;font-weight:800;letter-spacing:.2em;color:#ff5d5d;text-transform:uppercase">Game week · NFL</div>' +
+    '<div style="font-weight:900;font-size:1.35rem;letter-spacing:-.01em;margin:3px 0 1px">' + state.season + ' · Week ' + state.week + '</div>' +
+    '<div style="font-size:.72rem;color:rgba(255,255,255,.5)">Gridline · every pick graded walk-forward</div>' +
+    '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:11px;border-top:1px solid rgba(255,255,255,.09);padding-top:9px;font-size:.68rem;color:rgba(255,255,255,.5)">' +
       '<span><b style="color:#ff5d5d">##</b> = confidence grade</span>' +
       '<span>ranked by real success rate</span>' +
       '<span>tap a <b style="color:#fff">name</b> — why</span>' +
       '<span>tap a <b style="color:#fff">card</b> — bet line</span>' +
     '</div>' + gbNavHtml() + '</div><!--MYB-->';
   if (!state.games.length) {
-    main.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + '<div class="hint"><div class="title">No games loaded for this week</div>Use the arrows above (or Load Week in the header) to pull a slate.</div>';
+    main.innerHTML = html.replace('<!--MYB-->', mybStripHtml()) + '<div class="bcard" style="font-size:.72rem;color:rgba(255,255,255,.5)">No games loaded for this week — use the arrows above, or Load Week in the header, to pull a slate.</div>';
     gbWireNav(main);
     return;
   }
@@ -5465,7 +5469,7 @@ function renderGameBets(main) {
     return null;
   })();
   if (earlyNote){
-    html += '<div style="margin-bottom:11px;padding:10px 12px;border:1px solid rgba(255,180,84,.5);border-radius:11px;background:rgba(255,180,84,.08);color:#ffb454;font-size:.74rem;line-height:1.55">' +
+    html += '<div style="margin:0 12px 11px;padding:10px 12px;border:1px solid rgba(255,180,84,.5);border-radius:11px;background:rgba(255,180,84,.08);color:#ffb454;font-size:.68rem;line-height:1.55">' +
       '<b>⚠ Early look — not final.</b> ' + escapeHtml(earlyNote.charAt(0).toUpperCase() + earlyNote.slice(1)) + '. Gridline factors <b>injuries and weather</b> into every projection, so these numbers will move once that information lands. ' +
       '<b>Recommended to wait until game week — ideally the day of — before placing NFL bets.</b> Picks marked “○ early look” are kept out of ⚡ Super Locks until their data is in.</div>';
   }
@@ -5479,16 +5483,16 @@ function renderGameBets(main) {
     const locks = all.filter(r => r.grade >= th);
     const rate = gbRate(meta.rateKeys);
     const open = !!GB.open[k];
-    html += '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.09);border-radius:13px;padding:12px 13px;margin-bottom:11px">' +
+    html += '<div class="bcard" style="padding:12px 13px">' +
       '<div class="gbhead" data-k="' + k + '" style="cursor:pointer">' +
         '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">' +
-          '<div style="font-size:.78rem;font-weight:800;letter-spacing:.08em;color:var(--accent)">' + meta.tag + ' <span style="color:rgba(255,255,255,.35);font-weight:600;font-size:.66rem">' + (open ? '▴' : '▾') + '</span></div>' +
-          (rate ? '<span style="font-size:.68rem;color:rgba(255,255,255,.5)">this bet type has hit <b style="color:#fff">' + rate.pct + '%</b> of the time (' + rate.h + '/' + rate.n + ')</span>' : '') + '</div>' +
-        '<div style="font-size:.7rem;color:rgba(255,255,255,.4);margin:2px 0 5px">Bet = ' + meta.what + ' · bet line: confidence <b style="color:#fff">' + th + '+</b></div>' +
+          '<div style="font-size:.76rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d">' + meta.tag + ' <span style="color:rgba(255,255,255,.35);font-weight:600;font-size:.66rem">' + (open ? '▴' : '▾') + '</span></div>' +
+          (rate ? '<span style="font-size:.66rem;color:rgba(255,255,255,.5)">this bet type has hit <b style="color:#fff">' + rate.pct + '%</b> of the time (' + rate.h + '/' + rate.n + ')</span>' : '') + '</div>' +
+        '<div style="font-size:.66rem;color:rgba(255,255,255,.4);margin:2px 0 5px">Bet = ' + meta.what + ' · bet line: confidence <b style="color:#fff">' + th + '+</b></div>' +
       '</div>';
     if (!open) {
       if (locks.length) html += locks.map(r => gbRowHtml(r, false)).join('');
-      else html += '<div style="font-size:.72rem;color:rgba(255,255,255,.4);padding:3px 0">No picks clear the bet line this week — tap to see every candidate.</div>';
+      else html += '<div style="font-size:.66rem;color:rgba(255,255,255,.4);padding:3px 0">No picks clear the bet line this week — tap to see every candidate.</div>';
     } else {
       let lineDrawn = false;
       html += all.map(r => {
@@ -5496,11 +5500,11 @@ function renderGameBets(main) {
         let pre = '';
         if (!q && !lineDrawn) {
           lineDrawn = true;
-          pre = '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed #ff5d5d"></div><span style="font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d;white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span><div style="flex:1;border-top:2px dashed #ff5d5d"></div></div>';
+          pre = '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="flex:1;border-top:2px dashed #ff5d5d"></div><span style="font-size:.56rem;font-weight:800;letter-spacing:.08em;color:#ff5d5d;white-space:nowrap">BET LINE · ' + th + ' — bet above, skip below</span><div style="flex:1;border-top:2px dashed #ff5d5d"></div></div>';
         }
         return pre + gbRowHtml(r, !q);
       }).join('');
-      if (!lineDrawn) html += '<div style="font-size:.7rem;color:rgba(255,255,255,.4);padding:3px 0 0">Everyone shown clears the bet line.</div>';
+      if (!lineDrawn) html += '<div style="font-size:.66rem;color:rgba(255,255,255,.4);padding:3px 0 0">Everyone shown clears the bet line.</div>';
     }
     html += '</div>';
   }

@@ -141,8 +141,11 @@ footer{padding:20px 16px;font-size:.62rem;color:var(--mt2);line-height:1.6;borde
 
 <div class="tabs">
   <button class="tab on" id="tab-bets" onclick="showView('bets')">BETS</button>
-  <button class="tab" id="tab-today" onclick="showView('today')">TODAY</button>
-  <button class="tab" id="tab-results" onclick="showView('results')">RESULTS</button>
+  <!-- TODAY and RESULTS are hidden: nobody opens them any more. The views
+       themselves stay wired and working — the cron loads and the grader still
+       drive them — they just no longer have a button in the bar. -->
+  <button class="tab" id="tab-today" hidden onclick="showView('today')">TODAY</button>
+  <button class="tab" id="tab-results" hidden onclick="showView('results')">RESULTS</button>
   <button class="tab" style="margin-left:auto" onclick="openSettings()">⚙</button>
 </div>
 
@@ -2327,7 +2330,7 @@ async function renderResultsTab(){
     rp('Loading success history…');
     s=await computeSuccessStats();
     rp('');
-    if(!s){$('rout').innerHTML='<div class="empty"><b>No stats yet</b>'+(FBH.ready?'Nothing graded so far — days grade themselves whenever anyone taps Load on the Today tab.':'League server unreachable and nothing cached on this device.')+'</div>';return;}
+    if(!s){$('rout').innerHTML='<div class="empty"><b>No stats yet</b>'+(FBH.ready?'Nothing graded so far — days grade themselves on every scheduled run.':'League server unreachable and nothing cached on this device.')+'</div>';return;}
   }else{
     computeSuccessStats().then(()=>drawResultsList());
   }
@@ -2716,7 +2719,7 @@ function pbWhyHtml(m,row){
   const bits=[];
   if(chips)bits.push(`<div class="wchips">${chips}</div>`);
   if(r.math)bits.push(`<div class="math"><b>Math:</b> ${r.math}</div>`);
-  if(!chips&&!r.math)bits.push(`<div>Confirmed matchup · full breakdown lives on the Today tab card (league snapshots carry the numbers, not the notes).</div>`);
+  if(!chips&&!r.math)bits.push(`<div>Confirmed matchup · the league snapshot for this day carries the numbers, not the notes.</div>`);
   const meta=PB_META[m];
   if(meta.kind==='edge'){
     bits.push(`<div style="margin-top:4px">Grade = how far our expectation sits from the line (${row.grade} past it). The bet line is edge ≥ ${pbLockOf(m)} — smaller edges aren’t worth playing.</div>`);
@@ -2778,7 +2781,7 @@ function renderBetsView(){
     el.innerHTML=html;wirePbNav(el);return;
   }
   if(!haveAny){
-    html+=`<div class="empty"><b>Building today’s bet slip…</b>The board loads itself in the background — this fills in the moment it’s ready. The Today tab shows the full detail view.</div>`;
+    html+=`<div class="empty"><b>Building today’s bet slip…</b>The board loads itself in the background — this fills in the moment it’s ready.</div>`;
     el.innerHTML=html;wirePbNav(el);return;
   }
   html+='<!--MYB-->';
