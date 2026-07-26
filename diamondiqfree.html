@@ -10842,7 +10842,7 @@ function openHRLineMo(gamePk,opts={}){
   }
   function grantOf(s, list){
     if (!s) return { ok: false };
-    if (s.free){
+    if (s.free || s.trial){
       // authorised on this device: their real access, including DK visibility
       for (var t = 0; t < list.length; t++){ var tm = list[t];
         if (!tm || tm.active === false || !tm.code) continue;
@@ -10851,7 +10851,13 @@ function openHRLineMo(gamePk,opts={}){
         if (!gDevTrusted(tm)) continue;
         return { ok: true, apps: Array.isArray(tm.apps) ? tm.apps : null, dk: tm.dk !== false };
       }
-      return { ok: true, apps: ['mlbfree'], dk: false };
+      // a name that already has a code enters with the code, never on a trial
+      for (var c = 0; c < list.length; c++){
+        var cm = list[c];
+        if (cm && cm.name != null && cm.code && norm(cm.name) === norm(s.name)) return { ok: false };
+      }
+      // no code yet: free trial — everything unlocked until the owner decides
+      return { ok: true, apps: null, dk: true };
     }
     if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true };
     for (var i = 0; i < list.length; i++){ var m = list[i];
@@ -11037,12 +11043,17 @@ function openHRLineMo(gamePk,opts={}){
     fetch(DOC + 'app_settings/free_log?key=' + MK, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
       var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
       var hit = null; for (var i = 0; i < arr.length; i++){ if (norm(arr[i].n) === norm(name)){ hit = arr[i]; break; } }
+      /* Also stamp the device. This app protects a name with a code the person
+         picks; the Board and the other apps protect it by device. Recording
+         both keeps the two in agreement about who owns a name. */
+      var me = null; try { me = localStorage.getItem('board_device_v1'); } catch (e) {}
       if (hit){
         if (hit.c == null || hit.c === ''){ hit.c = code; hit.t = Date.now(); } // legacy/unclaimed name — claim it now
         else if (norm(hit.c) !== norm(code)){ cb(false); return; }             // taken — code mismatch
         else { hit.t = Date.now(); }                                            // returning owner
+        if (!hit.d && me) hit.d = me;
       } else {
-        arr.unshift({ n: name, c: code, t: Date.now(), fs: Date.now() });
+        arr.unshift({ n: name, c: code, d: me || null, t: Date.now(), fs: Date.now(), tn: true });
       }
       arr = arr.slice(0, 200);
       fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) }).catch(function(){});

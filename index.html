@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26g';
+var BOARD_BUILD = '2026-07-26h';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -1370,22 +1370,47 @@ async function fsPatch(cfg, path, obj){
 }
 async function adminSetDoc(collection, doc, obj){ return fsPatch(ADMIN, collection + '/' + doc, obj); }
 var BOARD_DK_OK = true; // global DK-visibility, read from dk_auto on boot
-function logFreeSignin(name, asRequest){
-  try {
-    fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
-      var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
-      var norm = function(v){ return String(v || '').trim().toLowerCase(); };
-      var hit = null;
-      for (var i = 0; i < arr.length; i++){ if (norm(arr[i].n) === norm(name)){ hit = arr[i]; break; } }
-      if (hit){ if (asRequest){ hit.req = true; hit.rt = Date.now(); if (!hit.fs) hit.fs = hit.t || Date.now(); } }
-      else arr.unshift(asRequest
-        ? { n: name, t: Date.now(), fs: Date.now(), req: true, rt: Date.now() }
-        : { n: name, t: Date.now(), fs: Date.now() });
-      arr = arr.slice(0, 200);
-      fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
-    }).catch(function(){});
-  } catch (e) {}
+/* A NAME IS CLAIMED ONCE, BY ONE DEVICE.
+   The first device to sign up under a name owns it. Anyone else typing that
+   name is turned away and told to enter the code — whether or not a code has
+   been set yet — so nobody can walk into someone else's account while an
+   authorisation is pending. The claim is the device id, written next to the
+   name in the free log.
+   Returns: 'claimed' (this device owns it), 'taken' (someone else does). */
+function freeLogUrl(mask){
+  return FS + ADMIN.p + '/databases/(default)/documents/app_settings/free_log?key=' + ADMIN.k +
+    (mask ? '&updateMask.fieldPaths=list' : '');
 }
+function myDeviceId(){ try { return localStorage.getItem('board_device_v1') || devId(); } catch (e){ return null; } }
+async function claimName(name, asRequest){
+  var nrm = function(v){ return String(v || '').trim().toLowerCase(); };
+  var me = myDeviceId();
+  var arr = [];
+  try {
+    var r = await fetch(freeLogUrl(false), { cache: 'no-store' });
+    if (r.ok) arr = JSON.parse((((await r.json()).fields || {}).list || {}).stringValue || '[]');
+  } catch (e) { return { state: 'offline' }; }
+  var hit = null;
+  for (var i = 0; i < arr.length; i++){ if (nrm(arr[i].n) === nrm(name)){ hit = arr[i]; break; } }
+  if (hit && hit.d && me && hit.d !== me) return { state: 'taken', entry: hit };
+  var firstEver = !hit;
+  if (hit){
+    if (!hit.d && me) hit.d = me;                 // an older sign-up, claimed now
+    if (asRequest){ hit.req = true; hit.rt = Date.now(); if (!hit.fs) hit.fs = hit.t || Date.now(); }
+    if (!hit.tn){ hit.tn = true; firstEver = true; }   // trial notice: once per ACCOUNT
+  } else {
+    hit = { n: name, t: Date.now(), fs: Date.now(), d: me || null, tn: true };
+    if (asRequest){ hit.req = true; hit.rt = Date.now(); }
+    arr.unshift(hit);
+  }
+  arr = arr.slice(0, 200);
+  try {
+    await fetch(freeLogUrl(true), { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
+  } catch (e) {}
+  return { state: 'claimed', first: firstEver, entry: hit };
+}
+function logFreeSignin(name, asRequest){ claimName(name, asRequest).catch(function(){}); }
 
 /* ---- members: [{name, code, apps:['mlb',...]|null, active}] ---- */
 var APP_KEYS = [['mlb','Diamond IQ (Premium)'],['mlbfree','Diamond IQ Free'],['nfl','Gridline'],['nba','The Key'],['hockey','Icing'],['nascar',"Pete's Picks (NASCAR)"],['superlocks','⚡ Super Locks']];
@@ -1618,6 +1643,23 @@ function clearNewSigninBadge(){
 }
 var CURRENT_MEMBER = null; // the resolved identity, for the "My plan" panel
 function savedMember(){ try { return JSON.parse(localStorage.getItem(GATE_LS) || 'null'); } catch (e){ return null; } }
+/* Shown once, on the first entry to an ACCOUNT — the claim happens once, so
+   this can only ever fire once no matter how many devices or apps they open. */
+function showTrialNote(name){
+  var ovl = document.createElement('div');
+  ovl.className = 'ovl';
+  ovl.innerHTML = '<div class="box" style="max-width:400px;text-align:center">' +
+    '<div style="font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#c9a84c">Free trial</div>' +
+    '<h3 style="font-size:23px;margin:6px 0 4px">You\u2019re in, ' + esc(String(name || '').split(' ')[0]) + '</h3>' +
+    '<p class="sub" style="margin:2px 0 14px;line-height:1.6">Everything is unlocked for you \u2014 every sport, \u26a1 Super Locks and the DraftKings odds. ' +
+    'Have a look around. I\u2019ll be in touch about keeping it on.</p>' +
+    '<button class="go" id="trial-ok">Start looking</button></div>';
+  document.body.appendChild(ovl);
+  lockPage('trial');
+  var close = function(){ ovl.remove(); unlockPage('trial'); };
+  ovl.querySelector('#trial-ok').addEventListener('click', close);
+  ovl.addEventListener('click', function(e){ if (e.target === ovl) close(); });
+}
 /* Has this device already been authorised for this person? The trusted list is
    written by the owner (it lives in the member record), never by the device —
    a phone cannot talk itself into someone else's account. */
@@ -1645,17 +1687,37 @@ async function runGate(){
   var cfg = await adminGetDoc('board_access');
   var list = parseMembers(cfg);
   if (!list.length) list = [{ name: null, code: 'greenlight', apps: null, active: true }]; // until first save
-  /* Free-tier device. If this exact device was authorised when you gave them
-     a code, it just starts working — no code to type, because you already
-     said yes to this device. Anywhere else, they enter the code once. */
-  if (saved && saved.free){
+  /* An account with no code yet. Two ways in:
+     1. You already gave them a code and authorised this device — it picks up
+        their real access with nothing to type.
+     2. Otherwise they're on the free trial: everything unlocked, no end date,
+        until you set their code and decide what they keep. */
+  if (saved && (saved.free || saved.trial)){
     var up = trustedUpgrade(saved.name, list);
     if (up){
       CURRENT_MEMBER = up.member; GRANTS = up.apps ? new Set(up.apps) : null;
       try { localStorage.setItem(GATE_LS, JSON.stringify({ name: up.member.name, code: up.member.code })); } catch (e) {}
       markLockedCards(); return;
     }
-    CURRENT_MEMBER = { free: true, name: saved.name }; GRANTS = new Set(['mlbfree']); markLockedCards(); return;
+    /* Two things must be true before a trial is honoured, because the saved
+       identity lives on the device and a device can be edited:
+       1. the name has no code yet — once you've set one, only the code (or a
+          device you authorised) gets in, pending or not;
+       2. this device is the one that claimed the name. */
+    var nrmT = function(v){ return String(v == null ? '' : v).trim().toLowerCase(); };
+    var coded = list.some(function(m){ return m && m.name != null && m.code && nrmT(m.name) === nrmT(saved.name); });
+    var own = coded ? { state: 'taken' } : await claimName(saved.name, false);
+    if (own.state !== 'taken'){
+      CURRENT_MEMBER = { trial: true, name: saved.name };
+      GRANTS = null;                            // trial = everything unlocked
+      if (!saved.trial){ try { localStorage.setItem(GATE_LS, JSON.stringify({ trial: true, name: saved.name })); } catch (e) {} }
+      markLockedCards();
+      if (own.first) showTrialNote(saved.name);
+      return;
+    }
+    // the name is spoken for — this device has to enter the code
+    try { localStorage.removeItem(GATE_LS); } catch (e) {}
+    saved = null;
   }
   if (saved && saved.code){
     var g0 = memberMatch(saved.name, saved.code, list);
@@ -1689,7 +1751,7 @@ async function runGate(){
   };
   /* Request a code: records the ask so it shows on the Board, then drops them
      straight into the free edition — nobody waits at a locked door. */
-  var requestCode = function(){
+  var requestCode = async function(){
     var r = readName();
     var errEl = document.getElementById('gateerr');
     var nrm = function(v){ return String(v || '').trim().toLowerCase(); };
@@ -1706,17 +1768,26 @@ async function runGate(){
     }
     errEl.textContent = '';
     var btn = document.getElementById('gatereq');
-    if (btn){ btn.disabled = true; btn.textContent = '\u2713 Request sent'; }
+    if (btn){ btn.disabled = true; btn.textContent = 'Checking\u2026'; }
+    /* One device per name. If someone already claimed it, this device does not
+       get in on it — not even while a code is pending. */
+    var res = await claimName(r.name, true);
+    if (res.state === 'taken'){
+      errEl.textContent = 'That name is already signed up on another device — enter the code you were given.';
+      if (btn){ btn.disabled = false; btn.textContent = 'Request a code'; }
+      return;
+    }
+    if (btn) btn.textContent = '\u2713 Request sent';
     var note = document.getElementById('gatereqnote');
-    if (note) note.innerHTML = '<b style="color:#7fd99a">Request sent for ' + esc(r.name) + '.</b> You\u2019ll get a code once you\u2019re authorized \u2014 until then you\u2019re on the free edition.';
-    CURRENT_MEMBER = { free: true, name: r.name };
-    GRANTS = new Set(['mlbfree']);
-    try { localStorage.setItem(GATE_LS, JSON.stringify({ free: true, name: r.name })); } catch (e) {}
-    logFreeSignin(r.name, true);
+    if (note) note.innerHTML = '<b style="color:#7fd99a">Request sent for ' + esc(r.name) + '.</b> Everything is unlocked for you in the meantime \u2014 this is your free trial.';
+    CURRENT_MEMBER = { trial: true, name: r.name };
+    GRANTS = null;                                // trial = everything unlocked
+    try { localStorage.setItem(GATE_LS, JSON.stringify({ trial: true, name: r.name })); } catch (e) {}
     setTimeout(function(){
       ovl.remove(); unlockPage('gate');
       markLockedCards();
-    }, 1200);
+      if (res.first !== false) showTrialNote(r.name);
+    }, 900);
   };
   document.getElementById('gatereq').addEventListener('click', requestCode);
   var tryIt = function(){

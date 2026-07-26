@@ -3770,7 +3770,7 @@ async function runLabPrem(){
   }
   function grantOf(s, list){
     if (!s) return { ok: false };
-    if (s.free){
+    if (s.free || s.trial){
       /* Free sign-in on a device the owner has since authorised: it just
          starts working, with whatever apps they were given. Any other device
          still needs the code. */
@@ -3782,7 +3782,17 @@ async function runLabPrem(){
         return { ok: true, apps: Array.isArray(tm.apps) ? tm.apps : null,
           dk: tm.dk !== false, dkMode: tm.dkMode || (tm.dk === false ? 'off' : 'unlimited') };
       }
-      return { ok: true, apps: ['mlbfree'], dk: false, dkMode: 'off' };
+      /* Their name already has a code and this device is not one you
+         authorised: no trial, no free ride — they enter the code. Applies
+         while your decision is still pending, which is the point. */
+      for (var c = 0; c < list.length; c++){
+        var cm = list[c];
+        if (cm && cm.name != null && cm.code && norm(cm.name) === norm(s.name)) return { ok: false };
+      }
+      /* No code set for them yet: they are on the free trial — everything
+         unlocked, no end date, until the owner gives them a code and decides
+         what they keep. An older free-only sign-in is treated the same. */
+      return { ok: true, apps: null, dk: true, dkMode: 'unlimited' };
     }
     if (s.code && pinOk(s.code)) return { ok: true, apps: null, dk: true, dkMode: 'unlimited' };
     for (var i = 0; i < list.length; i++){ var m = list[i];
@@ -3971,16 +3981,37 @@ async function runLabPrem(){
       }).catch(function(){ cb(false); });
     } catch (e){ cb(false); }
   }
-  function logFree(name){
+  /* A NAME IS CLAIMED ONCE, BY ONE DEVICE. The first device to sign up under a
+     name owns it; anyone else has to enter the code, even while the owner
+     hasn't set one yet. The claim is this device's id, stored beside the name.
+     Returns 'taken' when the name belongs to a different device. */
+  function myDev(){ try { return localStorage.getItem('board_device_v1'); } catch (e){ return null; } }
+  async function claimName(name, asRequest){
+    var me = myDev(), arr = [];
     try {
-      fetch(DOC + 'app_settings/free_log?key=' + MK).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
-        var arr = []; try { arr = JSON.parse((((j || {}).fields || {}).list || {}).stringValue || '[]'); } catch (e) {}
-        if (!arr.some(function(x){ return norm(x.n) === norm(name); })) arr.unshift({ n: name, t: Date.now(), fs: Date.now() });
-        arr = arr.slice(0, 200);
-        fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
-      }).catch(function(){});
+      var r = await fetch(DOC + 'app_settings/free_log?key=' + MK, { cache: 'no-store' });
+      if (r.ok) arr = JSON.parse((((await r.json()).fields || {}).list || {}).stringValue || '[]');
+    } catch (e){ return { state: 'offline' }; }
+    var hit = null;
+    for (var i = 0; i < arr.length; i++){ if (norm(arr[i].n) === norm(name)){ hit = arr[i]; break; } }
+    if (hit && hit.d && me && hit.d !== me) return { state: 'taken' };
+    var first = !hit;
+    if (hit){
+      if (!hit.d && me) hit.d = me;
+      if (asRequest){ hit.req = true; hit.rt = Date.now(); if (!hit.fs) hit.fs = hit.t || Date.now(); }
+      if (!hit.tn){ hit.tn = true; first = true; }
+    } else {
+      hit = { n: name, t: Date.now(), fs: Date.now(), d: me || null, tn: true };
+      if (asRequest){ hit.req = true; hit.rt = Date.now(); }
+      arr.unshift(hit);
+    }
+    arr = arr.slice(0, 200);
+    try {
+      await fetch(DOC + 'app_settings/free_log?key=' + MK + '&updateMask.fieldPaths=list', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { list: { stringValue: JSON.stringify(arr) } } }) });
     } catch (e) {}
+    return { state: 'claimed', first: first };
   }
+  function logFree(name){ claimName(name, false).catch(function(){}); }
   function showGate(list){
     var fields = FREE
       ? nameRow()
@@ -4029,11 +4060,20 @@ async function runLabPrem(){
         err('That name already has an access code \u2014 enter the code above to sign in.');
         return;
       }
-      reqBtn.disabled = true; reqBtn.textContent = 'Sending\u2026';
-      requestCode(nm, function(ok){
-        reqBtn.textContent = ok ? '\u2713 Request sent' : '\u2713 Request saved';
+      reqBtn.disabled = true; reqBtn.textContent = 'Checking\u2026';
+      /* One device per name — if it's already signed up elsewhere, this device
+         does not get in on it, code pending or not. */
+      claimName(nm, true).then(function(res){
+        if (res.state === 'taken'){
+          err('That name is already signed up on another device \u2014 enter the code you were given.');
+          reqBtn.disabled = false; reqBtn.textContent = 'Request a code';
+          return;
+        }
+        try { localStorage.setItem(LS, JSON.stringify({ trial: true, name: nm })); } catch (e) {}
+        reqBtn.textContent = '\u2713 Request sent';
         var note = document.getElementById('bg-reqnote');
-        if (note) note.innerHTML = '<b style="color:#7fd99a">Request sent for ' + esc(nm) + '.</b> You\u2019ll get a code once the owner authorizes you. Until then the <b style="color:#e8edf4">free edition</b> is open to you right now \u2014 no code needed.';
+        if (note) note.innerHTML = '<b style="color:#7fd99a">Request sent for ' + esc(nm) + '.</b> Everything is unlocked for you in the meantime \u2014 this is your <b style="color:#c9a84c">free trial</b>.';
+        setTimeout(function(){ location.reload(); }, 1100);
       });
     });
     ov.querySelectorAll('input').forEach(function(i){ i.addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); }); });
