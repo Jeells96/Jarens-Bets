@@ -3384,7 +3384,12 @@ document.addEventListener('DOMContentLoaded', boot);
       if (!s || !s.name) return;
       var id = devId();
       if (!id) return;
-      if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 2 * 60 * 1000) return;
+      /* The quiet period is shared with the Board and every other app (same
+         origin, same key), so a Board open a minute ago must not swallow the
+         record of the app you then walked into. If the app on file isn't this
+         one, the stamp goes through anyway. */
+      var fresh = Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 2 * 60 * 1000;
+      if (fresh && localStorage.getItem('board_device_app') === String(APPKEY || '')) return;
       /* Lives in app_settings/devices as ONE map keyed by device id. Writing
          with the nested field mask d.<id> touches only this device's key, so
          two phones still can't overwrite each other — and it stays inside the
@@ -3404,7 +3409,10 @@ document.addEventListener('DOMContentLoaded', boot);
       }).then(function(r){
         // only start the debounce once it actually LANDED, so a rejected
         // write can never mute the following attempts
-        if (r && r.ok) localStorage.setItem('board_device_seen2', String(Date.now()));
+        if (r && r.ok){
+          localStorage.setItem('board_device_seen2', String(Date.now()));
+          localStorage.setItem('board_device_app', String(APPKEY || ''));
+        }
       }).catch(function(){});
     } catch (e) {}
   }

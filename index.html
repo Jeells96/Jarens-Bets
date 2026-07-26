@@ -1459,29 +1459,49 @@ function devLabel(){
     : /Edg\//.test(u) ? 'Edge' : /Safari/.test(u) ? 'Safari' : 'browser';
   return os + ' \u00b7 ' + br;
 }
-function regDevice(){
+/* Stamp this device as seen. Opening the Board is NOT using an app — the Board
+   is just the front door, and stamping it would wipe out what someone actually
+   used and make every row read "The Board". So a plain Board open updates who
+   and when, and deliberately leaves the app field alone. Super Locks DOES
+   count: it lives here, but it is one of the things people come for, so it is
+   passed in as an app and overwrites the field like any other app would. */
+function regDevice(app){
   try {
+    if (typeof app !== 'string' || !app) app = null;  // never let a stray event argument become an app
     var s = CURRENT_MEMBER && CURRENT_MEMBER.name ? CURRENT_MEMBER : savedMember();
     if (!s || !s.name) return;
     var id = devId();
     if (!id) return;
     // key is versioned: v1 stamps came from the build whose writes were being
     // rejected, and would have muted every device long past the repair
-    if (Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 2 * 60 * 1000) return;
-    /* app_settings/devices, one map key per device (mask d.<id>), so devices
-       never overwrite each other AND the write stays in a collection the
-       database allows — a separate collection was rejected silently. */
-    var body = { fields: { d: { mapValue: { fields: {} } } } };
-    body.fields.d.mapValue.fields[id] = { mapValue: { fields: {
+    var fresh = Date.now() - (+(localStorage.getItem('board_device_seen2') || 0)) < 2 * 60 * 1000;
+    // an app worth recording still gets through the quiet period, once
+    if (fresh && !(app && localStorage.getItem('board_device_app') !== app)) return;
+    /* app_settings/devices, one map key per device, so devices never overwrite
+       each other AND the write stays in a collection the database allows — a
+       separate collection was rejected silently. The mask names each subfield
+       (back-quoted: device ids are not valid bare field-path segments), which
+       is what lets a Board open leave `a` — the last real app — untouched. */
+    var f = {
       n: { stringValue: String(s.name || '') },
       f: { booleanValue: !!s.free },
-      a: { stringValue: 'board' },
       l: { stringValue: devLabel() },
       t: { integerValue: String(Date.now()) }
-    } } };
-    fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/devices?key=' + ADMIN.k + '&updateMask.fieldPaths=' + encodeURIComponent('d.' + id), {
+    };
+    if (app) f.a = { stringValue: String(app) };
+    var body = { fields: { d: { mapValue: { fields: {} } } } };
+    body.fields.d.mapValue.fields[id] = { mapValue: { fields: f } };
+    var mask = Object.keys(f).map(function(k){
+      return 'updateMask.fieldPaths=' + encodeURIComponent('d.`' + id + '`.' + k);
+    }).join('&');
+    fetch(FS + ADMIN.p + '/databases/(default)/documents/app_settings/devices?key=' + ADMIN.k + '&' + mask, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    }).then(function(r){ if (r && r.ok) localStorage.setItem('board_device_seen2', String(Date.now())); }).catch(function(){});
+    }).then(function(r){
+      if (r && r.ok){
+        localStorage.setItem('board_device_seen2', String(Date.now()));
+        if (app) localStorage.setItem('board_device_app', app);
+      }
+    }).catch(function(){});
   } catch (e) {}
 }
 /* ── NEW FREE SIGN-INS ─────────────────────────────────────────────────────
@@ -2676,8 +2696,16 @@ async function openSettingsPanel(){
     });
     Object.keys(devByName).forEach(function(k){ devByName[k].sort(function(a, b){ return b.t - a.t; }); });
   } catch (e) {}
-  var APP_LABEL = { board: 'The Board', mlb: 'Diamond IQ Premium', mlbfree: 'Diamond IQ Free',
-    nfl: 'Gridline', nba: 'The Key', hockey: 'Icing', nascar: "Pete's Picks" };
+  var APP_LABEL = { mlb: 'Diamond IQ Premium', mlbfree: 'Diamond IQ Free',
+    nfl: 'Gridline', nba: 'The Key', hockey: 'Icing', nascar: "Pete's Picks",
+    superlocks: '\u26a1 Super Locks' };
+  /* The Board is the front door, not an app — a device that has only ever
+     opened the Board has used nothing yet, and old rows stamped 'board' before
+     that rule existed say the same thing. Super Locks is an app and shows. */
+  var appLabel = function(a){
+    if (!a || a === 'board') return null;
+    return APP_LABEL[a] || a;
+  };
   var devAll = [];
   Object.keys(devByName).forEach(function(n){
     devByName[n].forEach(function(d){ devAll.push({ name: n, label: d.label, app: d.app, t: d.t }); });
@@ -2762,7 +2790,8 @@ async function openSettingsPanel(){
     var list = devByName[String(name || '').trim().toLowerCase()] || [];
     return '<div class="devlist" data-devlist="' + esc(String(name || '').trim().toLowerCase()) + '" style="display:none;margin:4px 0 2px;padding:6px 8px;border:1px solid var(--hair2);border-radius:8px">' +
       list.map(function(d){
-        return '<div class="row" style="margin:1px 0"><span class="hint" style="flex:1">' + esc(d.label) + (d.app ? ' <span style="color:var(--dim2)">\u00b7 ' + esc(d.app) + '</span>' : '') + '</span>' +
+        return '<div class="row" style="margin:1px 0"><span class="hint" style="flex:1">' + esc(d.label) +
+          (appLabel(d.app) ? ' <span style="color:var(--dim2)">\u00b7 ' + esc(appLabel(d.app)) + '</span>' : '') + '</span>' +
           '<span class="hint" style="color:var(--dim2)">' + esc(devAgo(d.t)) + '</span></div>';
       }).join('') +
       (list.length >= 3 ? '<div class="hint" style="color:#ffb454;margin-top:3px">Three or more devices on one code \u2014 worth a look.</div>' : '') +
@@ -2885,10 +2914,10 @@ async function openSettingsPanel(){
     })() +
     (function(){
       if (!devAll.length) return '<p class="sub" style="margin:6px 0 10px;color:var(--dim2)">No entries recorded yet \u2014 this fills in as people open the Board or any app.</p>';
-      return '<div class="sub" style="margin:8px 0 4px"><b>Recent entries</b> \u2014 every time someone enters the Board or an app, newest first</div>' +
+      return '<div class="sub" style="margin:8px 0 4px"><b>Recent entries</b> \u2014 newest first, showing the last app each device actually opened (the Board itself doesn\u2019t count; \u26a1 Super Locks does)</div>' +
         devAll.slice(0, 12).map(function(e){
           return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1">' + esc(prettyName(e.name)) +
-            ' <span style="color:var(--dim2)">\u00b7 ' + esc(APP_LABEL[e.app] || e.app || 'app') + '</span></span>' +
+            (appLabel(e.app) ? ' <span style="color:var(--dim2)">\u00b7 ' + esc(appLabel(e.app)) + '</span>' : '') + '</span>' +
             '<span class="hint" style="color:var(--dim2)">' + esc(e.label) + '</span>' +
             '<span class="hint" style="min-width:64px;text-align:right">' + esc(devAgo(e.t)) + '</span></div>';
         }).join('') +
@@ -4008,7 +4037,7 @@ function showView(which){
   vsp.style.boxShadow = isSuper ? '0 0 0 2px rgba(245,182,66,.5), 0 6px 20px rgba(245,182,66,.3)' : '0 2px 14px rgba(245,182,66,.22)';
   vsp.style.display = isSuper ? 'none' : 'block';   // inside Super Locks, the back button is the way home
   var pbv = document.getElementById('planbtn'); if (pbv) pbv.style.display = isSuper ? 'none' : '';
-  if (isSuper) refreshSuperLocks(false);
+  if (isSuper){ refreshSuperLocks(false); try { regDevice('superlocks'); } catch (e) {} }
 }
 
 document.addEventListener('DOMContentLoaded', function(){
