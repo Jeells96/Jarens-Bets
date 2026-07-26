@@ -16,8 +16,14 @@
     --ink: #e8ecf1;
     --ink-dim: #9aa4b2;
     --ink-faint: #5d6773;
+    /* --accent is the SEMANTIC "hit / correct / lock" colour and is still used
+       all over the Today and Results views. The BRAND colour is separate: the
+       neon lime read as an odd one out next to the rest of the family, so the
+       chrome now carries the same red the Bets page uses for confidence. */
     --accent: #d4ff3a;
     --accent-2: #6fe0ff;
+    --brand: #ff5d5d;
+    --green: #3ddc84;
     --hot: #ff6b6b;
     --cold: #6fb7ff;
     --warn: #ffc85c;
@@ -37,7 +43,7 @@
   }
   body {
     background:
-      radial-gradient(ellipse 100% 60% at 50% 0%, rgba(212,255,58,0.04), transparent 60%),
+      radial-gradient(ellipse 100% 60% at 50% 0%, rgba(255,93,93,0.05), transparent 60%),
       radial-gradient(ellipse 80% 40% at 90% 30%, rgba(111,224,255,0.03), transparent 60%),
       var(--bg);
     min-height: 100vh;
@@ -59,7 +65,7 @@
     letter-spacing: -0.02em;
     color: var(--ink);
   }
-  .brand .logo::first-letter { color: var(--accent); }
+  .brand .logo span { color: var(--brand); }
   .brand .tag {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10px;
@@ -168,7 +174,7 @@
     position: absolute;
     bottom: -1px; left: 20%; right: 20%;
     height: 2px;
-    background: var(--accent);
+    background: var(--brand);
   }
 
   .loader { padding: 40px 20px; color: var(--ink-dim); max-width: 480px; margin: 0 auto; }
@@ -529,8 +535,9 @@
   .ver-badge {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10px; font-weight: 700;
-    color: var(--bg); background: var(--accent);
-    padding: 2px 6px; border-radius: 4px;
+    color: var(--ink-dim); background: transparent;
+    border: 1px solid var(--line-2);
+    padding: 2px 8px; border-radius: 999px;
     letter-spacing: 0.05em;
     align-self: center;
   }
@@ -1091,7 +1098,7 @@ body{font-size:16px}
        Week moved into settings: the Bets page finds the live week itself, and
        the arrows on it cover normal week-to-week browsing. -->
   <div class="brand">
-    <div class="logo">Gridline</div>
+    <div class="logo">Grid<span>line</span></div>
     <span class="ver-badge" id="ver-badge">V6.0</span>
     <div class="tag">NFL · Fable Engine</div>
   </div>
@@ -2389,8 +2396,10 @@ function inferPositionFromGroup(catName, currentPos, isLeadAthlete) {
 const ESPN_ROSTER = (teamId) =>
   `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/roster`;
 
+const SKILL_POS = { QB: 1, RB: 1, WR: 1, TE: 1, FB: 1 };
 async function loadPositionMap(teamIds) {
   if (!state.positionById) state.positionById = {};
+  if (!state.rosterByTeam) state.rosterByTeam = {};
   const todo = teamIds.filter(id => id && !state._rosterLoaded?.[id]);
   if (!todo.length) return;
   if (!state._rosterLoaded) state._rosterLoaded = {};
@@ -2401,19 +2410,60 @@ async function loadPositionMap(teamIds) {
       // roster shape: { athletes: [{ position: 'offense', items: [{id, position:{abbreviation}}] }] }
       const groups = (data && data.athletes) || [];
       let count = 0;
+      const roster = [];
       for (const grp of groups) {
         for (const item of (grp.items || [])) {
           const pid = item.id != null ? String(item.id) : null;
           const abbr = item.position && item.position.abbreviation;
           if (pid && abbr) { state.positionById[pid] = abbr; count++; }
+          /* Keep the skill players too. This call already pays for the whole
+             roster; we used to bin everything except the position. Without a
+             roster there is no way to name the players in a game that has not
+             kicked off yet — see rosterPlayers(). */
+          if (pid && SKILL_POS[abbr]) roster.push({ id: item.id, name: item.displayName || item.fullName || item.shortName || '', position: abbr });
         }
       }
       state._rosterLoaded[teamId] = true;
-      logEvent('info', 'roster', 'team ' + teamId + ': ' + count + ' positions');
+      state.rosterByTeam[String(teamId)] = roster;
+      logEvent('info', 'roster', 'team ' + teamId + ': ' + count + ' positions, ' + roster.length + ' skill players');
     } catch (e) {
       logEvent('warn', 'roster', 'team ' + teamId + ' roster failed: ' + e.message);
     }
   });
+}
+
+/* A game's player list used to come from ONE place: that game's own box score.
+   ESPN only publishes a box score once the game is under way, so every game
+   you could still bet on had an empty player list — in every week of every
+   season, not just the preseason. The player prop categories therefore had
+   nothing to iterate and vanished from the Bets page, filling in only after
+   kickoff, when the bet can no longer be placed.
+
+   For an unplayed game the roster is the right source. projectPlayer() works
+   off each player's id against the prior-week and prior-season aggregates, so
+   a name and a position is all it needs; anyone without history projects to
+   zero and is dropped by the caller's own `got.yds <= 0` guard. Stat fields
+   are zeroed because nothing has happened yet — the props code already reads
+   `actual: null` for a game that isn't complete. */
+function rosterPlayers(game) {
+  const byTeam = state.rosterByTeam || {};
+  const out = [];
+  for (const side of ['away', 'home']) {
+    const team = game[side];
+    if (!team || !team.id) continue;
+    for (const r of (byTeam[String(team.id)] || [])) {
+      if (r.id == null || !r.name) continue;
+      out.push({
+        id: r.id, name: r.name,
+        team: team.id, abbr: team.abbr,
+        position: state.positionById[String(r.id)] || r.position,
+        passYds: 0, rushYds: 0, recYds: 0,
+        passTds: 0, rushTds: 0, recTds: 0,
+        receptions: 0,
+      });
+    }
+  }
+  return out;
 }
 
 function extractPlayersFromSummary(summary) {
@@ -2871,7 +2921,9 @@ function buildGame(event, summary) {
   const away = cs.find(c => c.homeAway === 'away');
   const home = cs.find(c => c.homeAway === 'home');
   if (!away || !home) return null;
-  return {
+  const completed = !!(comp.status && comp.status.type && comp.status.type.completed);
+  const boxPlayers = extractPlayersFromSummary(summary);
+  const game = {
     id: event.id,
     date: event.date,
     away: {
@@ -2886,13 +2938,16 @@ function buildGame(event, summary) {
       name: home.team.displayName,
       score: home.score != null && home.score !== '' ? +home.score : null,
     },
-    completed: !!(comp.status && comp.status.type && comp.status.type.completed),
-    players: extractPlayersFromSummary(summary),
+    completed: completed,
+    players: boxPlayers,
     teamYards: extractTeamYardsFromSummary(summary),
     weather: extractWeather(event, summary),
     firstTdScorer: extractFirstTdScorer(summary),
     injuries: extractInjuries(summary),
   };
+  // A real box score always wins. The roster only fills the gap before kickoff.
+  if (!completed && !boxPlayers.length) game.players = rosterPlayers(game);
+  return game;
 }
 
 // ----------------------------------------------------------------------------
@@ -5626,11 +5681,23 @@ function renderGameBets(main) {
       '<b>Recommended to wait until game week — ideally the day of — before placing NFL bets.</b> Picks marked “○ early look” are kept out of ⚡ Super Locks until their data is in.</div>';
   }
   const order = Object.keys(GB_META).map(k => ({ k, pct: (gbRate(GB_META[k].rateKeys) || {}).pct ?? -1 })).sort((a, b) => b.pct - a.pct);
+  /* A bet type with nothing to show used to be dropped without a word, so
+     "no picks yet" and "broken" looked identical from the outside. Anything
+     held back now gets named at the bottom, with the reason. */
+  const held = [];
   for (const { k } of order) {
-    if (typeof window !== 'undefined' && window.__DK_OK === false && isDkCat(k)) continue;
     const meta = GB_META[k];
+    if (typeof window !== 'undefined' && window.__DK_OK === false && isDkCat(k)){
+      held.push({ tag: meta.tag, why: 'DraftKings odds are off for this account' });
+      continue;
+    }
     const all = gbRows(k);
-    if (!all.length) continue;
+    if (!all.length) {
+      held.push({ tag: meta.tag, why: isDkCat(k)
+        ? 'waiting on DraftKings to post lines — they’re bought about an hour before kickoff'
+        : 'no candidates this week yet' });
+      continue;
+    }
     const th = lockTh(meta.th);
     const locks = all.filter(r => r.grade >= th);
     const rate = gbRate(meta.rateKeys);
@@ -5659,6 +5726,15 @@ function renderGameBets(main) {
       if (!lineDrawn) html += '<div style="font-size:.66rem;color:rgba(255,255,255,.4);padding:3px 0 0">Everyone shown clears the bet line.</div>';
     }
     html += '</div>';
+  }
+  if (held.length){
+    const byWhy = {};
+    held.forEach(h => { (byWhy[h.why] = byWhy[h.why] || []).push(h.tag); });
+    html += '<div class="bcard" style="font-size:.64rem;color:rgba(255,255,255,.45);line-height:1.6">' +
+      '<b style="color:rgba(255,255,255,.7)">Not showing yet</b><br>' +
+      Object.keys(byWhy).map(function(w){
+        return '<b style="color:rgba(255,255,255,.6)">' + byWhy[w].join(' · ') + '</b> — ' + w + '.';
+      }).join('<br>') + '</div>';
   }
   main.innerHTML = html.replace('<!--MYB-->', mybStripHtml());
   wireMyb(main);

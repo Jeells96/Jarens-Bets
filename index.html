@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26a';
+var BOARD_BUILD = '2026-07-26b';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
