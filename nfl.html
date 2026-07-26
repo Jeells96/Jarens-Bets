@@ -2122,14 +2122,22 @@ async function pullDKOdds(reason, opts) {
 async function loadRemoteDKOdds() {
   try {
     const doc = await fsGetDoc('gridline/dkOdds');
-    if (!doc || !doc.json) return;
+    /* Read the shape the pull actually writes: {fetchedAt, reason, byEvent},
+       each a top-level Firestore field (see fsSetDoc at the persist below).
+       This used to look for a `json` string that no writer has ever produced,
+       so it returned here every single time — meaning a device that had not
+       pulled DK itself never saw a line, and the grading/Super-Locks cron,
+       which runs in its own browser with empty storage, graded nothing
+       against DraftKings at all. */
+    if (!doc || !doc.byEvent) return;
+    const remoteAt = +doc.fetchedAt || 0;
     const localAt = (state.dkOdds && state.dkOdds.fetchedAt) || 0;
-    if (doc.fetchedAt <= localAt) return;
-    const parsed = JSON.parse(doc.json);
+    if (localAt && remoteAt <= localAt) return;   // ours is at least as fresh
+    const parsed = { fetchedAt: remoteAt || Date.now(), reason: doc.reason || '', byEvent: doc.byEvent };
     state.dkOdds = parsed;
-    state.dkLastPullAt = doc.fetchedAt;
-    localStorage.setItem('gl_dk_last_pull', String(doc.fetchedAt));
-    try { localStorage.setItem('gl_dk_odds', doc.json); } catch {}
+    state.dkLastPullAt = parsed.fetchedAt;
+    localStorage.setItem('gl_dk_last_pull', String(parsed.fetchedAt));
+    try { localStorage.setItem('gl_dk_odds', JSON.stringify(parsed)); } catch {}
     logEvent('info', 'DK', 'adopted background odds (' + Object.keys(parsed.byEvent || {}).length + ' events, ' + (parsed.reason || '?') + ')');
     if (state.loaded) render();
   } catch (e) { logEvent('warn', 'DK', 'background odds check failed: ' + e.message); }
