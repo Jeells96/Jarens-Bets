@@ -395,7 +395,7 @@ body{
    copy of an app for days with no way out. Every URL that reaches the browser
    carries this, so bumping it on a deploy makes the next open fetch fresh.
    BUMP THIS whenever an app changes. */
-var BOARD_BUILD = '2026-07-26h';
+var BOARD_BUILD = '2026-08-05a';
 function bust(u){
   if (!u) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'b=' + encodeURIComponent(BOARD_BUILD);
@@ -2473,6 +2473,9 @@ async function healthDocTime(projObj, path){
 async function healthBeat(projObj, path){
   try {
     var r = await fetch(FS + projObj.p + '/databases/(default)/documents/' + path + '?key=' + projObj.k);
+    // A locked-out database answers 403. Reporting that as "no heartbeat yet"
+    // is how an outage looked like a quiet week — say which it is.
+    if (r.status === 401 || r.status === 403) return { denied: true, proj: projObj.p };
     if (!r.ok) return null;
     var j = await r.json();
     var f = j.fields || {};
@@ -2488,13 +2491,18 @@ async function loadHealthStrip(box){
   el.innerHTML = '<div class="hint">Checking pipelines\u2026</div>';
   var dkStat = {};
   try { dkStat = (await adminGetDoc('dk_status')) || {}; } catch (e) {}
-  var anyStale = false, anyFailed = false, waiting = 0;
+  var anyStale = false, anyFailed = false, waiting = 0, anyDenied = null;
   var rows = await Promise.all(HEALTH_DOCS.map(async function(a){
     var pr = a.proj === 'ADMIN' ? ADMIN : NFLP;
     var beat = await healthBeat(pr, a.grade);
     /* No heartbeat yet = this app hasn't run since heartbeats shipped. Fall back
        to its data doc but say so, rather than crying wolf. */
     var g = beat ? beat.age : (a.fallback ? await healthDocTime(pr, a.fallback) : null);
+    if (beat && beat.denied){
+      anyDenied = anyDenied || beat.proj;
+      return '<div class="row" style="margin:2px 0"><span class="hint" style="flex:1;color:var(--bone)">' + a.name + '</span>' +
+        '<span class="hint" style="color:#ff7a7a"><b>database locked out</b></span></div>';
+    }
     var pending = !beat;
     if (pending) waiting++;
     var lab = a.lab ? await healthDocTime(pr, a.lab) : null;
@@ -2512,7 +2520,8 @@ async function loadHealthStrip(box){
       (a.lab ? ' \u00b7 Lab ' + healthFmt(lab) : '') + '</span></div>';
   }));
   el.innerHTML = rows.join('') +
-    (anyFailed ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading run reported an error \u2014 check the repo\u2019s Actions tab.</div>'
+    (anyDenied ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 <b>Those apps can\u2019t read their database.</b> Firestore is refusing every request for project <b>' + esc(anyDenied) + '</b> \u2014 open the Firebase console \u2192 Firestore \u2192 Rules for that project and publish rules that allow reads. Nothing they report is trustworthy until that is fixed.</div>'
+     : anyFailed ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading run reported an error \u2014 check the repo\u2019s Actions tab.</div>'
      : anyStale ? '<div class="hint" style="color:#ff7a7a;margin-top:4px">\u26a0 A grading pipeline hasn\u2019t run in a while \u2014 check the repo\u2019s Actions tab (runs are every 1\u20132h).</div>'
      : waiting ? '<div class="hint" style="color:var(--dim2);margin-top:4px">Waiting on first heartbeats \u2014 each app records one at the end of its next grading run. Times shown are that app\u2019s last data write until then.</div>'
      : '<div class="hint" style="color:var(--dim2);margin-top:4px">All pipelines healthy. \u201cRan\u201d is the last completed grading run (a run with nothing new to grade still counts). DK pulls fire shortly before each game (Diamond IQ an hour out, the rest 45 min); the Lab runs Sunday mornings.</div>');
@@ -2949,7 +2958,7 @@ async function openSettingsPanel(){
     waiting.sort(function(a, b){ return (b.req ? 1 : 0) - (a.req ? 1 : 0) || (b.rt || b.fs || b.t || 0) - (a.rt || a.fs || a.t || 0); });
     var askCount = waiting.filter(function(x){ return x.req; }).length;
     var hidden = coded.concat(ignored);   // ignored sink to the bottom
-    var head = '<div class="sub" style="margin-top:12px"><b>Free sign-ins</b>' +
+    var head = '<div class="sub" style="margin-top:12px"><b>Sign-ups on trial</b>' +
       (askCount ? ' \u00b7 <b style="color:#ffb454">' + askCount + ' asked for a code</b>' : waiting.length ? ' \u00b7 <b style="color:#ff5d5d">' + waiting.length + ' waiting</b>' : ' \u00b7 <span style="color:#7fd99a">all caught up</span>') + '</div>' +
       '<p class="sub" style="margin:2px 0 6px;color:var(--dim2)">Only people waiting on you are shown. \u201cGive a code\u201d fills their name into the member list above; \u201cignore\u201d drops them to the bottom of the folded list and off the badge.</p>';
     var body = waiting.length
@@ -3326,7 +3335,10 @@ async function openSettingsPanel(){
   box.querySelector('#s-signout').addEventListener('click', function(){ if (confirm('Sign out on this device? You\u2019ll re-enter your name and code next time.')){ try { localStorage.removeItem(GATE_LS); } catch (e) {} location.reload(); } });
   box.querySelector('#m-add').addEventListener('click', function(){
     var div = document.createElement('div');
-    div.innerHTML = memberRowHtml({ name: '', code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'off' }, Date.now());
+    // Tier 3 by default — everything on. Signing up already unlocks everything
+    // (the free trial), so opening a new row lower would take things away at
+    // the exact moment you authorise someone.
+    div.innerHTML = memberRowHtml({ name: '', code: '', apps: null, tier: '3', sport: 'mlb', dkMode: 'unlimited' }, Date.now());
     box.querySelector('#memlist').appendChild(div.firstChild);
     wireDel(); wireDevices();
   });
@@ -3390,7 +3402,9 @@ async function openSettingsPanel(){
       var trusted = (devByName[String(nm).trim().toLowerCase()] || [])
         .map(function(d){ return d.id; }).filter(Boolean);
       var div = document.createElement('div');
-      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: ['mlb', 'mlbfree'], tier: '1', sport: 'mlb', dkMode: 'off', dev: trusted }, Date.now());
+      // Tier 3, matching what their trial already gave them — drop them down
+      // deliberately if you want to, but never by default.
+      div.innerHTML = memberRowHtml({ name: nm, code: '', apps: null, tier: '3', sport: 'mlb', dkMode: 'unlimited', dev: trusted }, Date.now());
       var row = div.firstChild;
       box.querySelector('#memlist').appendChild(row);
       wireDel(); wireDevices();
@@ -3827,7 +3841,12 @@ async function openSettingsPanel(){
       // Re-evaluate this device against the list just saved, so member/access
       // changes take effect on the hub immediately (including denying yourself).
       var sid = savedMember(), gg;
-      if (sid && sid.free) gg = { ok: true, apps: ['mlbfree'] };
+      if (sid && (sid.free || sid.trial)){
+        // same rule the gate uses: a device you authorised gets their real
+        // access, anyone still on a trial keeps everything. Never free-only.
+        var upNow = trustedUpgrade(sid.name, mems);
+        gg = upNow ? { ok: true, apps: upNow.apps } : { ok: true, apps: null };
+      }
       else if (sid) gg = memberMatch(sid.name, sid.code, mems);
       else gg = { ok: false };
       GRANTS = gg.ok ? (gg.apps ? new Set(gg.apps) : null) : new Set();

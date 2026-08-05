@@ -137,6 +137,20 @@ const FB = { projectId: 'nflbets-45561', apiKey: 'AIzaSyAznP57admgAtnJqnMu7uJ6WZ
 const FB_NS = 'nascar';           // singleton docs: nascar/allTime, nascar/lockcfg, nascar/today
 const FB_RECS = 'nascar_recs';    // per-date race records (finishing order)
 const FB_ACC = 'nascar_accuracy'; // per-date raw graded units
+/* DENIED IS NOT EMPTY.
+   Firestore answers a lockout with 403, and swallowing that reads exactly like
+   "there is nothing stored" — which is how three graders reported success for
+   fourteen hours while their database refused every read. A permission failure
+   now raises a marked error that callers must not eat. */
+function fbDenied(status){ return status === 401 || status === 403; }
+function fbErr(kind, status){
+  var e = new Error(fbDenied(status)
+    ? 'DATABASE DENIED (' + status + ') \u2014 Firestore refused to ' + kind +
+      '. Check the security rules for project ' + FB.projectId + '.'
+    : 'FB ' + kind + ' ' + status);
+  e.denied = fbDenied(status);
+  return e;
+}
 function fbReady(){ return FB.projectId.length > 0; }
 function fbDocUrl(col, doc){
   return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
@@ -146,7 +160,7 @@ async function fbRead(col, doc){
   if (!fbReady()) return null;
   const res = await fetch(fbDocUrl(col, doc));
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error('FB read ' + res.status);
+  if (!res.ok) throw fbErr('read', res.status);
   const j = await res.json();
   const s = j.fields && j.fields.data && j.fields.data.stringValue;
   return s ? JSON.parse(s) : null;
@@ -157,7 +171,7 @@ async function fbWrite(col, doc, obj){
   const res = await fetch(fbDocUrl(col, doc) + '&updateMask.fieldPaths=data&updateMask.fieldPaths=t', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
   });
-  if (!res.ok) throw new Error('FB write ' + res.status);
+  if (!res.ok) throw fbErr('write', res.status);
   return true;
 }
 async function fbListCol(col){
@@ -167,7 +181,7 @@ async function fbListCol(col){
     const url = 'https://firestore.googleapis.com/v1/projects/' + FB.projectId +
       '/databases/(default)/documents/' + col + '?pageSize=300&key=' + FB.apiKey + (tok ? '&pageToken=' + tok : '');
     const res = await fetch(url);
-    if (!res.ok) throw new Error('FB list ' + res.status);
+    if (!res.ok) throw fbErr('list', res.status);
     const j = await res.json();
     for (const d of (j.documents || [])){
       const id = d.name.split('/').pop();
@@ -515,7 +529,9 @@ async function pushRecsFB(onProg){
 }
 async function seedFromFB(onProg){
   let seeded = 0;
-  try { const col = await fbListCol(FB_RECS); for (const d in col){ if (!loadRecs(d)){ saveRecs(d, col[d]); seeded++; } } } catch (e) {}
+  // a lockout is never "0 dates" — let a denial out so the run fails honestly
+  try { const col = await fbListCol(FB_RECS); for (const d in col){ if (!loadRecs(d)){ saveRecs(d, col[d]); seeded++; } } }
+  catch (e) { if (e && e.denied) throw e; }
   return seeded;
 }
 
@@ -988,10 +1004,23 @@ function switchTab(tab){
 }
 
 /* ═══ SECTION: CRON (?cron=1 — headless grading, same model the app uses) ═══ */
+/* A GRADER THAT CANNOT SEE ITS DATABASE MUST NOT REPORT SUCCESS.
+   One read, before anything else. Auditing every try/catch for a swallowed
+   403 is a losing game — this makes the outcome the same regardless: if the
+   project is locked out we stop here and say so. A 404 is fine (the doc may
+   not exist yet) and a network blip is not a denial, so neither trips it. */
+async function assertDbReachable(probeUrl){
+  var res;
+  try { res = await fetch(probeUrl, { cache: 'no-store' }); }
+  catch (e){ return; }                       // offline/blip — not a lockout
+  if (fbDenied(res.status)) throw fbErr('read', res.status);
+}
 async function runCronGrade(){
   const clog = m => { window.__cronStatus = 'cron: ' + m; try { console.log('[nascar] ' + m); } catch (e) {} };
   window.__cronStatus = 'cron: starting';
   try {
+    clog('checking the database is reachable');
+    await assertDbReachable(fbDocUrl('nascar', 'lockcfg'));
     clog('applying shared lock config');
     try { await pullSharedLockCfg(); } catch (e) {}
     try { if (await pullLabCfg()) clog('Model Lab weights active for: ' + Object.keys(LAB_CFG.cats).join(', ')); } catch (e) {}

@@ -1358,11 +1358,25 @@ function fsDecodeDoc(doc) {
   for (const k in f) out[k] = fsDecodeValue(f[k]);
   return out;
 }
+/* DENIED IS NOT EMPTY.
+   Firestore answers a lockout with 403, and swallowing that reads exactly like
+   "there is nothing stored" — which is how three graders reported success for
+   fourteen hours while their database refused every read. A permission failure
+   now raises a marked error that callers must not eat. */
+function fbDenied(status){ return status === 401 || status === 403; }
+function fbErr(kind, status){
+  const e = new Error(fbDenied(status)
+    ? 'DATABASE DENIED (' + status + ') \u2014 Firestore refused to ' + kind +
+      '. Check the security rules for project ' + FIREBASE.projectId + '.'
+    : 'Firestore ' + kind + ' HTTP ' + status);
+  e.denied = fbDenied(status);
+  return e;
+}
 async function fsGetDoc(path) {
   const url = FS_BASE + '/' + path + '?key=' + FIREBASE.apiKey;
   const res = await fetch(url);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error('Firestore GET ' + path + ' HTTP ' + res.status);
+  if (!res.ok) throw fbErr('read ' + path, res.status);
   return fsDecodeDoc(await res.json());
 }
 async function fsSetDoc(path, obj) {
@@ -6375,6 +6389,13 @@ if (new URLSearchParams(location.search).get('lab') === '1') {
 } else if (new URLSearchParams(location.search).get('cron') === '1') {
   (async function () {
     window.__cronStatus = 'cron: starting';
+    /* A grader that cannot see its database must not report success. One read
+       first: a 403 stops the run with a clear message instead of letting a
+       wrapped catch turn a lockout into "nothing to grade". */
+    try {
+      var _probe = await fetch(FS_BASE + '/accuracy/health?key=' + FIREBASE.apiKey, { cache: 'no-store' });
+      if (fbDenied(_probe.status)) throw fbErr('read', _probe.status);
+    } catch (e){ if (e && e.denied){ window.__cronStatus = 'cron: ERROR — ' + e.message; window.__cronDone = true; return; } }
     try { if (await pullLabCfg()) console.log('[nfl] Model Lab calibration active for: ' + Object.keys(LAB_CFG.cats).join(', ')); } catch (e) {}
     try {
       const pr = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20250908', { cache: 'no-store' });
