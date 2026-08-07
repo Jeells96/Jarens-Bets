@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "35 13 * * *"
 
+permissions:
+  contents: read
+  actions: read          # so the stall check can see whether the jobs fired
+
 jobs:
   health:
     runs-on: ubuntu-latest
@@ -16,3 +20,5 @@ jobs:
           node-version: "22"
       - name: Check every app's live record
         run: node health_check.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
