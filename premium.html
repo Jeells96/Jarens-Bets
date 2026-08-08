@@ -2453,15 +2453,19 @@ function dayPlayerRows(R){
 }
 
 /* ── aggregate stats: ONE tiny summary-doc read (no more scanning fat day docs) ── */
+/* Bumping this forces one full re-score of every stored day on the next cron
+   run, even when no threshold has moved. Raise it whenever the stored tallies
+   need to be rebuilt for a reason the threshold hash can't see. */
+const SUMMARY_SCORE_V=2;
 async function rebuildSummary(){
   // one-time backfill from existing graded day docs
   try{
-    const snap=await withTO(FBH.db.collection('fable_hits').limit(150).get(),25000);
+    const snap=await withTO(FBH.db.collection('fable_hits').limit(500).get(),25000);
     const days={};
     snap.forEach(doc=>{
       const d=doc.data();
-      if(!d.rows||!d.results)return;
-      days[doc.id]=dayTallies(d.rows,d.mk,d.results);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(doc.id)||!d.rows||!d.results)return;
+      days[doc.id]=dayTallies(d.rows,d.mk,d.results,null,true);   // quiet: no toast per day in cron
     });
     if(Object.keys(days).length){
       await withTO(FBH.db.collection('fable_settings').doc('summary').set({days,updatedAt:Date.now()},{merge:true}),10000);
@@ -3395,6 +3399,7 @@ async function runLabPrem(){
       window.__cronStatus='cron: starting';
       try{const pd=todayStr();const pr=await fetch('https://statsapi.mlb.com/api/v1/schedule?sportId=1&date='+pd,{cache:'no-store'});const pj=pr.ok?await pr.json():null;const pg=pj&&pj.dates&&pj.dates[0]?(pj.dates[0].games||[]).length:0;console.log('[premium] StatsAPI probe '+pd+': HTTP '+pr.status+' \u00b7 '+pg+' games');}catch(e){console.log('[premium] StatsAPI probe FAILED ('+e.message+') \u2014 MLB API may block this runner IP');}
       try{localStorage.setItem('fablehits_access_ok','1');localStorage.setItem('fablehits_user',JSON.stringify({name:'cron',key:'cron'}));}catch(e){}
+      let staleRates='';   // set when the stored success rates could not be brought up to date
       try{
         const t0=Date.now();
         while(!FBH.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
@@ -3407,20 +3412,29 @@ async function runLabPrem(){
           await cfgPull();
           await pullLabCfgPrem();
           premShadowUpdate();
-          const cfgHash=JSON.stringify([CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gtEdge,CONFIG.phEdge,CONFIG.grEdge]);
+          const cfgHash=JSON.stringify([SUMMARY_SCORE_V,CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gtEdge,CONFIG.phEdge,CONFIG.grEdge]);
           const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
           const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
           if(oldHash!==cfgHash){
             window.__cronStatus='cron: thresholds changed — re-scoring every stored day…';
             const days=await rebuildSummary();
+            /* The hash is a promise that every stored day was scored at these
+               numbers. Only stamp it once that is actually true — stamping it
+               after a failed rebuild freezes the old tallies in forever, which
+               is exactly how the hub came to quote a rate the app disagreed
+               with. A failed rebuild leaves the hash alone so the next run
+               retries, and says so out loud. */
             if(days&&Object.keys(days).length){
               await withTO(FBH.db.collection('fable_settings').doc('summary').set({days:days,cfgHash:cfgHash,updatedAt:Date.now()},{merge:true}),15000);
               console.log('[premium] summary rebuilt at new thresholds: '+Object.keys(days).length+' day(s)');
             }else{
-              await withTO(FBH.db.collection('fable_settings').doc('summary').set({cfgHash:cfgHash,updatedAt:Date.now()},{merge:true}),8000);
+              staleRates='re-score produced no days — the summary still holds old-threshold tallies';
             }
           }
-        }catch(e){console.log('[premium] threshold-change rescore skipped: '+e.message);}
+        }catch(e){
+          console.log('[premium] threshold-change rescore FAILED: '+e.message);
+          staleRates=e.message;
+        }
         /* Count real grading work: storeResults runs once per day actually
            graded, so "done" can never again hide a zero-work sweep. */
         const _sr=storeResults; let gradedN=0;
@@ -3454,7 +3468,8 @@ async function runLabPrem(){
             if(pruned)console.log('[premium] retention: pruned '+pruned+' day docs older than '+cutoff);
           }catch(e){console.log('[premium] retention sweep skipped: '+e.message);}
         }
-        window.__cronStatus='cron: done — '+gradedN+' day(s) graded this run; '+yd+' verified in summary'+(ydGames?'':' (no games that day)')+(pruned?' · '+pruned+' old day(s) pruned':'');
+        window.__cronStatus=(staleRates?'cron: ERROR — success rates are STALE ('+staleRates+'); ':'cron: done — ')
+          +gradedN+' day(s) graded this run; '+yd+' verified in summary'+(ydGames?'':' (no games that day)')+(pruned?' · '+pruned+' old day(s) pruned':'');
       }catch(e){window.__cronStatus='cron: ERROR — '+(e&&e.message||e);}
       /* HEARTBEAT: the grading cron writes this at the end of EVERY run, pass or
          fail. The Board's health strip reads it, so "last run" reflects the pipeline
