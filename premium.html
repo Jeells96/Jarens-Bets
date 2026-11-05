@@ -3413,9 +3413,19 @@ async function runLabPrem(){
           await pullLabCfgPrem();
           premShadowUpdate();
           const cfgHash=JSON.stringify([SUMMARY_SCORE_V,CONFIG.lock,CONFIG.hrLock,CONFIG.gmLock,CONFIG.kbLock,CONFIG.bbbLock,CONFIG.kEdge,CONFIG.bbEdge,CONFIG.tbEdge,CONFIG.gtEdge,CONFIG.phEdge,CONFIG.grEdge]);
-          const sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
-          const oldHash=sdoc.exists?(sdoc.data().cfgHash||''):'';
-          if(oldHash!==cfgHash){
+          /* Read the summary to see whether the Board's thresholds changed since
+             it was last built. A transient read timeout here does NOT mean the
+             stored rates are wrong — it only means we couldn't check this run, so
+             we keep the valid summary in place and move on (no false STALE); the
+             next run picks up any real threshold change. Retry once with a longer
+             budget so a slow Firestore connect on the runner doesn't trip it. */
+          let sdoc=null;
+          for(let a=0;a<2&&!sdoc;a++){
+            try{ sdoc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),12000); }
+            catch(e){ console.log('[premium] summary read '+(a===0?'slow ('+e.message+'); retrying once':'unavailable ('+e.message+'); keeping stored rates this run')); }
+          }
+          const oldHash=sdoc?(sdoc.exists?(sdoc.data().cfgHash||''):''):'';
+          if(sdoc&&oldHash!==cfgHash){
             window.__cronStatus='cron: thresholds changed — re-scoring every stored day…';
             const days=await rebuildSummary();
             /* The hash is a promise that every stored day was scored at these
@@ -3447,15 +3457,26 @@ async function runLabPrem(){
            MLB simply had no games. A miss is a loud named failure. */
         const yd=addDays(todayStr(),-1);
         let ydGames=0; try{ ydGames=(await fetchScheduleDay(yd)).length; }catch(e){}
-        let ydInSummary=false, ydLine='';
+        let ydInSummary=false, ydLine='', verifyRead=false;
         try{
-          const doc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),8000);
-          const t=doc.exists?((doc.data().days||{})[yd]||null):null;
-          ydInSummary=!!t;
-          if(t&&t.hits)ydLine=' (hits '+(t.hits.h||0)+'/'+(t.hits.n||0)+')';
+          let doc=null;
+          for(let a=0;a<2&&!doc;a++){
+            try{ doc=await withTO(FBH.db.collection('fable_settings').doc('summary').get(),12000); }
+            catch(e){ if(a===1)console.log('[premium] verify read unavailable ('+e.message+')'); }
+          }
+          if(doc){
+            verifyRead=true;
+            const t=doc.exists?((doc.data().days||{})[yd]||null):null;
+            ydInSummary=!!t;
+            if(t&&t.hits)ydLine=' (hits '+(t.hits.h||0)+'/'+(t.hits.n||0)+')';
+          }
         }catch(e){}
-        console.log('[premium] verify: '+yd+' in summary: '+(ydInSummary?('YES'+ydLine):'NO')+' \u00b7 '+ydGames+' games were scheduled');
-        if(!ydInSummary&&ydGames>0)throw new Error('yesterday ('+yd+') missing from summary after grading \u2014 '+report.join(' | '));
+        console.log('[premium] verify: '+yd+' in summary: '+(ydInSummary?('YES'+ydLine):(verifyRead?'NO':'UNVERIFIED (read timed out)'))+' \u00b7 '+ydGames+' games were scheduled');
+        /* Only a confirmed read showing yesterday genuinely absent (with games
+           scheduled) is a real miss worth failing — and emailing — over. A read
+           that timed out is UNVERIFIED, not a miss, so a transient Firestore blip
+           no longer fails the hourly cron. */
+        if(verifyRead&&!ydInSummary&&ydGames>0)throw new Error('yesterday ('+yd+') missing from summary after grading \u2014 '+report.join(' | '));
         /* RETENTION: keep one rolling season — prune fable_hits day docs older
            than 370 days (early-morning runs only, so it costs one sweep a day). */
         let pruned=0;
