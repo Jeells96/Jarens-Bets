@@ -3190,9 +3190,13 @@ if(__cronMode==='1'){
     window.__cronStatus='cron: starting';
     try{const pd=todayStr();const pr=await fetch('https://statsapi.mlb.com/api/v1/schedule?sportId=1&date='+pd,{cache:'no-store'});const pj=pr.ok?await pr.json():null;const pg=pj&&pj.dates&&pj.dates[0]?(pj.dates[0].games||[]).length:0;console.log('[DIQ] StatsAPI probe '+pd+': HTTP '+pr.status+' \u00b7 '+pg+' games');}catch(e){console.log('[DIQ] StatsAPI probe FAILED ('+e.message+') \u2014 MLB API may block this runner IP');}
     try{
+      /* Give Firebase a generous warm-up budget. A cold GitHub runner can be
+         slow to open the first connection; failing at 15s turned a working-but-
+         slow start into a red run (and an emailed failure). 45s still fails fast
+         if Firebase is genuinely unreachable. */
       const t0=Date.now();
-      while(!FB.ready&&Date.now()-t0<15000)await new Promise(r=>setTimeout(r,250));
-      if(!FB.ready)throw new Error('Firebase not ready after 15s');
+      while(!FB.ready&&Date.now()-t0<45000)await new Promise(r=>setTimeout(r,250));
+      if(!FB.ready)throw new Error('Firebase not ready after 45s');
       await pullSharedHistory();
       const today=todayStr();
       const dates=Object.keys(PRED.byDate).filter(d=>d<today).sort().reverse().slice(0,14);
