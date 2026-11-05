@@ -22,7 +22,7 @@ jobs:
       - name: Install Playwright
         run: |
           npm init -y
-          npm install playwright
+          npm install playwright@1.64.1
           npx playwright install --with-deps chromium
       - name: Grade Premium
         run: node grade_cron.js premium
