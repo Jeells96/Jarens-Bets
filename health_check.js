@@ -84,7 +84,7 @@ async function checkWorkflowsRan(){
       if (!runs.length){ bad(file, 'has a schedule but has never run'); continue; }
       const last = runs[0];
       const gapH = (now - new Date(last.created_at)) / 3600000;
-      const limit = Math.max(hrs * 3, 1.5);   // GitHub drops the odd cron tick
+      const limit = Math.max(hrs * 3, 12);    // GitHub routinely delays/drops scheduled ticks; only a long gap (12h+) is a real stall worth emailing about
       const when = last.created_at + ' (' + gapH.toFixed(1) + 'h ago, ' +
                    (last.conclusion || last.status) + ')';
       if (gapH > limit) bad(file, 'last run ' + when + ' — expected one every ' + hrs + 'h');
@@ -96,12 +96,15 @@ async function checkWorkflowsRan(){
 (async () => {
   console.log('Health check ' + now.toISOString() + '\n');
 
-  // MLB (Premium + Free share the summary): newest graded day within 2 days.
+  // MLB (Premium + Free share the summary): newest graded day within 2 days,
+  // but only in-season — MLB has no games Nov→Mar, so the summary legitimately
+  // stops advancing in the offseason. Season window: Mar 20 → Nov 1.
   try {
     const j = await getDoc(MLB, 'fable_settings/summary');
     const days = Object.keys(((j.fields || {}).days || {}).mapValue?.fields || {}).sort();
     const newest = days[days.length - 1];
     if (!newest) bad('MLB summary', 'no graded days at all');
+    else if (!inWindow(320, 1101)) ok('MLB summary', 'offseason — newest graded day ' + newest);
     else if (daysAgo(newest + 'T12:00:00Z') > 2.5) bad('MLB summary', 'newest graded day is ' + newest);
     else ok('MLB summary', 'newest graded day ' + newest);
   } catch (e){ bad('MLB summary', e.message); }
