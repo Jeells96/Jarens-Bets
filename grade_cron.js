@@ -33,6 +33,24 @@ const APPS = key ? [ALL[key]] : Object.values(ALL); // one app, or all when no k
     const t0 = Date.now();
     console.log('\n=== ' + app.name + ' ===\n    ' + url);
     const context = await browser.newContext();
+    /* ESPN refuses the GitHub runner's in-browser requests: it answers without an
+       Access-Control-Allow-Origin header, so every page fetch to site.api.espn.com
+       fails CORS and the grader sees zero games. NBA/NHL survive on a cloud-record
+       fallback; NFL has none, so it graded nothing for months. Playwright's
+       route.fetch() runs in Node (not bound by browser CORS), so we fetch ESPN out
+       here and hand the page the real response with a permissive ACAO header. If
+       ESPN refuses the Node request too, fall through and let the page fail as before. */
+    await context.route(/https?:\/\/site\.api\.espn\.com\//, async (route) => {
+      try {
+        const resp = await route.fetch();
+        const headers = { ...resp.headers(), 'access-control-allow-origin': '*' };
+        delete headers['content-encoding'];
+        delete headers['content-length'];
+        await route.fulfill({ status: resp.status(), headers, body: await resp.body() });
+      } catch (e) {
+        try { await route.continue(); } catch (e2) {}
+      }
+    });
     const page = await context.newPage();
     page.on('console', (msg) => {
       const t = msg.text();
