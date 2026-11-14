@@ -27,6 +27,13 @@ async function getDoc(cfg, path){
 const failures = [];
 const ok = (name, msg) => console.log('  OK   ' + name + ' — ' + msg);
 const bad = (name, msg) => { failures.push(name); console.log('  FAIL ' + name + ' — ' + msg); };
+/* Known, accepted problems that stay VISIBLE (still printed as FAIL above) but
+   must not fail the run or email the owner — until genuinely fixed.
+   'NFL accuracy': ESPN blocks automated access from CI, so the NFL grader has
+   graded 0 games since ~Aug 2026. Diagnosed and acknowledged, pending a
+   replacement data source — not a false alarm, just one we've chosen not to be
+   paged about daily. Remove this entry once NFL grades real games again. */
+const KNOWN_ISSUES = ['NFL accuracy'];
 
 /* ── Did the automation actually run? ───────────────────────────────────────
    The checks above ask whether the DATA is fresh. This asks whether the jobs
@@ -147,9 +154,12 @@ async function checkWorkflowsRan(){
   await checkWorkflowsRan();
 
   console.log('');
-  if (failures.length){
-    console.log('UNHEALTHY: ' + failures.join(', '));
+  const realFailures = failures.filter(f => !KNOWN_ISSUES.includes(f));
+  const knownFailures = failures.filter(f => KNOWN_ISSUES.includes(f));
+  if (knownFailures.length) console.log('KNOWN ISSUES (not alerting): ' + knownFailures.join(', '));
+  if (realFailures.length){
+    console.log('UNHEALTHY: ' + realFailures.join(', '));
     process.exit(1);
   }
-  console.log('All records healthy');
+  console.log('All records healthy' + (knownFailures.length ? ' (aside from known issues above)' : ''));
 })();
